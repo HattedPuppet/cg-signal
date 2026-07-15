@@ -1,0 +1,837 @@
+from __future__ import annotations
+
+import argparse
+import concurrent.futures
+import email.utils
+import hashlib
+import html
+import json
+import mimetypes
+import os
+import re
+import socket
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import webbrowser
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
+from difflib import SequenceMatcher
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+
+
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
+CACHE_DIR = BASE_DIR / ".cache"
+CACHE_FILE = CACHE_DIR / "feed-cache.json"
+IMAGE_INDEX_FILE = CACHE_DIR / "image-index.json"
+PID_FILE = CACHE_DIR / "server.pid"
+CACHE_TTL_SECONDS = 15 * 60
+IMAGE_INDEX_TTL_SECONDS = 30 * 86400
+MAX_ITEMS_PER_SOURCE = 40
+
+FEEDS = (
+    {
+        "id": "80-level",
+        "name": "80 Level",
+        "site": "https://80.lv/",
+        "feed": "https://80.lv/feed",
+        "accent": "#f4b400",
+    },
+    {
+        "id": "cgworld",
+        "name": "CGWORLD",
+        "site": "https://cgworld.jp/",
+        "feed": "https://cgworld.jp/atom.xml",
+        "accent": "#ef5350",
+    },
+    {
+        "id": "gamemakers",
+        "name": "Game Makers",
+        "site": "https://gamemakers.jp/",
+        "feed": "https://gamemakers.jp/feed/",
+        "accent": "#3d8bfd",
+    },
+    {
+        "id": "3dnchu",
+        "name": "3D人",
+        "site": "https://3dnchu.com/",
+        "feed": "https://3dnchu.com/feed/",
+        "accent": "#ef7c3b",
+    },
+    {
+        "id": "cginterest",
+        "name": "CGinterest",
+        "site": "https://cginterest.com/",
+        "feed": "https://cginterest.com/feed/",
+        "accent": "#2bb673",
+    },
+    {
+        "id": "befores-afters",
+        "name": "befores & afters",
+        "site": "https://beforesandafters.com/",
+        "feed": "https://beforesandafters.com/feed/",
+        "accent": "#df4661",
+        "limit": 20,
+    },
+    {
+        "id": "game-developer",
+        "name": "Game Developer",
+        "site": "https://www.gamedeveloper.com/",
+        "feed": "https://www.gamedeveloper.com/rss.xml",
+        "accent": "#7357ff",
+        "limit": 20,
+    },
+    {
+        "id": "cartoon-brew",
+        "name": "Cartoon Brew",
+        "site": "https://www.cartoonbrew.com/",
+        "feed": "https://www.cartoonbrew.com/feed/",
+        "accent": "#f15a2a",
+        "limit": 20,
+    },
+    {
+        "id": "siggraph",
+        "name": "ACM SIGGRAPH",
+        "site": "https://blog.siggraph.org/",
+        "feed": "https://blog.siggraph.org/feed/",
+        "accent": "#008f95",
+        "limit": 20,
+    },
+    {
+        "id": "gamebusiness",
+        "name": "GameBusiness.jp",
+        "site": "https://www.gamebusiness.jp/category/development/",
+        "feed": "https://www.gamebusiness.jp/rss/index.rdf",
+        "accent": "#d14b3f",
+        "limit": 20,
+    },
+    {
+        "id": "automaton-interviews",
+        "name": "AUTOMATON Interviews",
+        "site": "https://automaton-media.com/devlog/interview/",
+        "feed": "https://automaton-media.com/devlog/interview/feed/",
+        "accent": "#5b6472",
+        "limit": 20,
+    },
+    {
+        "id": "unreal-engine",
+        "name": "Unreal Engine",
+        "site": "https://www.unrealengine.com/",
+        "feed": "https://www.unrealengine.com/rss?lang=en-US",
+        "accent": "#4b75ff",
+        "limit": 20,
+    },
+    {
+        "id": "blender-developers",
+        "name": "Blender Developers",
+        "site": "https://code.blender.org/",
+        "feed": "https://code.blender.org/feed/",
+        "accent": "#f18a21",
+        "limit": 20,
+    },
+)
+
+TRACKING_PARAMETERS = {
+    "fbclid",
+    "gclid",
+    "mc_cid",
+    "mc_eid",
+    "ref",
+    "referrer",
+    "source",
+}
+
+ASCII_STOPWORDS = {
+    "about",
+    "after",
+    "also",
+    "and",
+    "are",
+    "asset",
+    "assets",
+    "available",
+    "best",
+    "cg",
+    "dev",
+    "development",
+    "engine",
+    "for",
+    "free",
+    "from",
+    "game",
+    "games",
+    "gets",
+    "how",
+    "into",
+    "latest",
+    "new",
+    "news",
+    "now",
+    "release",
+    "released",
+    "software",
+    "the",
+    "this",
+    "tool",
+    "tools",
+    "using",
+    "version",
+    "video",
+    "with",
+}
+
+
+def local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1].lower()
+
+
+def child_text(element: ET.Element, names: set[str]) -> str:
+    for child in element:
+        if local_name(child.tag) in names:
+            value = "".join(child.itertext()).strip()
+            if value:
+                return value
+    return ""
+
+
+def preferred_child_text(element: ET.Element, names: tuple[str, ...]) -> str:
+    """Return the richest matching field instead of relying on feed order."""
+    children = list(element)
+    for name in names:
+        for child in children:
+            if local_name(child.tag) == name:
+                value = "".join(child.itertext()).strip()
+                if value:
+                    return value
+    return ""
+
+
+def strip_markup(value: str) -> str:
+    if not value:
+        return ""
+    value = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", value, flags=re.I | re.S)
+    value = re.sub(r"<[^>]+>", " ", value)
+    value = html.unescape(value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def parse_date(value: str) -> datetime:
+    if not value:
+        return datetime.now(timezone.utc)
+    try:
+        parsed = email.utils.parsedate_to_datetime(value)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError, OverflowError):
+        pass
+
+    normalized = value.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return datetime.now(timezone.utc)
+
+
+def canonical_url(value: str) -> str:
+    if not value:
+        return ""
+    try:
+        parsed = urllib.parse.urlsplit(value.strip())
+        if parsed.scheme not in {"http", "https"}:
+            return ""
+        query = [
+            (key, item)
+            for key, item in urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+            if not key.lower().startswith("utm_") and key.lower() not in TRACKING_PARAMETERS
+        ]
+        path = parsed.path.rstrip("/") or "/"
+        return urllib.parse.urlunsplit(
+            (parsed.scheme.lower(), parsed.netloc.lower(), path, urllib.parse.urlencode(query), "")
+        )
+    except ValueError:
+        return value.strip()
+
+
+def article_link(item: ET.Element) -> str:
+    text_link = child_text(item, {"link"})
+    if text_link.startswith(("http://", "https://")):
+        return canonical_url(text_link)
+    for child in item:
+        if local_name(child.tag) == "link":
+            href = child.attrib.get("href", "")
+            rel = child.attrib.get("rel", "alternate")
+            if href and rel in {"alternate", ""}:
+                return canonical_url(href)
+    guid = child_text(item, {"guid", "id"})
+    return canonical_url(guid)
+
+
+def first_image(item: ET.Element, raw_summary: str) -> str:
+    for descendant in item.iter():
+        name = local_name(descendant.tag)
+        if name not in {"thumbnail", "content", "enclosure"}:
+            continue
+        candidate = descendant.attrib.get("url", "") or descendant.attrib.get("href", "")
+        media_type = descendant.attrib.get("type", "")
+        if candidate and (name == "thumbnail" or media_type.startswith("image/") or re.search(r"\.(?:jpg|jpeg|png|webp)(?:\?|$)", candidate, re.I)):
+            return canonical_url(html.unescape(candidate))
+
+    match = re.search(r"<img[^>]+src=[\"']([^\"']+)", raw_summary, re.I)
+    if match:
+        return canonical_url(html.unescape(match.group(1)))
+    return ""
+
+
+def extract_page_image(markup: str, base_url: str) -> str:
+    """Read the standard social-preview image regardless of attribute order."""
+    preferred: dict[str, str] = {}
+    for tag in re.findall(r"<meta\b[^>]*>", markup, flags=re.I):
+        attributes = {
+            name.lower(): html.unescape(value.strip())
+            for name, _, value in re.findall(
+                r"([\w:-]+)\s*=\s*([\"'])(.*?)\2", tag, flags=re.I | re.S
+            )
+        }
+        key = attributes.get("property", attributes.get("name", "")).lower()
+        content = attributes.get("content", "")
+        if key and content:
+            preferred[key] = content
+
+    for key in ("og:image:secure_url", "og:image", "twitter:image", "twitter:image:src"):
+        if preferred.get(key):
+            return canonical_url(urllib.parse.urljoin(base_url, preferred[key]))
+
+    for tag in re.findall(r"<link\b[^>]*>", markup, flags=re.I):
+        attributes = {
+            name.lower(): html.unescape(value.strip())
+            for name, _, value in re.findall(
+                r"([\w:-]+)\s*=\s*([\"'])(.*?)\2", tag, flags=re.I | re.S
+            )
+        }
+        if "image_src" in attributes.get("rel", "").lower() and attributes.get("href"):
+            return canonical_url(urllib.parse.urljoin(base_url, attributes["href"]))
+    return ""
+
+
+def fetch_page_image(article_url: str) -> str:
+    request = urllib.request.Request(
+        article_url,
+        headers={
+            "User-Agent": "CGSignal/1.0 (local personal RSS reader)",
+            "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=18) as response:
+            content_type = response.headers.get_content_type()
+            if content_type not in {"text/html", "application/xhtml+xml"}:
+                return ""
+            charset = response.headers.get_content_charset() or "utf-8"
+            markup = response.read(2_500_000).decode(charset, errors="replace")
+        return extract_page_image(markup, article_url)
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, UnicodeError):
+        return ""
+
+
+def read_image_index() -> dict[str, dict[str, Any]]:
+    try:
+        value = json.loads(IMAGE_INDEX_FILE.read_text(encoding="utf-8"))
+        return value if isinstance(value, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def write_image_index(index: dict[str, dict[str, Any]]) -> None:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    temporary = IMAGE_INDEX_FILE.with_suffix(".tmp")
+    temporary.write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(IMAGE_INDEX_FILE)
+
+
+def enrich_missing_images(articles: list[dict[str, Any]]) -> None:
+    missing = [article for article in articles if not article.get("image")]
+    if not missing:
+        return
+
+    now = time.time()
+    index = read_image_index()
+    to_fetch: dict[str, list[dict[str, Any]]] = {}
+    for article in missing:
+        url = article["url"]
+        cached = index.get(url, {})
+        age = now - float(cached.get("checked_at", 0))
+        if age < IMAGE_INDEX_TTL_SECONDS:
+            article["image"] = cached.get("image", "")
+        else:
+            to_fetch.setdefault(url, []).append(article)
+
+    if not to_fetch:
+        return
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        fetched = dict(zip(to_fetch, executor.map(fetch_page_image, to_fetch)))
+
+    for url, image_url in fetched.items():
+        index[url] = {"image": image_url, "checked_at": now}
+        for article in to_fetch[url]:
+            article["image"] = image_url
+
+    try:
+        write_image_index(index)
+    except OSError:
+        pass
+
+
+def outbound_links(raw_summary: str, article_url: str) -> list[str]:
+    own_domain = urllib.parse.urlsplit(article_url).netloc.lower()
+    results: list[str] = []
+    for match in re.finditer(r"href=[\"']([^\"']+)", raw_summary, re.I):
+        candidate = canonical_url(html.unescape(match.group(1)))
+        if not candidate:
+            continue
+        domain = urllib.parse.urlsplit(candidate).netloc.lower()
+        if domain and domain != own_domain and candidate not in results:
+            results.append(candidate)
+    return results[:8]
+
+
+def classify_topic(title: str, summary: str) -> str:
+    value = f"{title} {summary}".lower()
+    groups = (
+        ("Engines", ("unreal", "unity", "godot", "ue5", "ue 5", "ゲームエンジン")),
+        ("3D & Art", ("blender", "maya", "houdini", "zbrush", "substance 3d", "substance painter", "substance designer", "spine 2d", "esoteric software", "animation", "vfx", "render", "modeling", "modelling", "sculpt", "3dcg", "アニメーション", "モデリング", "レンダリング")),
+        ("Tools & Assets", ("plugin", "asset", "software", "tool", "adobe", "substance", "nuke", "プラグイン", "アセット", "ツール", "ソフト")),
+        ("Game Development", ("game dev", "gamedev", "indie", "steam", "nintendo", "playstation", "xbox", "ゲーム開発", "インディー", "ゲーム制作")),
+        ("Industry", ("studio", "career", "jobs", "business", "event", "interview", "スタジオ", "求人", "イベント", "インタビュー")),
+    )
+    for topic, keywords in groups:
+        if any(keyword in value for keyword in keywords):
+            return topic
+    return "General"
+
+
+INDUSTRY_TERMS = (
+    "acquisition", "bankruptcy", "business", "ceo", "company", "copyright",
+    "deal", "earnings", "executive", "funding", "hiring", "industry",
+    "investment", "job", "jobs", "labor", "lawsuit", "layoff", "legal", "market",
+    "merger", "partnership", "policy", "price", "pricing", "profit",
+    "publisher", "revenue", "sales", "shutdown", "studio closes", "union",
+    "事業", "企業", "価格", "値上げ", "労働", "合併", "売上", "契約", "市場",
+    "投資", "採用", "提携", "株主", "決算", "利益", "業界", "求人", "社長",
+    "経営", "著作権", "解雇", "訴訟", "設立", "買収", "資金", "閉鎖", "倒産",
+)
+
+TECH_TERMS = (
+    "animation", "beta", "blender", "breakdown", "developer", "engine",
+    "feature", "gameplay", "houdini", "modeling", "modelling", "open source",
+    "performance", "pipeline", "plugin", "release", "render", "rigging",
+    "shader", "spine", "substance", "technique", "technical", "technology",
+    "tool", "tutorial", "unreal", "update", "version", "vfx", "workflow",
+    "アニメーション", "アップデート", "エンジン", "オープンソース", "ゲーム制作",
+    "シェーダー", "チュートリアル", "ツール", "テクニック", "バージョン", "プラグイン",
+    "ベータ", "メイキング", "モデリング", "リギング", "リリース", "レンダリング",
+    "ワークフロー", "制作", "技術", "機能", "開発",
+)
+
+INDUSTRY_SOURCE_PRIOR = {
+    "cartoon-brew": 1,
+    "gamebusiness": 2,
+}
+
+TECH_SOURCE_PRIOR = {
+    "80-level": 1,
+    "cgworld": 1,
+    "gamemakers": 2,
+    "3dnchu": 2,
+    "cginterest": 2,
+    "befores-afters": 2,
+    "game-developer": 1,
+    "siggraph": 2,
+    "automaton-interviews": 1,
+    "unreal-engine": 3,
+    "blender-developers": 3,
+}
+
+
+def classify_lane(title: str, summary: str, source_id: str) -> str:
+    value = f"{title} {summary}".lower()
+    industry_matches = sum(term in value for term in INDUSTRY_TERMS)
+    technical_matches = sum(term in value for term in TECH_TERMS)
+    industry_score = INDUSTRY_SOURCE_PRIOR.get(source_id, 0) + industry_matches
+    technical_score = TECH_SOURCE_PRIOR.get(source_id, 0) + technical_matches
+    if industry_score > technical_score or (
+        industry_score == technical_score and industry_matches > 0
+    ):
+        return "Industry & Business"
+    return "Tech & Development"
+
+
+def parse_feed_document(xml_bytes: bytes) -> ET.Element:
+    """Parse a feed, ignoring content incorrectly appended after its root element."""
+
+    try:
+        return ET.fromstring(xml_bytes)
+    except ET.ParseError as original_error:
+        for closing_tag in (b"</rss>", b"</feed>", b"</rdf:RDF>"):
+            end = xml_bytes.rfind(closing_tag)
+            if end < 0:
+                continue
+            candidate = xml_bytes[: end + len(closing_tag)]
+            try:
+                return ET.fromstring(candidate)
+            except ET.ParseError:
+                continue
+        raise original_error
+
+
+def fetch_source(source: dict[str, Any]) -> dict[str, Any]:
+    request = urllib.request.Request(
+        source["feed"],
+        headers={
+            "User-Agent": "CGSignal/1.0 (local personal RSS reader)",
+            "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.5",
+        },
+    )
+    started = time.monotonic()
+    try:
+        with urllib.request.urlopen(request, timeout=22) as response:
+            xml_bytes = response.read(6_000_000)
+        root = parse_feed_document(xml_bytes)
+        entries = [node for node in root.iter() if local_name(node.tag) in {"item", "entry"}]
+        articles: list[dict[str, Any]] = []
+        item_limit = int(source.get("limit", MAX_ITEMS_PER_SOURCE))
+        for item in entries[:item_limit]:
+            title = strip_markup(child_text(item, {"title"}))
+            url = article_link(item)
+            if not title or not url:
+                continue
+            raw_summary = preferred_child_text(item, ("encoded", "content", "description", "summary"))
+            summary = strip_markup(raw_summary)
+            published_text = child_text(item, {"pubdate", "published", "updated", "date", "created"})
+            published = parse_date(published_text)
+            article_id = hashlib.sha1(f"{source['id']}|{url}".encode("utf-8")).hexdigest()[:18]
+            articles.append(
+                {
+                    "id": article_id,
+                    "title": title,
+                    "url": url,
+                    "summary": summary[:900],
+                    "image": first_image(item, raw_summary),
+                    "published_at": published.isoformat(),
+                    "timestamp": published.timestamp(),
+                    "source": source["name"],
+                    "source_id": source["id"],
+                    "source_site": source["site"],
+                    "accent": source["accent"],
+                    "topic": classify_topic(title, summary),
+                    "lane": classify_lane(title, summary, source["id"]),
+                    "_refs": outbound_links(raw_summary, url),
+                }
+            )
+        return {
+            "source": source,
+            "articles": articles,
+            "ok": True,
+            "message": "",
+            "duration_ms": round((time.monotonic() - started) * 1000),
+        }
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ET.ParseError, OSError) as exc:
+        return {
+            "source": source,
+            "articles": [],
+            "ok": False,
+            "message": str(exc),
+            "duration_ms": round((time.monotonic() - started) * 1000),
+        }
+
+
+def normalized_title(value: str) -> str:
+    value = html.unescape(value).lower()
+    value = re.sub(r"https?://\S+", " ", value)
+    value = re.sub(r"[^\w\u3040-\u30ff\u3400-\u9fff]+", " ", value, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def word_tokens(value: str) -> set[str]:
+    tokens = set(re.findall(r"[a-z0-9][a-z0-9.+-]{2,}|[\u3040-\u30ff\u3400-\u9fff]{2,}", normalized_title(value)))
+    return {token for token in tokens if token not in ASCII_STOPWORDS}
+
+
+def ascii_signature(value: str) -> set[str]:
+    tokens = set(re.findall(r"[a-z][a-z0-9.+-]{2,}|\d+(?:\.\d+)+", value.lower()))
+    return {token.strip("-+.") for token in tokens if token.strip("-+.") not in ASCII_STOPWORDS}
+
+
+def same_story(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    if left["url"] == right["url"]:
+        return True
+
+    left_date = datetime.fromisoformat(left["published_at"])
+    right_date = datetime.fromisoformat(right["published_at"])
+    if abs((left_date - right_date).total_seconds()) > 5 * 86400:
+        return False
+
+    if set(left.get("_refs", [])) & set(right.get("_refs", [])):
+        return True
+
+    left_title = normalized_title(left["title"])
+    right_title = normalized_title(right["title"])
+    if left_title == right_title:
+        return True
+
+    ratio = SequenceMatcher(None, left_title, right_title).ratio()
+    if min(len(left_title), len(right_title)) >= 16 and ratio >= 0.84:
+        return True
+
+    left_tokens = word_tokens(left_title)
+    right_tokens = word_tokens(right_title)
+    shared = left_tokens & right_tokens
+    union = left_tokens | right_tokens
+    if len(shared) >= 4 and union and len(shared) / len(union) >= 0.68:
+        return True
+
+    # Japanese/English coverage often shares product names and version numbers.
+    ascii_shared = ascii_signature(left["title"]) & ascii_signature(right["title"])
+    version_match = any(any(character.isdigit() for character in token) for token in ascii_shared)
+    distinctive = sum(len(token) >= 6 for token in ascii_shared)
+    # Three shared tokens keeps common product/version pairs from collapsing an
+    # unrelated tutorial published near a release announcement.
+    return len(ascii_shared) >= 3 and (version_match or distinctive >= 2)
+
+
+def public_article(article: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in article.items() if not key.startswith("_") and key != "timestamp"}
+
+
+def cluster_articles(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    clusters: list[dict[str, Any]] = []
+    for article in sorted(articles, key=lambda item: item["timestamp"], reverse=True):
+        match: dict[str, Any] | None = None
+        for cluster in clusters:
+            if abs(article["timestamp"] - cluster["_primary"]["timestamp"]) > 5 * 86400:
+                continue
+            if same_story(article, cluster["_primary"]):
+                match = cluster
+                break
+
+        if match is None:
+            clusters.append({"_primary": article, "_members": [article]})
+            continue
+
+        match["_members"].append(article)
+        primary = match["_primary"]
+        if not primary.get("image") and article.get("image"):
+            primary["image"] = article["image"]
+        if len(article.get("summary", "")) > len(primary.get("summary", "")):
+            primary["summary"] = article["summary"]
+
+    output: list[dict[str, Any]] = []
+    for cluster in clusters:
+        members = cluster["_members"]
+        primary = dict(cluster["_primary"])
+        unique_sources: dict[str, dict[str, Any]] = {}
+        for member in members:
+            unique_sources[member["source_id"]] = member
+        related = [
+            {
+                "title": member["title"],
+                "url": member["url"],
+                "source": member["source"],
+                "source_id": member["source_id"],
+                "accent": member["accent"],
+                "published_at": member["published_at"],
+            }
+            for member in members
+            if member["id"] != primary["id"]
+        ]
+        public = public_article(primary)
+        public["related"] = related
+        public["source_count"] = len(unique_sources)
+        public["cluster_size"] = len(members)
+        public["sources"] = [
+            {
+                "id": member["source_id"],
+                "name": member["source"],
+                "accent": member["accent"],
+            }
+            for member in unique_sources.values()
+        ]
+        output.append(public)
+    return output
+
+
+def read_cache() -> dict[str, Any] | None:
+    try:
+        return json.loads(CACHE_FILE.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None
+
+
+def write_cache(payload: dict[str, Any]) -> None:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    temporary = CACHE_FILE.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(CACHE_FILE)
+
+
+def build_feed(force: bool = False) -> dict[str, Any]:
+    cached = read_cache()
+    if cached and not force:
+        generated = datetime.fromisoformat(cached["generated_at"])
+        if (datetime.now(timezone.utc) - generated).total_seconds() < CACHE_TTL_SECONDS:
+            cached["cached"] = True
+            return cached
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(FEEDS)) as executor:
+        results = list(executor.map(fetch_source, FEEDS))
+
+    all_articles = [article for result in results for article in result["articles"]]
+    failed = [result for result in results if not result["ok"]]
+    if not all_articles and cached:
+        cached["cached"] = True
+        cached["stale"] = True
+        cached["warnings"] = [f"{item['source']['name']}: {item['message']}" for item in failed]
+        return cached
+
+    enrich_missing_images(all_articles)
+
+    clusters = cluster_articles(all_articles)
+    payload = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "cached": False,
+        "stale": False,
+        "raw_count": len(all_articles),
+        "unique_count": len(clusters),
+        "duplicates_collapsed": max(0, len(all_articles) - len(clusters)),
+        "articles": clusters,
+        "sources": [
+            {
+                **result["source"],
+                "ok": result["ok"],
+                "count": len(result["articles"]),
+                "duration_ms": result["duration_ms"],
+            }
+            for result in results
+        ],
+        "warnings": [f"{item['source']['name']}: {item['message']}" for item in failed],
+    }
+    if all_articles:
+        try:
+            write_cache(payload)
+        except OSError:
+            pass
+    return payload
+
+
+class DashboardHandler(BaseHTTPRequestHandler):
+    server_version = "CGSignal/1.0"
+
+    def log_message(self, format_string: str, *args: Any) -> None:
+        message = format_string % args
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
+
+    def send_json(self, payload: dict[str, Any], status: int = 200) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self) -> None:
+        parsed = urllib.parse.urlsplit(self.path)
+        if parsed.path == "/api/health":
+            self.send_json({"ok": True, "service": "CG Signal"})
+            return
+        if parsed.path == "/api/feed":
+            force = urllib.parse.parse_qs(parsed.query).get("refresh", ["0"])[0] == "1"
+            try:
+                self.send_json(build_feed(force=force))
+            except Exception as exc:  # Keep the local UI useful even when one feed is malformed.
+                self.send_json({"error": "Unable to gather feeds", "detail": str(exc)}, status=500)
+            return
+
+        relative_path = "index.html" if parsed.path in {"", "/"} else parsed.path.lstrip("/")
+        candidate = (STATIC_DIR / relative_path).resolve()
+        try:
+            candidate.relative_to(STATIC_DIR.resolve())
+        except ValueError:
+            self.send_error(403)
+            return
+        if not candidate.is_file():
+            self.send_error(404)
+            return
+
+        body = candidate.read_bytes()
+        content_type, _ = mimetypes.guess_type(candidate.name)
+        if content_type and content_type.startswith("text/"):
+            content_type += "; charset=utf-8"
+        self.send_response(200)
+        self.send_header("Content-Type", content_type or "application/octet-stream")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class DashboardServer(ThreadingHTTPServer):
+    """Use an exclusive listener so repeated launches cannot start duplicates."""
+
+    allow_reuse_address = False
+    allow_reuse_port = False
+    daemon_threads = True
+
+    def server_bind(self) -> None:
+        if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run the private CG Signal RSS dashboard.")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=4310)
+    parser.add_argument("--no-browser", action="store_true")
+    arguments = parser.parse_args()
+
+    try:
+        server = DashboardServer((arguments.host, arguments.port), DashboardHandler)
+    except OSError as error:
+        raise SystemExit(
+            f"CG Signal could not use {arguments.host}:{arguments.port}. "
+            "It may already be running."
+        ) from error
+
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
+    url = f"http://{arguments.host}:{arguments.port}"
+    print("\nCG Signal is ready")
+    print(f"Open: {url}")
+    print("Press Ctrl+C to stop.\n")
+    if not arguments.no_browser:
+        threading.Timer(0.7, lambda: webbrowser.open(url)).start()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopping CG Signal.")
+    finally:
+        server.server_close()
+        try:
+            if PID_FILE.read_text(encoding="utf-8").strip() == str(os.getpid()):
+                PID_FILE.unlink()
+        except (FileNotFoundError, OSError):
+            pass
+
+
+if __name__ == "__main__":
+    main()
