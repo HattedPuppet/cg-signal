@@ -184,6 +184,7 @@ a {
 .icon-text-button,
 .brief-button,
 .refresh-button,
+.archive-button,
 .save-button,
 .empty-state button {
   border: 0;
@@ -229,6 +230,8 @@ a {
   border-radius: 50%;
   background: var(--orange);
 }
+
+.archive-symbol { color: var(--orange); }
 
 .nav-item strong {
   min-width: 24px;
@@ -831,6 +834,10 @@ kbd {
   opacity: 1;
 }
 
+.story-card.is-archived {
+  border-style: dashed;
+}
+
 .story-classification {
   display: flex;
   min-width: 0;
@@ -917,6 +924,23 @@ kbd {
   backdrop-filter: blur(8px);
 }
 
+.priority-badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2;
+  padding: 5px 8px;
+  border: 1px solid rgba(215, 255, 87, 0.42);
+  border-radius: 999px;
+  background: rgba(18, 22, 18, 0.78);
+  color: var(--acid);
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  backdrop-filter: blur(8px);
+}
+
 .story-body {
   display: flex;
   flex: 1;
@@ -991,6 +1015,22 @@ kbd {
   -webkit-line-clamp: 3;
 }
 
+.story-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: -7px 0 14px;
+}
+
+.story-reasons span {
+  padding: 4px 6px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--acid) 18%, var(--paper-deep));
+  color: var(--ink-muted);
+  font-size: 8px;
+  font-weight: 700;
+}
+
 .story-footer {
   position: relative;
   z-index: 3;
@@ -1027,6 +1067,14 @@ kbd {
   font-size: 9px;
 }
 
+.card-actions {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  gap: 6px;
+}
+
+.archive-button,
 .save-button {
   position: relative;
   z-index: 4;
@@ -1040,6 +1088,13 @@ kbd {
   color: var(--ink-muted);
   font-size: 17px;
   line-height: 1;
+}
+
+.archive-button:hover,
+.archive-button.is-archived {
+  border-color: var(--orange);
+  background: var(--orange);
+  color: var(--ink);
 }
 
 .save-button:hover,
@@ -1317,6 +1372,10 @@ kbd {
   gap: 10px;
 }
 
+.briefing-highlights + .briefing-section-label {
+  margin-top: 28px;
+}
+
 .briefing-item {
   position: relative;
   display: grid;
@@ -1379,6 +1438,18 @@ kbd {
 .briefing-item-arrow {
   color: var(--orange);
   font-size: 17px;
+}
+
+.briefing-reason {
+  display: block;
+  margin-top: 8px;
+  color: color-mix(in srgb, var(--ink) 72%, var(--ink-muted));
+  font-size: 8px;
+  font-weight: 750;
+}
+
+.briefing-item.is-industry .briefing-item-dot {
+  background: var(--orange);
 }
 
 .briefing-empty {
@@ -1487,6 +1558,11 @@ body.night .refresh-button,
 body.night .topic-button.is-active,
 body.night .save-button.is-saved {
   background: #f0f2ec;
+  color: #171b17;
+}
+
+body.night .archive-button.is-archived {
+  background: var(--orange);
   color: #171b17;
 }
 

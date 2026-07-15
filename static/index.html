@@ -32,7 +32,12 @@
         <p class="sidebar-kicker">Your creative-tech briefing</p>
 
         <nav class="primary-nav" aria-label="Views">
-          <button class="nav-item is-active" type="button" data-view="all">
+          <button class="nav-item is-active" type="button" data-view="focus">
+            <span class="nav-symbol focus-symbol" aria-hidden="true">✦</span>
+            <span>Focus inbox</span>
+            <strong id="focus-count">—</strong>
+          </button>
+          <button class="nav-item" type="button" data-view="all">
             <span class="nav-symbol" aria-hidden="true">⌁</span>
             <span>Latest signal</span>
             <strong id="all-count">—</strong>
@@ -46,6 +51,11 @@
             <span class="nav-symbol dot-symbol" aria-hidden="true"></span>
             <span>Unread</span>
             <strong id="unread-count">—</strong>
+          </button>
+          <button class="nav-item" type="button" data-view="archived">
+            <span class="nav-symbol archive-symbol" aria-hidden="true">⌄</span>
+            <span>Archived</span>
+            <strong id="archived-count">0</strong>
           </button>
         </nav>
 
@@ -65,7 +75,7 @@
           <span class="privacy-mark" aria-hidden="true">◎</span>
           <div>
             <strong>Private by design</strong>
-            <p>No account. No tracking. Read and saved states remain in this browser.</p>
+            <p>No account. No tracking. Reading, saving and archiving stay on this computer.</p>
           </div>
         </div>
 
@@ -93,7 +103,7 @@
           <div class="topbar-actions">
             <button id="brief-button" class="brief-button" type="button" aria-haspopup="dialog" aria-expanded="false">
               <span class="brief-spark" aria-hidden="true">✦</span>
-              <span class="button-label">Unread brief</span>
+              <span class="button-label">Daily brief</span>
               <strong id="brief-count">—</strong>
             </button>
             <button id="layout-toggle" class="icon-text-button" type="button" aria-label="Switch layout">
@@ -113,7 +123,7 @@
             <p class="eyebrow"><span></span> Curated across trusted sources</p>
             <h1 id="hero-title">The craft,<br /><em>without the noise.</em></h1>
             <p class="hero-description">
-              Fresh CG and game-development stories, with repeated coverage quietly folded into one clean signal.
+              Fresh CG and game-development stories, ranked around your tools with repeated coverage quietly folded away.
             </p>
           </div>
 
@@ -157,7 +167,7 @@
           <div class="result-summary">
             <span id="visible-count">— stories</span>
             <span class="divider"></span>
-            <span>Newest first</span>
+            <span id="sort-label">Priority ranked</span>
           </div>
         </section>
 
@@ -191,8 +201,8 @@
       <div class="briefing-drawer">
         <header class="briefing-header">
           <div>
-            <p class="eyebrow"><span></span> Local digest</p>
-            <h2 id="briefing-title">Your unread briefing</h2>
+            <p class="eyebrow"><span></span> <span id="briefing-date">Today</span></p>
+            <h2 id="briefing-title">Your daily briefing</h2>
           </div>
           <button id="briefing-close" class="briefing-close" type="button" aria-label="Close unread briefing" data-close-briefing>×</button>
         </header>
@@ -201,7 +211,7 @@
 
         <footer class="briefing-footer">
           <p>Built from RSS excerpts on this device. Nothing is sent to an AI service.</p>
-          <button id="briefing-mark-read" type="button">Mark all unread as read</button>
+          <button id="briefing-mark-read" type="button">Mark brief as read</button>
         </footer>
       </div>
     </section>

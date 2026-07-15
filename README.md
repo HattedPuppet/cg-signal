@@ -33,9 +33,17 @@ accounts, API keys, or subscription fees.
 - Feeds refresh at most every 15 minutes unless you click **Refresh**.
 - A small cache is stored in `.cache/feed-cache.json` so the last successful
   briefing remains available during a temporary feed failure.
-- Saved/read states and the display theme are stored in browser local storage.
-- **Unread brief** creates a local digest with topic counts and concise excerpts
-  from the newest unread stories; it does not call an external AI service.
+- Read, saved, and archived states are persisted by the local server in
+  `.cache/user-state.json`. Browser storage acts as a fallback and migrates
+  existing saved/read state automatically.
+- **Focus inbox** ranks unread stories against the configured software
+  interests and technical-depth signals. It explains the strongest matches,
+  caps the list at 30, and balances sources so one publication cannot dominate.
+- **Daily brief** selects up to nine high-value unread stories, prioritizing six
+  technical items and reserving room for three industry updates. Its summaries
+  are built from RSS excerpts and do not call an external AI service.
+- Stories can be saved for research or archived out of the active feed. The
+  archive remains searchable and every item can be restored.
 - Articles remain on their publishers' websites; the dashboard only shows RSS
   metadata and short excerpts.
 - When a feed omits thumbnails, the dashboard reads the article's standard
@@ -54,3 +62,5 @@ accounts, API keys, or subscription fees.
 
 The hidden launcher records the active server in `.cache/server.pid`; the stop
 shortcut only closes that local CG Signal process.
+
+The project intent and product requirements are maintained in `PRD.md`.

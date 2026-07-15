@@ -29,10 +29,13 @@ STATIC_DIR = BASE_DIR / "static"
 CACHE_DIR = BASE_DIR / ".cache"
 CACHE_FILE = CACHE_DIR / "feed-cache.json"
 IMAGE_INDEX_FILE = CACHE_DIR / "image-index.json"
+USER_STATE_FILE = CACHE_DIR / "user-state.json"
 PID_FILE = CACHE_DIR / "server.pid"
 CACHE_TTL_SECONDS = 15 * 60
 IMAGE_INDEX_TTL_SECONDS = 30 * 86400
 MAX_ITEMS_PER_SOURCE = 40
+MAX_STATE_IDS = 5000
+USER_STATE_LOCK = threading.Lock()
 
 FEEDS = (
     {
@@ -461,6 +464,37 @@ TECH_SOURCE_PRIOR = {
     "blender-developers": 3,
 }
 
+INTEREST_TERMS = (
+    ("Unreal Engine", ("unreal engine", "unreal", "ue5", "ue 5"), 28),
+    ("Substance Painter", ("substance painter", "substance 3d painter"), 25),
+    ("Blender", ("blender",), 25),
+    ("Substance Designer", ("substance designer", "substance 3d designer"), 22),
+    ("Houdini", ("houdini", "sidefx"), 22),
+    ("Spine", ("spine 2d", "esoteric software", "spine animation"), 22),
+)
+
+DEPTH_TERMS = (
+    ("Tutorial or breakdown", ("tutorial", "breakdown", "how to", "making of", "チュートリアル", "メイキング", "解説"), 10),
+    ("Workflow or pipeline", ("workflow", "pipeline", "ワークフロー", "パイプライン"), 8),
+    ("Rendering or shaders", ("render", "shader", "lighting", "レンダリング", "シェーダー", "ライティング"), 6),
+    ("Performance", ("performance", "optimization", "optimisation", "benchmark", "最適化", "パフォーマンス"), 6),
+    ("Procedural technique", ("procedural", "simulation", "node", "プロシージャル", "シミュレーション", "ノード"), 6),
+    ("Product update", ("release", "update", "version", "beta", "リリース", "アップデート", "バージョン", "ベータ"), 3),
+)
+
+PRIORITY_SOURCE_BONUS = {
+    "unreal-engine": 8,
+    "blender-developers": 8,
+    "siggraph": 6,
+    "gamemakers": 3,
+    "game-developer": 3,
+}
+
+PROMOTIONAL_TERMS = (
+    "sale", "discount", "giveaway", "sponsored", "job digest", "job picks",
+    "bundle", "セール", "割引", "求人まとめ", "プレゼント",
+)
+
 
 def classify_lane(title: str, summary: str, source_id: str) -> str:
     value = f"{title} {summary}".lower()
@@ -473,6 +507,50 @@ def classify_lane(title: str, summary: str, source_id: str) -> str:
     ):
         return "Industry & Business"
     return "Tech & Development"
+
+
+def score_relevance(
+    title: str,
+    summary: str,
+    source_id: str,
+    lane: str,
+    source_count: int = 1,
+) -> tuple[int, list[str]]:
+    """Return a transparent, local priority score tailored to the user's tools."""
+
+    title_value = title.lower()
+    value = f"{title} {summary}".lower()
+    score = 18 if lane == "Tech & Development" else 6
+    reasons: list[str] = []
+
+    for label, terms, points in INTEREST_TERMS:
+        if any(term in value for term in terms):
+            score += points
+            if any(term in title_value for term in terms):
+                score += 4
+            reasons.append(label)
+
+    for label, terms, points in DEPTH_TERMS:
+        if any(term in value for term in terms):
+            score += points
+            reasons.append(label)
+
+    source_bonus = PRIORITY_SOURCE_BONUS.get(source_id, 0)
+    if source_bonus:
+        score += source_bonus
+        if source_bonus >= 6:
+            reasons.append("First-party or research source")
+
+    if source_count > 1:
+        score += min(6, (source_count - 1) * 3)
+        reasons.append("Multiple sources")
+
+    if any(term in value for term in PROMOTIONAL_TERMS):
+        score -= 18
+
+    # Keep explanations compact and deterministic while preserving order.
+    unique_reasons = list(dict.fromkeys(reasons))[:3]
+    return max(0, min(100, score)), unique_reasons
 
 
 def parse_feed_document(xml_bytes: bytes) -> ET.Element:
@@ -665,6 +743,15 @@ def cluster_articles(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
             for member in unique_sources.values()
         ]
+        priority_score, priority_reasons = score_relevance(
+            public["title"],
+            public.get("summary", ""),
+            public["source_id"],
+            public.get("lane", "Tech & Development"),
+            len(unique_sources),
+        )
+        public["priority_score"] = priority_score
+        public["priority_reasons"] = priority_reasons
         output.append(public)
     return output
 
@@ -681,6 +768,37 @@ def write_cache(payload: dict[str, Any]) -> None:
     temporary = CACHE_FILE.with_suffix(".tmp")
     temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
     temporary.replace(CACHE_FILE)
+
+
+def normalize_user_state(payload: Any) -> dict[str, Any]:
+    source = payload if isinstance(payload, dict) else {}
+    normalized: dict[str, Any] = {}
+    for key in ("read", "saved", "archived"):
+        values = source.get(key, [])
+        if not isinstance(values, list):
+            values = []
+        valid = [value for value in values if isinstance(value, str) and 1 <= len(value) <= 80]
+        normalized[key] = list(dict.fromkeys(valid))[-MAX_STATE_IDS:]
+    normalized["updated_at"] = datetime.now(timezone.utc).isoformat()
+    return normalized
+
+
+def read_user_state() -> dict[str, Any]:
+    with USER_STATE_LOCK:
+        try:
+            return normalize_user_state(json.loads(USER_STATE_FILE.read_text(encoding="utf-8")))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            return normalize_user_state({})
+
+
+def write_user_state(payload: Any) -> dict[str, Any]:
+    normalized = normalize_user_state(payload)
+    with USER_STATE_LOCK:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        temporary = USER_STATE_FILE.with_suffix(".tmp")
+        temporary.write_text(json.dumps(normalized, ensure_ascii=False), encoding="utf-8")
+        temporary.replace(USER_STATE_FILE)
+    return normalized
 
 
 def build_feed(force: bool = False) -> dict[str, Any]:
@@ -760,6 +878,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             except Exception as exc:  # Keep the local UI useful even when one feed is malformed.
                 self.send_json({"error": "Unable to gather feeds", "detail": str(exc)}, status=500)
             return
+        if parsed.path == "/api/state":
+            self.send_json(read_user_state())
+            return
 
         relative_path = "index.html" if parsed.path in {"", "/"} else parsed.path.lstrip("/")
         candidate = (STATIC_DIR / relative_path).resolve()
@@ -782,6 +903,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(body)
+
+    def do_POST(self) -> None:
+        parsed = urllib.parse.urlsplit(self.path)
+        if parsed.path != "/api/state":
+            self.send_error(404)
+            return
+
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self.send_json({"error": "Invalid content length"}, status=400)
+            return
+        if content_length <= 0 or content_length > 750_000:
+            self.send_json({"error": "Invalid state payload size"}, status=400)
+            return
+
+        try:
+            payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
+            self.send_json(write_user_state(payload))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self.send_json({"error": "Invalid JSON state payload"}, status=400)
+        except OSError as exc:
+            self.send_json({"error": "Unable to save local state", "detail": str(exc)}, status=500)
 
 
 class DashboardServer(ThreadingHTTPServer):
