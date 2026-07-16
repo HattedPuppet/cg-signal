@@ -55,10 +55,12 @@ accounts, API keys, or subscription fees.
   and product/version signatures that often survive between Japanese and
   English headlines. Related coverage remains expandable beneath the lead card.
 - A separate information-type filter divides **Tech & Development** coverage
-  from **Industry & Business** reporting while retaining the existing subject
-  filters for engines, 3D art, tools, game development, and industry topics.
+  from **Industry & Business** reporting. In the Focus Inbox, a dynamic
+  **Focus categories** selector replaces the former broad subject filters with
+  the software groups actually present, including live story counts.
 - The current tool watchlist includes Unreal Engine, Substance 3D Painter and
-  Designer, Blender, Houdini, and Spine terminology for topic classification.
+  Designer, Blender, Houdini, and Spine terminology for software grouping and
+  relevance scoring.
   Unreal Engine and Blender also have first-party feeds; the other vendors do
   not currently expose reliable general RSS feeds, so their coverage comes from
   the editorial sources.

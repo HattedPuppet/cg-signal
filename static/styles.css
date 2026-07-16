@@ -180,7 +180,7 @@ a {
 .source-button,
 .theme-button,
 .text-button,
-.topic-button,
+.software-button,
 .icon-text-button,
 .brief-button,
 .refresh-button,
@@ -737,30 +737,73 @@ kbd {
 .lane-button[data-lane="Tech & Development"].is-active { background: var(--acid); color: var(--ink); }
 .lane-button[data-lane="Industry & Business"].is-active { background: var(--orange); color: var(--ink); }
 
-.topic-filters {
+.software-filter-group {
+  display: grid;
+  gap: 7px;
+}
+
+.software-filter-group[hidden] {
+  display: none;
+}
+
+.software-filter-label {
+  color: var(--ink-muted);
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.software-filters {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
 }
 
-.topic-button {
-  padding: 8px 12px;
-  border: 1px solid transparent;
+.software-button {
+  display: inline-flex;
+  min-width: max-content;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
   border-radius: 999px;
-  background: transparent;
+  background: var(--card);
   color: var(--ink-muted);
-  font-size: 11px;
-  font-weight: 650;
+  font-size: 10px;
+  font-weight: 700;
 }
 
-.topic-button:hover {
-  border-color: var(--line);
+.software-button::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--category-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--category-accent) 15%, transparent);
+}
+
+.software-button strong {
+  min-width: 19px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: var(--paper-deep);
+  color: inherit;
+  font-size: 8px;
+  text-align: center;
+}
+
+.software-button:hover {
+  border-color: var(--category-accent);
   color: var(--ink);
 }
 
-.topic-button.is-active {
-  background: var(--ink);
-  color: #fff;
+.software-button.is-active {
+  border-color: var(--category-accent);
+  background: color-mix(in srgb, var(--category-accent) 18%, var(--card));
+  box-shadow: inset 0 -2px var(--category-accent);
+  color: var(--ink);
 }
 
 .result-summary {
@@ -931,7 +974,7 @@ kbd {
 }
 
 .story-visual::after {
-  content: attr(data-topic);
+  content: attr(data-category);
   position: absolute;
   right: 12px;
   bottom: -8px;
@@ -968,7 +1011,7 @@ kbd {
   pointer-events: none;
 }
 
-.visual-topic {
+.visual-category {
   position: absolute;
   left: 13px;
   bottom: 12px;
@@ -1400,14 +1443,14 @@ kbd {
   color: var(--ink);
 }
 
-.briefing-topics {
+.briefing-categories {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
   margin: 18px 0 28px;
 }
 
-.briefing-topic {
+.briefing-category {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -1418,7 +1461,7 @@ kbd {
   font-size: 10px;
 }
 
-.briefing-topic strong {
+.briefing-category strong {
   color: var(--ink);
 }
 
@@ -1619,7 +1662,6 @@ body.night .icon-text-button {
 }
 
 body.night .refresh-button,
-body.night .topic-button.is-active,
 body.night .save-button.is-saved {
   background: #f0f2ec;
   color: #171b17;
@@ -1634,6 +1676,11 @@ body.night .lane-filters { background: #1d221d; }
 body.night .lane-button.is-active { background: #f0f2ec; color: #171b17; }
 body.night .lane-button[data-lane="Tech & Development"].is-active { background: var(--acid); }
 body.night .lane-button[data-lane="Industry & Business"].is-active { background: var(--orange); }
+body.night .software-button { background: rgba(0,0,0,.12); }
+body.night .software-button.is-active {
+  background: color-mix(in srgb, var(--category-accent) 24%, var(--card));
+  color: #f0f2ec;
+}
 
 body.night .source-stack i {
   border-color: var(--card);
@@ -1714,13 +1761,13 @@ body.night .source-stack i {
   .feed-toolbar { align-items: flex-start; }
   .filter-groups { width: 100%; }
   .lane-filters { width: 100%; }
-  .topic-filters {
+  .software-filters {
     flex-wrap: nowrap;
     max-width: 100%;
     overflow-x: auto;
     padding-bottom: 4px;
   }
-  .topic-button { min-width: max-content; }
+  .software-button { min-width: max-content; }
   .result-summary { display: none; }
   .story-grid { grid-template-columns: 1fr; }
   .focus-group-grid { grid-template-columns: 1fr; }

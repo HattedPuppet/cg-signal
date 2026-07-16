@@ -90,7 +90,8 @@ And is actively interested in:
 - Fold likely duplicate coverage into one lead card.
 - Retain links to related reports beneath the lead story.
 - Separate **Tech & Development** from **Industry & Business**.
-- Support topic, source, search, saved, unread, and archive filters.
+- Support software-category, information-type, source, search, saved, unread,
+  and archive filters.
 
 ### Focus Inbox
 
@@ -106,6 +107,10 @@ And is actively interested in:
   retaining all detected software as searchable metadata.
 - Place strong cross-tool stories under **Production techniques** and unmatched
   business stories under **Industry context**.
+- Provide a visible **Focus categories** selector containing only non-empty
+  software groups, with live counts that respond to the other active filters.
+- Do not expose broad inferred subject filters such as Engines, 3D Art, Tools,
+  Game Development, or Industry when their classification is unreliable.
 - Display only unread, non-archived strong matches.
 - Cap the inbox at 30 items and limit early results from any one source.
 
@@ -148,7 +153,8 @@ rules must remain testable and easy to adjust as the user's interests change.
 3. Open valuable stories on the original site.
 4. Save evergreen learning material, archive low-priority items, and mark the
    reviewed briefing read.
-5. Use Latest or subject filters when deeper exploration is desired.
+5. Use Latest, software categories, or source filters when deeper exploration
+   is desired.
 
 ## Privacy, cost, and data constraints
 

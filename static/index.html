@@ -154,13 +154,11 @@
               <button class="lane-button" type="button" data-lane="Industry &amp; Business">Industry &amp; business <strong>—</strong></button>
             </div>
 
-            <div id="topic-filters" class="topic-filters">
-              <button class="topic-button is-active" type="button" data-topic="All">All stories</button>
-              <button class="topic-button" type="button" data-topic="Engines">Engines</button>
-              <button class="topic-button" type="button" data-topic="3D &amp; Art">3D &amp; Art</button>
-              <button class="topic-button" type="button" data-topic="Tools &amp; Assets">Tools &amp; Assets</button>
-              <button class="topic-button" type="button" data-topic="Game Development">Game dev</button>
-              <button class="topic-button" type="button" data-topic="Industry">Industry</button>
+            <div id="software-filter-group" class="software-filter-group">
+              <span class="software-filter-label">Focus categories</span>
+              <div id="software-filters" class="software-filters" role="group" aria-label="Filter Focus Inbox by software">
+                <button class="software-button is-active" type="button" data-software="All">All focus <strong>—</strong></button>
+              </div>
             </div>
           </div>
 
@@ -184,7 +182,7 @@
           <div id="empty-state" class="empty-state" hidden>
             <span aria-hidden="true">◇</span>
             <h2>No signal here yet</h2>
-            <p>Try another topic, clear your source filters, or refresh the feeds.</p>
+            <p>Try another category, clear your source filters, or refresh the feeds.</p>
             <button id="clear-filters" type="button">Clear filters</button>
           </div>
         </section>

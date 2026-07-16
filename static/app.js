@@ -5,6 +5,7 @@ const storageKeys = {
   theme: "cg-signal:theme",
   layout: "cg-signal:layout",
   lane: "cg-signal:lane",
+  software: "cg-signal:software",
   stateDirty: "cg-signal:state-dirty",
   stateMigrated: "cg-signal:state-migrated",
 };
@@ -13,8 +14,8 @@ const state = {
   payload: null,
   articles: [],
   activeSources: new Set(),
-  topic: "All",
   lane: localStorage.getItem(storageKeys.lane) || "All",
+  software: localStorage.getItem(storageKeys.software) || "All",
   view: "focus",
   search: "",
   read: readSet(storageKeys.read),
@@ -49,6 +50,17 @@ const SOFTWARE_GROUP_DETAILS = {
   "Production techniques": "Cross-tool craft, pipelines and research",
   "Industry context": "Business developments worth keeping in view",
 };
+const SOFTWARE_GROUP_COLORS = {
+  "Unreal Engine": "#4b75ff",
+  Blender: "#f18a21",
+  "Substance Painter": "#61d0c8",
+  "Substance Designer": "#7fb9ff",
+  "Substance 3D": "#9fa9ff",
+  Houdini: "#ff7b38",
+  Spine: "#e56d9f",
+  "Production techniques": "#d7ff57",
+  "Industry context": "#f4a261",
+};
 let stateSaveTimer = null;
 
 const elements = {
@@ -57,6 +69,8 @@ const elements = {
   empty: document.querySelector("#empty-state"),
   sourceFilters: document.querySelector("#source-filters"),
   sourceOrbit: document.querySelector("#source-orbit"),
+  softwareFilterGroup: document.querySelector("#software-filter-group"),
+  softwareFilters: document.querySelector("#software-filters"),
   visibleCount: document.querySelector("#visible-count"),
   allCount: document.querySelector("#all-count"),
   focusCount: document.querySelector("#focus-count"),
@@ -266,7 +280,7 @@ function dailyBriefArticles() {
 }
 
 function briefingItem(article) {
-  const reasons = (article.priority_reasons || []).slice(0, 2).join(" · ") || article.topic;
+  const reasons = (article.priority_reasons || []).slice(0, 2).join(" · ") || softwareGroup(article);
   return `
     <a class="briefing-item${article.lane === "Industry & Business" ? " is-industry" : ""}" href="${escapeHtml(safeUrl(article.url))}" target="_blank" rel="noopener noreferrer" data-read-id="${escapeHtml(article.id)}" style="--story-accent:${escapeHtml(article.accent)}">
       <span class="briefing-item-dot"></span>
@@ -311,21 +325,29 @@ function buildBriefing() {
     return;
   }
 
-  const topics = new Map();
+  const categories = new Map();
   unread.forEach((article) => {
-    topics.set(article.topic, (topics.get(article.topic) || 0) + 1);
+    const category = softwareGroup(article);
+    categories.set(category, (categories.get(category) || 0) + 1);
   });
-  const rankedTopics = [...topics.entries()].sort((left, right) => right[1] - left[1]);
-  const topicPills = rankedTopics
+  const rankedCategories = [...categories.entries()].sort(([left], [right]) => {
+    const leftIndex = SOFTWARE_GROUP_ORDER.indexOf(left);
+    const rightIndex = SOFTWARE_GROUP_ORDER.indexOf(right);
+    if (leftIndex === -1 && rightIndex === -1) return left.localeCompare(right);
+    if (leftIndex === -1) return 1;
+    if (rightIndex === -1) return -1;
+    return leftIndex - rightIndex;
+  });
+  const categoryPills = rankedCategories
     .slice(0, 5)
-    .map(([topic, count]) => `<span class="briefing-topic">${escapeHtml(topic)} <strong>${count}</strong></span>`)
+    .map(([category, count]) => `<span class="briefing-category">${escapeHtml(category)} <strong>${count}</strong></span>`)
     .join("");
   const technical = brief.filter((article) => article.lane !== "Industry & Business");
   const industry = brief.filter((article) => article.lane === "Industry & Business");
 
   elements.briefingContent.innerHTML = `
     <p class="briefing-lead"><strong>${unread.length} unread ${unread.length === 1 ? "story is" : "stories are"} waiting.</strong> These ${brief.length} stories are the strongest match for your tools and production interests today.</p>
-    <div class="briefing-topics">${topicPills}</div>
+    <div class="briefing-categories">${categoryPills}</div>
     ${briefingSection("Technical priorities", technical)}
     ${briefingSection("Industry pulse", industry)}`;
 }
@@ -351,12 +373,47 @@ function matchesSource(article) {
   return article.sources.some((source) => state.activeSources.has(source.id));
 }
 
-function filteredArticles() {
+function matchesSearch(article, query) {
+  if (!query) return true;
+  const haystack = [
+    article.title,
+    article.summary,
+    article.source,
+    article.lane,
+    article.software_group,
+    ...(article.software_tags || []),
+    ...(article.priority_reasons || []),
+    ...article.related.map((item) => `${item.source} ${item.title}`),
+  ]
+    .join(" ")
+    .toLocaleLowerCase();
+  return haystack.includes(query);
+}
+
+function focusPool() {
   const query = state.search.trim().toLocaleLowerCase();
-  const visible = state.articles.filter((article) => {
+  const candidates = state.articles.filter((article) => {
     if (!matchesSource(article)) return false;
     if (state.lane !== "All" && (article.lane || "Tech & Development") !== state.lane) return false;
-    if (state.topic !== "All" && article.topic !== state.topic) return false;
+    if (state.archived.has(article.id) || state.read.has(article.id)) return false;
+    if (priorityScore(article) < FOCUS_MIN_SCORE) return false;
+    return matchesSearch(article, query);
+  });
+  return balancedPriorityArticles(candidates);
+}
+
+function filteredArticles() {
+  if (state.view === "focus") {
+    const pool = focusPool();
+    return state.software === "All"
+      ? pool
+      : pool.filter((article) => softwareGroup(article) === state.software);
+  }
+
+  const query = state.search.trim().toLocaleLowerCase();
+  return state.articles.filter((article) => {
+    if (!matchesSource(article)) return false;
+    if (state.lane !== "All" && (article.lane || "Tech & Development") !== state.lane) return false;
     if (state.view === "archived") {
       if (!state.archived.has(article.id)) return false;
     } else if (state.view === "saved") {
@@ -364,27 +421,9 @@ function filteredArticles() {
     } else {
       if (state.archived.has(article.id)) return false;
       if (state.view === "unread" && state.read.has(article.id)) return false;
-      if (state.view === "focus" && (state.read.has(article.id) || priorityScore(article) < FOCUS_MIN_SCORE)) return false;
     }
-    if (query) {
-      const haystack = [
-        article.title,
-        article.summary,
-        article.source,
-        article.topic,
-        article.lane,
-        article.software_group,
-        ...(article.software_tags || []),
-        ...(article.priority_reasons || []),
-        ...article.related.map((item) => `${item.source} ${item.title}`),
-      ]
-        .join(" ")
-        .toLocaleLowerCase();
-      if (!haystack.includes(query)) return false;
-    }
-    return true;
+    return matchesSearch(article, query);
   });
-  return state.view === "focus" ? balancedPriorityArticles(visible) : visible;
 }
 
 function sourceStack(article) {
@@ -426,22 +465,23 @@ function storyCard(article) {
   const coverage = article.source_count > 1 ? `${article.source_count} sources` : "Single source";
   const lane = article.lane || "Tech & Development";
   const laneLabel = lane === "Industry & Business" ? "Business" : "Tech";
+  const category = softwareGroup(article);
   const score = priorityScore(article);
   const priorityBadge = score >= FOCUS_MIN_SCORE
     ? `<span class="priority-badge">Focus ${score}</span>`
     : "";
   const reasons = (article.priority_reasons || [])
-    .filter((reason) => state.view !== "focus" || reason !== article.software_group)
+    .filter((reason) => state.view !== "focus" || reason !== category)
     .slice(0, 2);
   const reasonMarkup = reasons.length
     ? `<div class="story-reasons">${reasons.map((reason) => `<span>${escapeHtml(reason)}</span>`).join("")}</div>`
     : "";
   return `
     <article class="story-card${read ? " is-read" : ""}${archived ? " is-archived" : ""}" data-id="${escapeHtml(article.id)}" style="--story-accent:${escapeHtml(article.accent)}">
-      <div class="story-visual${image ? "" : " image-failed"}" data-topic="${escapeHtml(article.topic)}">
+      <div class="story-visual${image ? "" : " image-failed"}" data-category="${escapeHtml(category)}">
         ${image}
         <div class="visual-overlay"></div>
-        <span class="visual-topic">${escapeHtml(article.topic)}</span>
+        <span class="visual-category">${escapeHtml(category)}</span>
         ${priorityBadge}
       </div>
       <div class="story-body">
@@ -474,6 +514,50 @@ function softwareGroup(article) {
   const matchedReason = SOFTWARE_GROUP_ORDER.find((group) => (article.priority_reasons || []).includes(group));
   if (matchedReason) return matchedReason;
   return article.lane === "Industry & Business" ? "Industry context" : "Production techniques";
+}
+
+function renderSoftwareFilters(pool) {
+  const isFocusView = state.view === "focus";
+  elements.softwareFilterGroup.hidden = !isFocusView;
+  if (!isFocusView) return;
+
+  const counts = new Map();
+  pool.forEach((article) => {
+    const group = softwareGroup(article);
+    counts.set(group, (counts.get(group) || 0) + 1);
+  });
+  const categories = [...counts.keys()].sort((left, right) => {
+    const leftIndex = SOFTWARE_GROUP_ORDER.indexOf(left);
+    const rightIndex = SOFTWARE_GROUP_ORDER.indexOf(right);
+    if (leftIndex === -1 && rightIndex === -1) return left.localeCompare(right);
+    if (leftIndex === -1) return 1;
+    if (rightIndex === -1) return -1;
+    return leftIndex - rightIndex;
+  });
+  if (state.software !== "All" && !counts.has(state.software)) {
+    state.software = "All";
+    localStorage.setItem(storageKeys.software, state.software);
+  }
+
+  const buttons = [
+    { label: "All focus", value: "All", count: pool.length, color: "#d7ff57" },
+    ...categories.map((category) => ({
+      label: category,
+      value: category,
+      count: counts.get(category),
+      color: SOFTWARE_GROUP_COLORS[category] || "#d7ff57",
+    })),
+  ];
+  elements.softwareFilters.innerHTML = buttons
+    .map((button) => {
+      const active = state.software === button.value;
+      return `
+        <button class="software-button${active ? " is-active" : ""}" type="button" data-software="${escapeHtml(button.value)}" aria-pressed="${active}" style="--category-accent:${escapeHtml(button.color)}">
+          <span>${escapeHtml(button.label)}</span>
+          <strong>${button.count}</strong>
+        </button>`;
+    })
+    .join("");
 }
 
 function focusGroupMarkup(articles) {
@@ -509,7 +593,11 @@ function focusGroupMarkup(articles) {
 
 function render() {
   if (!state.payload) return;
-  const visible = filteredArticles();
+  const pool = state.view === "focus" ? focusPool() : [];
+  renderSoftwareFilters(pool);
+  const visible = state.view === "focus"
+    ? (state.software === "All" ? pool : pool.filter((article) => softwareGroup(article) === state.software))
+    : filteredArticles();
   elements.grid.classList.toggle("is-list", state.layout === "list");
   elements.grid.classList.toggle("is-grouped", state.view === "focus");
   elements.grid.classList.remove("loading-grid");
@@ -523,7 +611,7 @@ function render() {
     saved: ["Nothing saved yet", "Use the star on a story to keep it in your research collection."],
     unread: ["You’re all caught up", "New unread stories will appear after the next feed refresh."],
     archived: ["The archive is empty", "Archived stories stay out of your active feed and can be restored here."],
-  }[state.view] || ["No signal here yet", "Try another topic, clear your source filters, or refresh the feeds."];
+  }[state.view] || ["No signal here yet", "Try another category, clear your source filters, or refresh the feeds."];
   elements.empty.querySelector("h2").textContent = emptyCopy[0];
   elements.empty.querySelector("p").textContent = emptyCopy[1];
   elements.visibleCount.textContent = `${visible.length} ${visible.length === 1 ? "story" : "stories"}`;
@@ -546,12 +634,6 @@ function render() {
     const active = button.dataset.view === state.view;
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-current", active ? "page" : "false");
-  });
-  document.querySelectorAll("[data-topic]").forEach((button) => {
-    if (!button.classList.contains("topic-button")) return;
-    const active = button.dataset.topic === state.topic;
-    button.classList.toggle("is-active", active);
-    button.setAttribute("aria-pressed", String(active));
   });
   document.querySelectorAll(".lane-button[data-lane]").forEach((button) => {
     const lane = button.dataset.lane;
@@ -678,9 +760,10 @@ document.addEventListener("click", (event) => {
     return;
   }
 
-  const topicButton = event.target.closest(".topic-button");
-  if (topicButton) {
-    state.topic = topicButton.dataset.topic;
+  const softwareButton = event.target.closest(".software-button");
+  if (softwareButton) {
+    state.software = softwareButton.dataset.software;
+    localStorage.setItem(storageKeys.software, state.software);
     render();
     return;
   }
@@ -733,9 +816,10 @@ document.querySelector("#reset-sources").addEventListener("click", () => {
 
 document.querySelector("#clear-filters").addEventListener("click", () => {
   state.activeSources = new Set((state.payload.sources || []).map((source) => source.id));
-  state.topic = "All";
   state.lane = "All";
+  state.software = "All";
   localStorage.setItem(storageKeys.lane, state.lane);
+  localStorage.setItem(storageKeys.software, state.software);
   state.view = "focus";
   state.search = "";
   elements.search.value = "";
