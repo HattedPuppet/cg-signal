@@ -136,7 +136,8 @@ function readFilterSet(key) {
   if (!stored || stored === "All") return new Set();
   try {
     const values = JSON.parse(stored);
-    return new Set(Array.isArray(values) ? values.filter(Boolean) : []);
+    const first = Array.isArray(values) ? values.find((value) => value && value !== "All") : null;
+    return new Set(first ? [first] : []);
   } catch {
     return new Set([stored]);
   }
@@ -144,6 +145,15 @@ function readFilterSet(key) {
 
 function persistFilterSet(key, values) {
   localStorage.setItem(key, JSON.stringify([...values]));
+}
+
+function chooseSingleFilter(selected, value) {
+  if (value === "All" || selected.has(value)) {
+    selected.clear();
+    return;
+  }
+  selected.clear();
+  selected.add(value);
 }
 
 function saveSet(key, value) {
@@ -813,13 +823,7 @@ document.addEventListener("click", (event) => {
   const softwareButton = event.target.closest(".software-button");
   if (softwareButton) {
     const software = softwareButton.dataset.software;
-    if (software === "All") {
-      state.software.clear();
-    } else if (state.software.has(software)) {
-      state.software.delete(software);
-    } else {
-      state.software.add(software);
-    }
+    chooseSingleFilter(state.software, software);
     persistFilterSet(storageKeys.software, state.software);
     if (!productionTopicsActive() && state.topics.size) {
       state.topics.clear();
@@ -832,13 +836,7 @@ document.addEventListener("click", (event) => {
   const topicButton = event.target.closest(".topic-button");
   if (topicButton) {
     const topic = topicButton.dataset.topic;
-    if (topic === "All") {
-      state.topics.clear();
-    } else if (state.topics.has(topic)) {
-      state.topics.delete(topic);
-    } else {
-      state.topics.add(topic);
-    }
+    chooseSingleFilter(state.topics, topic);
     persistFilterSet(storageKeys.topics, state.topics);
     render();
     return;

@@ -115,8 +115,10 @@ And is actively interested in:
   and one card in the unfiltered feed.
 - Prefer software mentions in titles over incidental summary mentions when
   choosing the primary label.
-- Support multiple active category choices with OR behavior. Production
-  subcategories also use OR behavior and refine Production techniques only.
+- Allow exactly one active category and one active Production techniques
+  subcategory. Selecting another option replaces the current selection;
+  selecting the active option resets that row to its **All** state. Clicking an
+  already-active **All** option has no further effect.
 - Keep read stories in Latest Signal; remove only archived stories from the
   active chronological feed.
 - Do not expose broad inferred subject filters such as Engines, 3D Art, Tools,

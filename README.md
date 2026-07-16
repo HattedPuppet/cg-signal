@@ -54,12 +54,14 @@ accounts, API keys, or subscription fees.
   and product/version signatures that often survive between Japanese and
   English headlines. Related coverage remains expandable beneath the lead card.
 - A separate information-type filter divides **Tech & Development** coverage
-  from **Industry & Business** reporting. The compact **Categories** row supports
-  multiple selections with OR behavior.
+  from **Industry & Business** reporting. The compact **Categories** row uses a
+  single selection; choosing another category replaces the current one, while
+  clicking the active category returns to **All categories**.
 - Selecting **Production techniques** alone reveals a contextual subcategory row
   for modeling, materials, animation, rendering, VFX, technical art, pipelines,
   and game development. The main category choices and their counts remain
-  visible while refining, and the subcategory row stays hidden elsewhere.
+  visible while refining. Subcategories use the same single-selection and
+  click-again-to-reset behavior, and the row stays hidden elsewhere.
 - The current tool watchlist includes Unreal Engine, Substance 3D Painter and
   Designer, Blender, Houdini, and Spine terminology for software grouping and
   relevance scoring.
