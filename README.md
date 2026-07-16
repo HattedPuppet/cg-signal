@@ -30,22 +30,33 @@ accounts, API keys, or subscription fees.
 
 ## How it behaves
 
-- Feeds refresh at most every 15 minutes unless you click **Check feeds**, which
-  bypasses the cache and checks every source immediately.
+- Feeds check quietly every 15 minutes while the dashboard is open and visible.
+  **Check feeds** bypasses the cache and checks every source immediately.
 - A small cache is stored in `.cache/feed-cache.json` so the last successful
   briefing remains available during a temporary feed failure.
-- Read, saved, and archived states are persisted by the local server in
+- Read, saved, archived, research-note, recommendation, and source-tuning states are persisted by the local server in
   `.cache/user-state.json`. Browser storage acts as a fallback and migrates
   existing saved/read state automatically.
 - **Latest Signal** keeps the primary feed chronological and offers live
   category counts. Multi-tool stories can be found from every relevant software
   filter while appearing only once in the All Stories feed and retaining one
   clear primary card label.
+- A divider identifies stories published since the previous visit. Keyboard
+  triage uses `J`/`K` to move, `Enter` to open, `S` to save, `A` to archive,
+  and `M` to toggle read state.
 - **Daily brief** selects up to nine high-value unread stories, prioritizing six
-  technical items and reserving room for three industry updates. Its summaries
-  are built from RSS excerpts and do not call an external AI service.
-- Stories can be saved for research or archived out of the active feed. The
-  archive remains searchable and every item can be restored.
+  technical items and reserving room for three industry updates. **More like
+  this** and **Less like this** tune this brief locally. Its summaries are built
+  from RSS excerpts and do not call an external AI service.
+- Saved stories form a Learning Library grouped by software/context. Each item
+  accepts a searchable research note. The archive remains searchable and every
+  item can be restored.
+- Search supports ordinary text plus combinable tags: `#unreal`, `#blender`,
+  `#software:"Substance Painter"`, `#topic:animation`, `#source:"80 Level"`,
+  `#is:unread`, `#is:saved`, and `#is:new`. Prefix a term with `-` to exclude it,
+  such as `-#industry`.
+- Individual sources can be temporarily filtered, reduced in the Daily Brief,
+  or muted. **Reset** in the Sources section restores all source settings.
 - Articles remain on their publishers' websites; the dashboard only shows RSS
   metadata and short excerpts.
 - When a feed omits thumbnails, the dashboard reads the article's standard
@@ -59,7 +70,8 @@ accounts, API keys, or subscription fees.
   clicking the active category returns to **All categories**.
 - Selecting **Production techniques** alone reveals a contextual subcategory row
   for modeling, materials, animation, rendering, VFX, technical art, pipelines,
-  and game development. The main category choices and their counts remain
+  game development, production breakdowns, research, product updates, and
+  assets/inspiration. The main category choices and their counts remain
   visible while refining. Subcategories use the same single-selection and
   click-again-to-reset behavior, and the row stays hidden elsewhere.
 - The current tool watchlist includes Unreal Engine, Substance 3D Painter and

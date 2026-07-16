@@ -51,6 +51,7 @@ And is actively interested in:
 - Keep industry and business reporting available without letting it dominate
   technical research.
 - Preserve useful material through saving and archiving.
+- Make accumulated learning searchable through notes and structured queries.
 - Remain private, local, account-free, and free of ongoing API or SaaS costs.
 - Make ranking understandable rather than presenting a black-box feed.
 
@@ -92,6 +93,9 @@ And is actively interested in:
 - Separate **Tech & Development** from **Industry & Business**.
 - Support software/context, production-subcategory, information-type, source,
   search, saved, unread, and archive filters.
+- Improve bilingual deduplication by requiring a shared event type and
+  distinctive entities when English and Japanese titles have little literal
+  overlap.
 
 ### Latest Signal facets
 
@@ -103,8 +107,9 @@ And is actively interested in:
   Substance Designer, Houdini, Spine, **Production techniques**, or **Industry
   context**.
 - Classify production topics under modeling, materials, animation, rendering,
-  VFX, technical art, pipelines, or game development, with a clear fallback for
-  unmatched production coverage.
+  VFX, technical art, pipelines, game development, breakdowns, research,
+  releases, or assets/inspiration, with a clear fallback for unmatched
+  production coverage.
 - Reveal production subcategories only when **Production techniques** is the
   sole selected category. Hide and clear them for software and industry
   categories to keep the filter area compact.
@@ -132,14 +137,38 @@ And is actively interested in:
 - Order selections by relevance and freshness.
 - Provide short extractive summaries and relevance reasons.
 - Allow the selected brief—not the entire backlog—to be marked read at once.
+- Accept explicit More/Less feedback and use software, topic, and source overlap
+  to adjust only Daily Brief ranking. Keep Latest Signal chronological.
+- Exclude muted sources and lower reduced sources without deleting their data.
 
-### Save and archive
+### Search and triage
 
-- Save stories as a durable research collection.
+- Search article titles, summaries, sources, classifications, related coverage,
+  relevance reasons, and personal research notes.
+- Support AND-combined hashtags for common software plus structured
+  `#software:`, `#topic:`, `#source:`, and `#is:` operators.
+- Support quoted values and exclusions prefixed by `-`.
+- Mark stories published since the previous visit without reordering the feed.
+- Support keyboard triage with J/K, Enter, S, A, and M while ignoring shortcuts
+  in text-entry controls.
+
+### Learning Library and archive
+
+- Save stories into a durable Learning Library grouped by primary software or
+  context.
+- Attach searchable local research notes to saved stories.
 - Archive stories out of Latest Signal and Unread views.
 - Provide a dedicated archive with restore controls.
-- Persist read, saved, and archived identifiers in the local server's data
-  directory, with browser storage as a migration and failure fallback.
+- Persist read, saved, archived, note, feedback, and source-preference state in
+  the local server's data directory, with browser storage as a migration and
+  failure fallback.
+
+### Source and refresh controls
+
+- Allow a source to be temporarily filtered, reduced in personalized ranking,
+  muted, or restored.
+- Check feeds every 15 minutes while the visible dashboard is open, retain the
+  current board on a background failure, and announce newly arrived stories.
 
 ### Local application experience
 
@@ -151,7 +180,7 @@ And is actively interested in:
 
 Daily Brief ranking is deterministic and rule-based:
 
-`priority = technical base + tool matches + depth signals + source confidence + corroboration - promotional noise`
+`priority = technical base + tool matches + depth signals + source confidence + corroboration - promotional noise + explicit preference matches - reduced-source penalty`
 
 Scores select and order the short Daily Brief; they do not reorder Latest
 Signal and are not a claim about objective article quality. Ranking rules must
@@ -165,7 +194,8 @@ remain testable and easy to adjust as the user's interests change.
 3. Open valuable stories on the original site.
 4. Save evergreen learning material, archive low-priority items, and mark the
    reviewed briefing read.
-5. Use source, information-type, and search filters for deeper exploration.
+5. Use text or hashtag search for deeper exploration and add notes to saved
+   learning material.
 
 ## Privacy, cost, and data constraints
 
@@ -185,7 +215,7 @@ analytics:
 - Duplicate announcements rarely require opening more than one card.
 - Latest Signal stays chronological while categories and contextual production
   subcategories reliably narrow it without duplicating cards.
-- Saved material remains retrievable after browser restarts.
+- Saved material and notes remain retrievable and searchable after browser restarts.
 - Feed failures do not prevent access to the last successful briefing.
 - The dashboard remains useful when all optional intelligence features are off.
 
@@ -203,8 +233,6 @@ analytics:
 ### Near term
 
 - Searchable long-term article archive.
-- Learning Library organized by software and production topic.
-- Explicit **More like this / Less like this** preference controls.
 - Carefully selected official YouTube RSS sources.
 
 ### Optional intelligence
@@ -220,11 +248,7 @@ analytics:
 
 ## Open decisions
 
-- Whether saved tutorials should automatically enter a separate Learning
-  Library.
 - Whether archived items should be retained indefinitely or pruned after a
   configurable period.
-- Whether explicit preference feedback should tune rule weights before adding
-  any local model.
 - What local hardware budget is acceptable for optional summarization and
   speech generation.
