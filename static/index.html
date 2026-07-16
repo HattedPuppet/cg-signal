@@ -39,7 +39,7 @@
           </button>
           <button class="nav-item" type="button" data-view="saved">
             <span class="nav-symbol" aria-hidden="true">☆</span>
-            <span>Saved</span>
+            <span>Learning library</span>
             <strong id="saved-count">0</strong>
           </button>
           <button class="nav-item" type="button" data-view="unread">
@@ -57,7 +57,7 @@
         <div class="sidebar-section">
           <div class="section-label-row">
             <h2>Sources</h2>
-            <button id="reset-sources" class="text-button" type="button">Reset</button>
+            <button id="reset-sources" class="text-button" type="button" title="Restore every source and clear source tuning">Reset</button>
           </div>
           <div id="source-filters" class="source-filters" aria-label="Filter by source">
             <div class="source-placeholder"></div>
@@ -84,16 +84,31 @@
 
       <main class="main-panel">
         <header class="topbar">
-          <label class="search-box" for="search-input">
-            <span aria-hidden="true">⌕</span>
-            <input
-              id="search-input"
-              type="search"
-              autocomplete="off"
-              placeholder="Search Blender, Unreal, Houdini…"
-            />
-            <kbd>Ctrl K</kbd>
-          </label>
+          <div class="search-wrap">
+            <label class="search-box" for="search-input">
+              <span aria-hidden="true">⌕</span>
+              <input
+                id="search-input"
+                type="search"
+                autocomplete="off"
+                placeholder="Search articles or try #unreal…"
+                aria-describedby="search-help"
+              />
+              <kbd>Ctrl K</kbd>
+            </label>
+            <div id="search-help" class="search-help">
+              <p><strong>Combine words and tags</strong><span>Use a minus to exclude anything.</span></p>
+              <div class="search-examples">
+                <button type="button" data-search-token="#unreal">#unreal</button>
+                <button type="button" data-search-token="#blender">#blender</button>
+                <button type="button" data-search-token="#topic:animation">#topic:animation</button>
+                <button type="button" data-search-token="#is:unread">#is:unread</button>
+                <button type="button" data-search-token="#is:saved">#is:saved</button>
+                <button type="button" data-search-token="-#industry">-#industry</button>
+              </div>
+              <small>Also: #software:&quot;Substance Painter&quot; · #source:&quot;80 Level&quot; · #is:new</small>
+            </div>
+          </div>
 
           <div class="topbar-actions">
             <button id="brief-button" class="brief-button" type="button" aria-haspopup="dialog" aria-expanded="false">
@@ -166,6 +181,7 @@
 
           <div class="result-summary">
             <span id="visible-count">— stories</span>
+            <span id="new-since" class="new-since-count" hidden></span>
             <span class="divider"></span>
             <span id="sort-label">Newest first</span>
           </div>
@@ -191,7 +207,10 @@
 
         <footer class="main-footer">
           <p>Built for quiet research. Articles always open on the original publisher’s website.</p>
-          <button id="mark-all-read" class="text-button" type="button">Mark visible as read</button>
+          <div class="footer-actions">
+            <span class="shortcut-legend"><kbd>J</kbd>/<kbd>K</kbd> move · <kbd>Enter</kbd> open · <kbd>S</kbd> save · <kbd>A</kbd> archive · <kbd>M</kbd> read</span>
+            <button id="mark-all-read" class="text-button" type="button">Mark visible as read</button>
+          </div>
         </footer>
       </main>
     </div>
