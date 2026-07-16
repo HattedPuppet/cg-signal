@@ -470,9 +470,15 @@ TECH_SOURCE_PRIOR = {
 
 INTEREST_TERMS = (
     ("Unreal Engine", ("unreal engine", "unreal", "ue5", "ue 5"), 28),
-    ("Substance Painter", ("substance painter", "substance 3d painter"), 25),
+    (
+        "Substance 3D",
+        (
+            "substance 3d", "adobe substance", "substance painter",
+            "substance 3d painter", "substance designer", "substance 3d designer",
+        ),
+        25,
+    ),
     ("Blender", ("blender",), 25),
-    ("Substance Designer", ("substance designer", "substance 3d designer"), 22),
     ("Houdini", ("houdini", "sidefx"), 22),
     ("Spine", ("spine 2d", "esoteric software", "spine animation"), 22),
     ("Unity", ("unity", "unity engine", "unity 6", "unity technologies", "unity editor", "ユニティ"), 20),
@@ -488,8 +494,7 @@ INTEREST_TERMS = (
 )
 
 SOFTWARE_MATCH_TERMS = (
-    *((label, terms) for label, terms, _points in INTEREST_TERMS),
-    ("Substance 3D", ("substance 3d", "substance")),
+    *((label, terms) for label, terms, _points in INTEREST_TERMS if label != "Spine"),
 )
 
 PRODUCTION_TOPIC_TERMS = (
@@ -712,8 +717,6 @@ def classify_software(title: str, summary: str) -> list[str]:
             matches.append(((1, min(summary_positions), order), label))
 
     labels = [label for _rank, label in sorted(matches)]
-    if any(label in {"Substance Painter", "Substance Designer"} for label in labels):
-        labels = [label for label in labels if label != "Substance 3D"]
     return labels
 
 

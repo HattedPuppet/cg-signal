@@ -16,10 +16,14 @@ class SoftwareClassificationTests(unittest.TestCase):
             ["Houdini", "Unreal Engine"],
         )
 
-    def test_specific_substance_product_suppresses_generic_group(self):
+    def test_substance_products_share_one_category(self):
         self.assertEqual(
             classify_software("Substance Designer procedural materials", "A Substance 3D workflow"),
-            ["Substance Designer"],
+            ["Substance 3D"],
+        )
+        self.assertEqual(
+            classify_software("Substance Painter texturing workflow", "An Adobe tool tutorial"),
+            ["Substance 3D"],
         )
 
     def test_generic_substance_story_has_a_shared_group(self):
@@ -41,6 +45,12 @@ class SoftwareClassificationTests(unittest.TestCase):
     def test_community_does_not_create_a_unity_match(self):
         self.assertEqual(
             classify_software("Community art showcase", "Artists share their work"),
+            [],
+        )
+
+    def test_spine_is_not_a_top_level_software_category(self):
+        self.assertEqual(
+            classify_software("Spine 2D animation workflow", "A character rigging tutorial"),
             [],
         )
 

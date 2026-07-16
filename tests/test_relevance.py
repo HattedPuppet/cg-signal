@@ -49,6 +49,17 @@ class RelevanceScoringTests(unittest.TestCase):
         self.assertIn("Unity", reasons)
         self.assertIn("AI", reasons)
 
+    def test_substance_products_use_the_shared_relevance_reason(self):
+        _score, reasons = score_relevance(
+            "Substance Painter and Designer workflow",
+            "An Adobe Substance 3D tutorial",
+            "80-level",
+            "Tech & Development",
+        )
+        self.assertIn("Substance 3D", reasons)
+        self.assertNotIn("Substance Painter", reasons)
+        self.assertNotIn("Substance Designer", reasons)
+
 
 if __name__ == "__main__":
     unittest.main()

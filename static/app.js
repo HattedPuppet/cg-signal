@@ -48,11 +48,8 @@ const SOFTWARE_GROUP_ORDER = [
   "Unreal Engine",
   "Unity",
   "Blender",
-  "Substance Painter",
-  "Substance Designer",
   "Substance 3D",
   "Houdini",
-  "Spine",
   "AI",
   "Production techniques",
   "Industry context",
@@ -61,11 +58,8 @@ const SOFTWARE_GROUP_COLORS = {
   "Unreal Engine": "#4b75ff",
   Unity: "#222c37",
   Blender: "#f18a21",
-  "Substance Painter": "#61d0c8",
-  "Substance Designer": "#7fb9ff",
   "Substance 3D": "#9fa9ff",
   Houdini: "#ff7b38",
-  Spine: "#e56d9f",
   AI: "#a77bff",
   "Production techniques": "#d7ff57",
   "Industry context": "#f4a261",
@@ -146,11 +140,10 @@ const SEARCH_ALIASES = new Map([
   ["unity", { field: "software", value: "Unity" }],
   ["blender", { field: "software", value: "Blender" }],
   ["houdini", { field: "software", value: "Houdini" }],
-  ["spine", { field: "software", value: "Spine" }],
-  ["painter", { field: "software", value: "Substance Painter" }],
-  ["substance-painter", { field: "software", value: "Substance Painter" }],
-  ["designer", { field: "software", value: "Substance Designer" }],
-  ["substance-designer", { field: "software", value: "Substance Designer" }],
+  ["painter", { field: "software", value: "Substance 3D" }],
+  ["substance-painter", { field: "software", value: "Substance 3D" }],
+  ["designer", { field: "software", value: "Substance 3D" }],
+  ["substance-designer", { field: "software", value: "Substance 3D" }],
   ["substance", { field: "software", value: "Substance 3D" }],
   ["production", { field: "software", value: "Production techniques" }],
   ["production-techniques", { field: "software", value: "Production techniques" }],
@@ -194,10 +187,28 @@ function readObject(key) {
   }
 }
 
+function normalizeSoftwareCategory(value) {
+  if (["Substance Painter", "Substance Designer", "Substance 3D"].includes(value)) {
+    return "Substance 3D";
+  }
+  if (value === "Spine") return "";
+  return value;
+}
+
+function normalizeFeedbackItem(item) {
+  return {
+    ...item,
+    software_tags: [...new Set((item.software_tags || []).map(normalizeSoftwareCategory).filter(Boolean))],
+  };
+}
+
 function readFeedback(key) {
   try {
     const value = JSON.parse(localStorage.getItem(key) || "[]");
-    return new Map((Array.isArray(value) ? value : []).filter((item) => item?.id).map((item) => [item.id, item]));
+    return new Map((Array.isArray(value) ? value : [])
+      .filter((item) => item?.id)
+      .map(normalizeFeedbackItem)
+      .map((item) => [item.id, item]));
   } catch {
     return new Map();
   }
@@ -215,9 +226,11 @@ function readFilterSet(key) {
   try {
     const values = JSON.parse(stored);
     const first = Array.isArray(values) ? values.find((value) => value && value !== "All") : null;
-    return new Set(first ? [first] : []);
+    const normalized = normalizeSoftwareCategory(first);
+    return new Set(normalized ? [normalized] : []);
   } catch {
-    return new Set([stored]);
+    const normalized = normalizeSoftwareCategory(stored);
+    return new Set(normalized ? [normalized] : []);
   }
 }
 
@@ -292,7 +305,7 @@ async function loadUserState() {
     state.notes = mergeLocal ? { ...(stored.notes || {}), ...state.notes } : (stored.notes || {});
     state.feedback = new Map((mergeLocal
       ? [...(stored.feedback || []), ...state.feedback.values()]
-      : (stored.feedback || [])).map((item) => [item.id, item]));
+      : (stored.feedback || [])).map(normalizeFeedbackItem).map((item) => [item.id, item]));
     state.mutedSources = new Set(mergeLocal
       ? [...state.mutedSources, ...(stored.muted_sources || [])]
       : (stored.muted_sources || []));
@@ -609,8 +622,7 @@ function searchDocument(article) {
 function normalizeSearchQuery(query) {
   return query
     .replace(/#unreal\s+engine\b/giu, '#software:"Unreal Engine"')
-    .replace(/#substance\s+painter\b/giu, '#software:"Substance Painter"')
-    .replace(/#substance\s+designer\b/giu, '#software:"Substance Designer"')
+    .replace(/#substance\s+(?:painter|designer|3d)\b/giu, '#software:"Substance 3D"')
     .replace(/#production\s+techniques\b/giu, '#software:"Production techniques"')
     .replace(/#industry\s+context\b/giu, '#software:"Industry context"');
 }
@@ -627,7 +639,10 @@ function searchTokens(query) {
       const separator = token.indexOf(":");
       if (separator > 0) {
         const field = token.slice(0, separator).toLocaleLowerCase();
-        const value = token.slice(separator + 1).replace(/^['"]|['"]$/g, "").toLocaleLowerCase();
+        let value = token.slice(separator + 1).replace(/^['"]|['"]$/g, "").toLocaleLowerCase();
+        if (field === "software" && ["substance painter", "substance designer"].includes(value)) {
+          value = "substance 3d";
+        }
         return { negative, field, value };
       }
       const aliasKey = token.toLocaleLowerCase().replaceAll("_", "-");
@@ -689,7 +704,7 @@ function latestPool() {
 }
 
 function articleSoftwareCategories(article) {
-  const tags = [...new Set(article.software_tags || [])].filter(Boolean);
+  const tags = [...new Set((article.software_tags || []).map(normalizeSoftwareCategory))].filter(Boolean);
   return tags.length ? tags : [softwareGroup(article)];
 }
 
@@ -899,7 +914,8 @@ function libraryStoryMarkup(visible) {
 }
 
 function softwareGroup(article) {
-  if (article.software_group) return article.software_group;
+  const explicitGroup = normalizeSoftwareCategory(article.software_group);
+  if (explicitGroup) return explicitGroup;
   const matchedReason = SOFTWARE_GROUP_ORDER.find((group) => (article.priority_reasons || []).includes(group));
   if (matchedReason) return matchedReason;
   return article.lane === "Industry & Business" ? "Industry context" : "Production techniques";

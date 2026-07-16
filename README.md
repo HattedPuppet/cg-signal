@@ -54,7 +54,7 @@ accounts, API keys, or subscription fees.
   accepts a searchable research note. The archive remains searchable and every
   item can be restored.
 - Search supports ordinary text plus combinable tags: `#unreal`, `#blender`,
-  `#software:"Substance Painter"`, `#topic:animation`, `#source:"80 Level"`,
+  `#substance`, `#topic:animation`, `#source:"80 Level"`,
   `#is:unread`, `#is:saved`, and `#is:new`. Prefix a term with `-` to exclude it,
   such as `-#industry`.
 - Individual sources can be temporarily filtered, reduced in the Daily Brief,
@@ -77,10 +77,11 @@ accounts, API keys, or subscription fees.
   assets/inspiration. The main category choices and their counts remain
   visible while refining. Subcategories use the same single-selection and
   click-again-to-reset behavior, and the row stays hidden elsewhere.
-- The current category watchlist includes Unreal Engine, Unity, Substance 3D
-  Painter and Designer, Blender, Houdini, Spine, and AI terminology for grouping and
+- The current category watchlist includes Unreal Engine, Unity, Blender,
+  Substance 3D, Houdini, and AI terminology for grouping and
   relevance scoring.
-  Unreal Engine and Blender also have first-party feeds; the other vendors do
+  Substance Painter, Designer, and general Substance coverage share the single
+  **Substance 3D** category. Unreal Engine and Blender also have first-party feeds; the other vendors do
   not currently expose reliable general RSS feeds, so their coverage comes from
   the editorial sources.
 
