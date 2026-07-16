@@ -140,6 +140,9 @@ And is actively interested in:
 - Allow the selected brief—not the entire backlog—to be marked read at once.
 - Accept explicit More/Less feedback and use software, topic, and source overlap
   to adjust only Daily Brief ranking. Keep Latest Signal chronological.
+- Expose the accumulated category, technique, and source weights, including the
+  numeric adjustment applied to each Daily Brief story, and allow feedback to
+  be reset.
 - Exclude muted sources and lower reduced sources without deleting their data.
 
 ### Search and triage
@@ -168,6 +171,8 @@ And is actively interested in:
 
 - Allow a source to be temporarily filtered, reduced in personalized ranking,
   muted, or restored.
+- Make a normal source click isolate that source, a repeated click restore all,
+  and Ctrl/Cmd-click combine multiple sources.
 - Check feeds every 15 minutes while the visible dashboard is open, retain the
   current board on a background failure, and announce newly arrived stories.
 

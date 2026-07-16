@@ -281,6 +281,12 @@ a {
   gap: 3px;
 }
 
+.source-filter-hint {
+  margin: -3px 9px 7px;
+  color: rgba(255, 255, 255, 0.3);
+  font-size: 8px;
+}
+
 .source-button {
   display: grid;
   grid-template-columns: 9px minmax(0, 1fr) auto auto;
@@ -652,7 +658,7 @@ kbd {
   text-transform: uppercase;
 }
 
-.eyebrow span {
+.eyebrow > span:first-child {
   width: 20px;
   height: 2px;
   background: var(--acid);
@@ -1673,6 +1679,18 @@ kbd {
   color: var(--ink-muted);
 }
 
+.briefing-header > div {
+  min-width: 0;
+}
+
+#briefing-date {
+  width: auto;
+  height: auto;
+  flex: 0 0 auto;
+  background: transparent;
+  white-space: nowrap;
+}
+
 .briefing-header h2 {
   margin: 0;
   font-family: var(--font-display);
@@ -1726,6 +1744,78 @@ kbd {
   flex-wrap: wrap;
   gap: 7px;
   margin: 18px 0 28px;
+}
+
+.preference-tuning {
+  margin: 18px 0 20px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--blue) 40%, var(--line));
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--blue) 7%, var(--card));
+}
+
+.preference-tuning summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 13px;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+  list-style: none;
+}
+
+.preference-tuning summary::-webkit-details-marker { display: none; }
+.preference-tuning summary::before { content: "＋"; color: var(--blue); }
+.preference-tuning[open] summary::before { content: "−"; }
+.preference-tuning summary span { margin-left: auto; color: var(--ink-muted); font-size: 8px; font-weight: 650; }
+
+.preference-tuning-body {
+  padding: 0 13px 13px;
+  border-top: 1px solid var(--line);
+}
+
+.preference-tuning-body p {
+  margin: 11px 0 0;
+  color: var(--ink-muted);
+  font-size: 9px;
+  line-height: 1.55;
+}
+
+.tuning-signals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 11px;
+}
+
+.tuning-signal {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--acid) 22%, var(--card));
+  color: var(--ink);
+  font-size: 8px;
+}
+
+.tuning-signal.is-negative { background: color-mix(in srgb, var(--orange) 18%, var(--card)); }
+.tuning-signal b { color: #50721f; }
+.tuning-signal.is-negative b { color: #ad4733; }
+.tuning-signal em { color: var(--ink-muted); font-style: normal; font-weight: 800; }
+
+.reset-tuning-button {
+  margin-top: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+  font-size: 8px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .briefing-category {

@@ -46,8 +46,10 @@ accounts, API keys, or subscription fees.
   and `M` to toggle read state.
 - **Daily brief** selects up to nine high-value unread stories, prioritizing six
   technical items and reserving room for three industry updates. **More like
-  this** and **Less like this** tune this brief locally. Its summaries are built
-  from RSS excerpts and do not call an external AI service.
+  this** and **Less like this** tune this brief locally. Its Preference tuning
+  panel shows the learned category, technique, and source weights and the
+  adjustment applied to each selected story. Its summaries are built from RSS
+  excerpts and do not call an external AI service.
 - Saved stories form a Learning Library grouped by software/context. Each item
   accepts a searchable research note. The archive remains searchable and every
   item can be restored.
@@ -56,7 +58,8 @@ accounts, API keys, or subscription fees.
   `#is:unread`, `#is:saved`, and `#is:new`. Prefix a term with `-` to exclude it,
   such as `-#industry`.
 - Individual sources can be temporarily filtered, reduced in the Daily Brief,
-  or muted. **Reset** in the Sources section restores all source settings.
+  or muted. Clicking a source isolates it; clicking it again restores all
+  sources, and Ctrl/Cmd-click combines sources. **Reset** restores all source settings.
 - Articles remain on their publishers' websites; the dashboard only shows RSS
   metadata and short excerpts.
 - When a feed omits thumbnails, the dashboard reads the article's standard

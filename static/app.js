@@ -386,6 +386,61 @@ function personalizedScore(article) {
   return score;
 }
 
+function signedScore(value) {
+  if (!value) return "0";
+  return value > 0 ? `+${value}` : `−${Math.abs(value)}`;
+}
+
+function personalizationAdjustment(article) {
+  return personalizedScore(article) - priorityScore(article);
+}
+
+function preferenceSignals() {
+  const signals = new Map();
+  const sourceNames = new Map((state.payload?.sources || []).map((source) => [source.id, source.name]));
+  const add = (kind, label, value) => {
+    if (!label) return;
+    const key = `${kind}:${label}`;
+    const current = signals.get(key) || { kind, label, value: 0 };
+    current.value += value;
+    signals.set(key, current);
+  };
+  state.feedback.forEach((feedback) => {
+    (feedback.software_tags || []).forEach((label) => add("Category", label, feedback.value * 8));
+    (feedback.topic_tags || []).forEach((label) => add("Technique", label, feedback.value * 5));
+    add("Source", sourceNames.get(feedback.source_id) || feedback.source_id, feedback.value * 2);
+  });
+  return [...signals.values()]
+    .filter((signal) => signal.value)
+    .sort((left, right) => Math.abs(right.value) - Math.abs(left.value) || left.label.localeCompare(right.label));
+}
+
+function preferenceTuningMarkup() {
+  const feedback = [...state.feedback.values()];
+  const moreCount = feedback.filter((item) => item.value === 1).length;
+  const lessCount = feedback.filter((item) => item.value === -1).length;
+  const signals = preferenceSignals().slice(0, 8);
+  const status = feedback.length ? `${moreCount} more · ${lessCount} less` : "No signals yet";
+  const signalMarkup = signals.length
+    ? `<div class="tuning-signals">${signals.map((signal) => `
+        <span class="tuning-signal${signal.value < 0 ? " is-negative" : ""}" title="${escapeHtml(signal.kind)} preference">
+          <b>${signal.value > 0 ? "↑" : "↓"}</b>${escapeHtml(signal.label)} <em>${signedScore(signal.value)}</em>
+        </span>`).join("")}</div>`
+    : "";
+  const copy = feedback.length
+    ? "Matching categories change a story by ±8 per signal, techniques by ±5, and sources by ±2. A reduced source applies −20. These adjustments affect only Daily Brief ranking."
+    : "Use the up or down arrows on story cards. CG Signal will learn from the story’s categories, techniques, and source; Latest Signal always stays chronological.";
+  return `
+    <details class="preference-tuning"${feedback.length ? " open" : ""}>
+      <summary>Preference tuning <span>${escapeHtml(status)}</span></summary>
+      <div class="preference-tuning-body">
+        ${signalMarkup}
+        <p>${escapeHtml(copy)}</p>
+        ${feedback.length ? '<button class="reset-tuning-button" type="button" data-reset-feedback>Reset More/Less tuning</button>' : ""}
+      </div>
+    </details>`;
+}
+
 function personalizedSort(left, right) {
   return personalizedScore(right) - personalizedScore(left)
     || prioritySort(left, right);
@@ -437,11 +492,13 @@ function dailyBriefArticles() {
 
 function briefingItem(article) {
   const reasons = (article.priority_reasons || []).slice(0, 2).join(" · ") || softwareGroup(article);
+  const adjustment = personalizationAdjustment(article);
+  const tuning = adjustment ? ` · tuning ${signedScore(adjustment)}` : "";
   return `
     <a class="briefing-item${article.lane === "Industry & Business" ? " is-industry" : ""}" href="${escapeHtml(safeUrl(article.url))}" target="_blank" rel="noopener noreferrer" data-read-id="${escapeHtml(article.id)}" style="--story-accent:${escapeHtml(article.accent)}">
       <span class="briefing-item-dot"></span>
       <span class="briefing-item-copy">
-        <span class="briefing-item-meta">${escapeHtml(article.source)} · ${escapeHtml(relativeTime(article.published_at))} · Priority ${priorityScore(article)}</span>
+        <span class="briefing-item-meta">${escapeHtml(article.source)} · ${escapeHtml(relativeTime(article.published_at))} · Brief score ${personalizedScore(article)}${escapeHtml(tuning)}</span>
         <h3>${escapeHtml(article.title)}</h3>
         <p>${escapeHtml(briefExcerpt(article.summary))}</p>
         <span class="briefing-reason">${escapeHtml(reasons)}</span>
@@ -503,6 +560,7 @@ function buildBriefing() {
 
   elements.briefingContent.innerHTML = `
     <p class="briefing-lead"><strong>${unread.length} unread ${unread.length === 1 ? "story is" : "stories are"} waiting.</strong> These ${brief.length} stories are the strongest match for your tools and production interests today.</p>
+    ${preferenceTuningMarkup()}
     <div class="briefing-categories">${categoryPills}</div>
     ${briefingSection("Technical priorities", technical)}
     ${briefingSection("Industry pulse", industry)}`;
@@ -1172,6 +1230,14 @@ document.addEventListener("visibilitychange", () => {
 });
 
 document.addEventListener("click", (event) => {
+  const resetFeedback = event.target.closest("[data-reset-feedback]");
+  if (resetFeedback) {
+    state.feedback.clear();
+    queueUserStateSave();
+    render();
+    return;
+  }
+
   const searchToken = event.target.closest("[data-search-token]");
   if (searchToken) {
     const token = searchToken.dataset.searchToken;
@@ -1225,10 +1291,19 @@ document.addEventListener("click", (event) => {
   if (sourceButton) {
     const id = sourceButton.dataset.sourceId;
     if (state.mutedSources.has(id)) {
-      setSourcePreference(id, "restore");
-      return;
+      state.mutedSources.delete(id);
+      state.reducedSources.delete(id);
+      queueUserStateSave();
     }
-    state.activeSources.has(id) ? state.activeSources.delete(id) : state.activeSources.add(id);
+    if (event.ctrlKey || event.metaKey) {
+      state.activeSources.has(id) ? state.activeSources.delete(id) : state.activeSources.add(id);
+    } else {
+      const effectiveActive = [...state.activeSources].filter((sourceId) => !state.mutedSources.has(sourceId));
+      const alreadyIsolated = effectiveActive.length === 1 && effectiveActive[0] === id;
+      state.activeSources = alreadyIsolated
+        ? new Set((state.payload.sources || []).map((source) => source.id))
+        : new Set([id]);
+    }
     renderSources(state.payload.sources || []);
     render();
     return;
