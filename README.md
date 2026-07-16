@@ -28,6 +28,32 @@ The launcher uses Codex's bundled Python when available and otherwise looks for
 Python 3 on the computer. There are no third-party packages, containers,
 accounts, API keys, or subscription fees.
 
+## Mobile companion
+
+The public-safe mobile edition is built from `mobile/` and deployed through the
+`Refresh mobile signal` GitHub Pages workflow. GitHub gathers the same feeds,
+runs the existing classification and deduplication rules, and refreshes the
+hosted static feed every 30 minutes. The Windows PC does not need to be on.
+
+The mobile edition includes Latest Signal, source and category filters, text
+and hashtag search, an unread view, a short Daily Brief, offline fallback, and
+Android home-screen installation. Read markers are stored only in that phone's
+browser.
+
+The export uses an explicit field allowlist. It never publishes the desktop
+SQLite archive, saved or archived IDs, notes, source preferences, feedback, or
+any `.cache` file. Learning Library, History, source management, and preference
+tuning remain desktop-only.
+
+To build the same deployment locally from the current feed cache:
+
+```powershell
+python mobile/build_mobile.py --source-json .cache/feed-cache.json
+```
+
+The generated, disposable site is written to `mobile/dist/` and is ignored by
+Git.
+
 ## How it behaves
 
 - Feeds check quietly every 15 minutes while the dashboard is open and visible.

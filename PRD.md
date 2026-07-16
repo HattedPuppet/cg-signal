@@ -52,15 +52,20 @@ And is actively interested in:
   technical research.
 - Preserve useful material through saving and archiving.
 - Make accumulated learning searchable through notes and structured queries.
-- Remain private, local, account-free, and free of ongoing API or SaaS costs.
+- Keep personal data private and local, require no account inside CG Signal,
+  and remain free of ongoing API or SaaS costs.
 - Make ranking understandable rather than presenting a black-box feed.
+- Provide an always-available mobile reading surface without requiring the
+  Windows PC to remain powered on.
 
 ## Non-goals
 
 - Replacing publishers' full articles or bypassing their websites.
 - Building a general-purpose social-media reader.
 - Ingesting paid APIs such as the X API.
-- Requiring cloud hosting, user accounts, advertising, or behavioral tracking.
+- Requiring cloud hosting for the desktop application or storing personal
+  research state in a hosted service.
+- Requiring an account inside the reader, advertising, or behavioral tracking.
 - Automatically publishing, messaging, or sharing content externally.
 
 ## Product principles
@@ -192,6 +197,22 @@ And is actively interested in:
 - Remain usable as a responsive browser application and installable PWA.
 - Require no containers, third-party Python packages, accounts, or API keys.
 
+### Hosted mobile companion
+
+- Generate a static mobile feed from the same supported sources,
+  classification, relevance, and deduplication rules as the desktop app.
+- Refresh the hosted feed every 30 minutes through a scheduled GitHub workflow
+  so availability does not depend on the user's PC.
+- Provide Latest Signal, information-type and category filtering, source
+  selection, text and hashtag search, unread filtering, and a short Daily Brief.
+- Support Android home-screen installation and retain the most recently opened
+  feed for temporary offline access.
+- Store read markers only in the phone's local browser storage.
+- Keep History, Learning Library, saved and archived state, notes, preference
+  feedback, and source management exclusive to the desktop application.
+- Export only explicitly allowlisted public RSS-derived fields. Never publish
+  `.cache`, the SQLite database, user state, notes, or preference data.
+
 ## Relevance model
 
 Daily Brief ranking is deterministic and rule-based:
@@ -219,6 +240,8 @@ remain testable and easy to adjust as the user's interests change.
 - No paid APIs or recurring SaaS dependency.
 - Feed metadata, preview-image cache, SQLite article history, source
   configuration, and user state remain under the local project directory.
+- The hosted mobile artifact may contain current public RSS metadata and
+  excerpts, but no personal state or long-term archive.
 - Optional future models must be opt-in, local, and removable without breaking
   the core feed.
 
