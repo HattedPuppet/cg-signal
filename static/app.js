@@ -6,6 +6,7 @@ const storageKeys = {
   layout: "cg-signal:layout",
   lane: "cg-signal:lane",
   software: "cg-signal:software",
+  topics: "cg-signal:topics",
   stateDirty: "cg-signal:state-dirty",
   stateMigrated: "cg-signal:state-migrated",
 };
@@ -15,7 +16,8 @@ const state = {
   articles: [],
   activeSources: new Set(),
   lane: localStorage.getItem(storageKeys.lane) || "All",
-  software: localStorage.getItem(storageKeys.software) || "All",
+  software: readFilterSet(storageKeys.software),
+  topics: readFilterSet(storageKeys.topics),
   view: "all",
   search: "",
   read: readSet(storageKeys.read),
@@ -48,6 +50,42 @@ const SOFTWARE_GROUP_COLORS = {
   "Production techniques": "#d7ff57",
   "Industry context": "#f4a261",
 };
+const TOPIC_ORDER = [
+  "Modeling & sculpting",
+  "Materials & texturing",
+  "Animation, rigging & mocap",
+  "Lighting & rendering",
+  "VFX, simulation & procedural",
+  "Technical art & optimization",
+  "Pipeline, tools & automation",
+  "Game design & development",
+  "Studios & people",
+  "Business, funding & acquisitions",
+  "Jobs, labor & workplace",
+  "Legal & policy",
+  "Publishing, platforms & market",
+  "Events & education",
+  "Other production",
+  "Other industry",
+];
+const TOPIC_COLORS = {
+  "Modeling & sculpting": "#cb7cff",
+  "Materials & texturing": "#61d0c8",
+  "Animation, rigging & mocap": "#ff7597",
+  "Lighting & rendering": "#ffd166",
+  "VFX, simulation & procedural": "#ff7b38",
+  "Technical art & optimization": "#4b75ff",
+  "Pipeline, tools & automation": "#66b8ff",
+  "Game design & development": "#9ddc65",
+  "Studios & people": "#dc8add",
+  "Business, funding & acquisitions": "#f4a261",
+  "Jobs, labor & workplace": "#e78f8e",
+  "Legal & policy": "#a8a29e",
+  "Publishing, platforms & market": "#d9a441",
+  "Events & education": "#65b8a6",
+  "Other production": "#b6bfad",
+  "Other industry": "#c4a484",
+};
 let stateSaveTimer = null;
 
 const elements = {
@@ -58,6 +96,8 @@ const elements = {
   sourceOrbit: document.querySelector("#source-orbit"),
   softwareFilterGroup: document.querySelector("#software-filter-group"),
   softwareFilters: document.querySelector("#software-filters"),
+  topicFilterGroup: document.querySelector("#topic-filter-group"),
+  topicFilters: document.querySelector("#topic-filters"),
   visibleCount: document.querySelector("#visible-count"),
   allCount: document.querySelector("#all-count"),
   savedCount: document.querySelector("#saved-count"),
@@ -103,6 +143,21 @@ function readSet(key) {
   } catch {
     return new Set();
   }
+}
+
+function readFilterSet(key) {
+  const stored = localStorage.getItem(key);
+  if (!stored || stored === "All") return new Set();
+  try {
+    const values = JSON.parse(stored);
+    return new Set(Array.isArray(values) ? values.filter(Boolean) : []);
+  } catch {
+    return new Set([stored]);
+  }
+}
+
+function persistFilterSet(key, values) {
+  localStorage.setItem(key, JSON.stringify([...values]));
 }
 
 function saveSet(key, value) {
@@ -362,6 +417,7 @@ function matchesSearch(article, query) {
     article.lane,
     article.software_group,
     ...(article.software_tags || []),
+    ...(article.topic_tags || []),
     ...(article.priority_reasons || []),
     ...article.related.map((item) => `${item.source} ${item.title}`),
   ]
@@ -380,12 +436,36 @@ function latestPool() {
   });
 }
 
+function articleSoftwareCategories(article) {
+  const tags = [...new Set(article.software_tags || [])].filter(Boolean);
+  return tags.length ? tags : [softwareGroup(article)];
+}
+
+function articleTopics(article) {
+  const tags = [...new Set(article.topic_tags || [])].filter(Boolean);
+  if (tags.length) return tags;
+  return [article.lane === "Industry & Business" ? "Other industry" : "Other production"];
+}
+
+function matchesSelection(values, selected) {
+  return selected.size === 0 || values.some((value) => selected.has(value));
+}
+
+function matchesSoftware(article) {
+  return matchesSelection(articleSoftwareCategories(article), state.software);
+}
+
+function matchesTopics(article) {
+  return matchesSelection(articleTopics(article), state.topics);
+}
+
+function applyFacetFilters(articles) {
+  return articles.filter((article) => matchesSoftware(article) && matchesTopics(article));
+}
+
 function filteredArticles() {
   if (state.view === "all") {
-    const pool = latestPool();
-    return state.software === "All"
-      ? pool
-      : pool.filter((article) => softwareGroup(article) === state.software);
+    return applyFacetFilters(latestPool());
   }
 
   const query = state.search.trim().toLocaleLowerCase();
@@ -444,9 +524,13 @@ function storyCard(article) {
   const lane = article.lane || "Tech & Development";
   const laneLabel = lane === "Industry & Business" ? "Business" : "Tech";
   const category = softwareGroup(article);
-  const reasons = (article.priority_reasons || [])
-    .filter((reason) => reason !== category)
-    .slice(0, 2);
+  const reasons = [...new Set([
+    ...articleSoftwareCategories(article),
+    ...articleTopics(article),
+    ...(article.priority_reasons || []),
+  ])]
+    .filter((reason) => reason !== category && !reason.startsWith("Other "))
+    .slice(0, 3);
   const reasonMarkup = reasons.length
     ? `<div class="story-reasons">${reasons.map((reason) => `<span>${escapeHtml(reason)}</span>`).join("")}</div>`
     : "";
@@ -489,43 +573,42 @@ function softwareGroup(article) {
   return article.lane === "Industry & Business" ? "Industry context" : "Production techniques";
 }
 
-function renderSoftwareFilters(pool) {
-  const isLatestView = state.view === "all";
-  elements.softwareFilterGroup.hidden = !isLatestView;
-  if (!isLatestView) return;
-
+function facetCounts(articles, valuesForArticle) {
   const counts = new Map();
-  pool.forEach((article) => {
-    const group = softwareGroup(article);
-    counts.set(group, (counts.get(group) || 0) + 1);
+  articles.forEach((article) => {
+    valuesForArticle(article).forEach((value) => {
+      counts.set(value, (counts.get(value) || 0) + 1);
+    });
   });
-  const categories = [...counts.keys()].sort((left, right) => {
-    const leftIndex = SOFTWARE_GROUP_ORDER.indexOf(left);
-    const rightIndex = SOFTWARE_GROUP_ORDER.indexOf(right);
+  return counts;
+}
+
+function orderedFacetCategories(counts, selected, order) {
+  return [...new Set([...counts.keys(), ...selected])].sort((left, right) => {
+    const leftIndex = order.indexOf(left);
+    const rightIndex = order.indexOf(right);
     if (leftIndex === -1 && rightIndex === -1) return left.localeCompare(right);
     if (leftIndex === -1) return 1;
     if (rightIndex === -1) return -1;
     return leftIndex - rightIndex;
   });
-  if (state.software !== "All" && !counts.has(state.software)) {
-    state.software = "All";
-    localStorage.setItem(storageKeys.software, state.software);
-  }
+}
 
+function renderFacetButtons(element, kind, allLabel, allCount, categories, counts, selected, colors) {
   const buttons = [
-    { label: "All stories", value: "All", count: pool.length, color: "#d7ff57" },
+    { label: allLabel, value: "All", count: allCount, color: "#d7ff57" },
     ...categories.map((category) => ({
       label: category,
       value: category,
-      count: counts.get(category),
-      color: SOFTWARE_GROUP_COLORS[category] || "#d7ff57",
+      count: counts.get(category) || 0,
+      color: colors[category] || "#d7ff57",
     })),
   ];
-  elements.softwareFilters.innerHTML = buttons
+  element.innerHTML = buttons
     .map((button) => {
-      const active = state.software === button.value;
+      const active = button.value === "All" ? selected.size === 0 : selected.has(button.value);
       return `
-        <button class="software-button${active ? " is-active" : ""}" type="button" data-software="${escapeHtml(button.value)}" aria-pressed="${active}" style="--category-accent:${escapeHtml(button.color)}">
+        <button class="facet-button ${kind}-button${active ? " is-active" : ""}" type="button" data-${kind}="${escapeHtml(button.value)}" aria-pressed="${active}" style="--category-accent:${escapeHtml(button.color)}">
           <span>${escapeHtml(button.label)}</span>
           <strong>${button.count}</strong>
         </button>`;
@@ -533,12 +616,44 @@ function renderSoftwareFilters(pool) {
     .join("");
 }
 
+function renderFacetFilters(pool) {
+  const isLatestView = state.view === "all";
+  elements.softwareFilterGroup.hidden = !isLatestView;
+  elements.topicFilterGroup.hidden = !isLatestView;
+  if (!isLatestView) return;
+
+  const softwarePool = pool.filter(matchesTopics);
+  const topicPool = pool.filter(matchesSoftware);
+  const softwareCounts = facetCounts(softwarePool, articleSoftwareCategories);
+  const topicCounts = facetCounts(topicPool, articleTopics);
+  renderFacetButtons(
+    elements.softwareFilters,
+    "software",
+    "All categories",
+    softwarePool.length,
+    orderedFacetCategories(softwareCounts, state.software, SOFTWARE_GROUP_ORDER),
+    softwareCounts,
+    state.software,
+    SOFTWARE_GROUP_COLORS,
+  );
+  renderFacetButtons(
+    elements.topicFilters,
+    "topic",
+    "All topics",
+    topicPool.length,
+    orderedFacetCategories(topicCounts, state.topics, TOPIC_ORDER),
+    topicCounts,
+    state.topics,
+    TOPIC_COLORS,
+  );
+}
+
 function render() {
   if (!state.payload) return;
   const pool = state.view === "all" ? latestPool() : [];
-  renderSoftwareFilters(pool);
+  renderFacetFilters(pool);
   const visible = state.view === "all"
-    ? (state.software === "All" ? pool : pool.filter((article) => softwareGroup(article) === state.software))
+    ? applyFacetFilters(pool)
     : filteredArticles();
   elements.grid.classList.toggle("is-list", state.layout === "list");
   elements.grid.classList.remove("loading-grid");
@@ -698,8 +813,30 @@ document.addEventListener("click", (event) => {
 
   const softwareButton = event.target.closest(".software-button");
   if (softwareButton) {
-    state.software = softwareButton.dataset.software;
-    localStorage.setItem(storageKeys.software, state.software);
+    const software = softwareButton.dataset.software;
+    if (software === "All") {
+      state.software.clear();
+    } else if (state.software.has(software)) {
+      state.software.delete(software);
+    } else {
+      state.software.add(software);
+    }
+    persistFilterSet(storageKeys.software, state.software);
+    render();
+    return;
+  }
+
+  const topicButton = event.target.closest(".topic-button");
+  if (topicButton) {
+    const topic = topicButton.dataset.topic;
+    if (topic === "All") {
+      state.topics.clear();
+    } else if (state.topics.has(topic)) {
+      state.topics.delete(topic);
+    } else {
+      state.topics.add(topic);
+    }
+    persistFilterSet(storageKeys.topics, state.topics);
     render();
     return;
   }
@@ -753,9 +890,11 @@ document.querySelector("#reset-sources").addEventListener("click", () => {
 document.querySelector("#clear-filters").addEventListener("click", () => {
   state.activeSources = new Set((state.payload.sources || []).map((source) => source.id));
   state.lane = "All";
-  state.software = "All";
+  state.software.clear();
+  state.topics.clear();
   localStorage.setItem(storageKeys.lane, state.lane);
-  localStorage.setItem(storageKeys.software, state.software);
+  persistFilterSet(storageKeys.software, state.software);
+  persistFilterSet(storageKeys.topics, state.topics);
   state.view = "all";
   state.search = "";
   elements.search.value = "";

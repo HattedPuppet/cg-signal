@@ -478,6 +478,125 @@ SOFTWARE_MATCH_TERMS = (
     ("Substance 3D", ("substance 3d", "substance")),
 )
 
+PRODUCTION_TOPIC_TERMS = (
+    (
+        "Modeling & sculpting",
+        (
+            "modeling", "modelling", "sculpt", "zbrush", "retopology",
+            "photogrammetry", "モデリング", "スカルプト", "造形", "フォトグラメトリ",
+        ),
+    ),
+    (
+        "Materials & texturing",
+        (
+            "material", "texture", "texturing", "substance", "lookdev",
+            "look development", "材質", "質感", "テクスチャ", "マテリアル", "ルックデブ",
+        ),
+    ),
+    (
+        "Animation, rigging & mocap",
+        (
+            "animation", "animating", "rigging", "motion capture", "mocap",
+            "facial capture", "facial animation", "character motion", "アニメーション",
+            "リギング", "モーションキャプチャ", "フェイシャル", "モーション制作",
+        ),
+    ),
+    (
+        "Lighting & rendering",
+        (
+            "lighting", "render", "ray tracing", "path tracing", "global illumination",
+            "lumen", "cycles", "ライティング", "レンダリング", "レイトレーシング",
+            "パストレーシング", "照明",
+        ),
+    ),
+    (
+        "VFX, simulation & procedural",
+        (
+            "vfx", "visual effects", "simulation", "procedural", "particle", "fluid",
+            "destruction", "niagara", "geometry nodes", "houdini", "エフェクト",
+            "シミュレーション", "プロシージャル", "パーティクル", "流体", "破壊表現",
+        ),
+    ),
+    (
+        "Technical art & optimization",
+        (
+            "technical art", "tech art", "optimization", "optimisation", "performance",
+            "shader", "benchmark", "profiling", "frame rate", "lod", "nanite",
+            "テクニカルアート", "最適化", "パフォーマンス", "シェーダー", "ベンチマーク",
+        ),
+    ),
+    (
+        "Pipeline, tools & automation",
+        (
+            "pipeline", "workflow", "plugin", "add-on", "addon", "automation", "scripting",
+            "export", "import", "integration", "tool development", "パイプライン",
+            "ワークフロー", "プラグイン", "アドオン", "自動化", "スクリプト", "連携",
+        ),
+    ),
+    (
+        "Game design & development",
+        (
+            "game design", "game development", "gameplay", "level design", "multiplayer",
+            "prototype", "postmortem", "development diary", "ゲームデザイン", "ゲーム開発",
+            "ゲーム制作", "ゲームプレイ", "レベルデザイン", "プロトタイプ", "開発日誌",
+        ),
+    ),
+)
+
+INDUSTRY_TOPIC_TERMS = (
+    (
+        "Studios & people",
+        (
+            "studio", "developer", "artist", "director", "executive", "founder", "ceo",
+            "appointed", "retires", "retirement", "interview", "スタジオ", "開発者",
+            "アーティスト", "監督", "社長", "代表", "就任", "引退", "インタビュー",
+        ),
+    ),
+    (
+        "Business, funding & acquisitions",
+        (
+            "acquisition", "acquires", "acquired", "funding", "investment", "earnings",
+            "revenue", "profit", "merger", "partnership", "bankruptcy", "business",
+            "買収", "資金", "投資", "決算", "売上", "利益", "合併", "提携", "倒産",
+            "事業", "企業",
+        ),
+    ),
+    (
+        "Jobs, labor & workplace",
+        (
+            "jobs", "hiring", "layoff", "labor", "union", "strike", "workplace",
+            "workforce", "recruitment", "求人", "採用", "解雇", "労働", "組合",
+            "ストライキ", "職場", "人員削減",
+        ),
+    ),
+    (
+        "Legal & policy",
+        (
+            "copyright", "lawsuit", "legal", "contract", "regulation", "policy", "court",
+            "rights", "antitrust", "著作権", "訴訟", "契約", "規制", "政策", "裁判",
+            "権利", "独占禁止",
+        ),
+    ),
+    (
+        "Publishing, platforms & market",
+        (
+            "publisher", "platform", "launch", "release", "delayed", "delay", "cancelled",
+            "canceled", "pricing", "price", "sales", "market", "steam", "playstation",
+            "xbox", "nintendo", "google play", "app store", "パブリッシャー", "プラットフォーム",
+            "配信", "発売", "延期", "中止", "価格", "値上げ", "市場", "販売",
+        ),
+    ),
+    (
+        "Events & education",
+        (
+            "event", "conference", "festival", "expo", "awards", "summit", "workshop",
+            "school", "course", "education", "concert", "イベント", "カンファレンス",
+            "フェスティバル", "展示会", "アワード", "授賞", "講座", "教育", "学校",
+            "ワークショップ", "コンサート",
+        ),
+    ),
+)
+
 DEPTH_TERMS = (
     ("Tutorial or breakdown", ("tutorial", "breakdown", "how to", "making of", "チュートリアル", "メイキング", "解説"), 10),
     ("Workflow or pipeline", ("workflow", "pipeline", "ワークフロー", "パイプライン"), 8),
@@ -576,6 +695,17 @@ def classify_software(title: str, summary: str) -> list[str]:
     if any(label in {"Substance Painter", "Substance Designer"} for label in labels):
         labels = [label for label in labels if label != "Substance 3D"]
     return labels
+
+
+def classify_topics(title: str, summary: str, lane: str) -> list[str]:
+    """Return overlapping production or industry topics for faceted filtering."""
+
+    value = f"{title} {summary}".lower()
+    groups = INDUSTRY_TOPIC_TERMS if lane == "Industry & Business" else PRODUCTION_TOPIC_TERMS
+    labels = [label for label, terms in groups if any(term in value for term in terms)]
+    if labels:
+        return labels
+    return ["Other industry" if lane == "Industry & Business" else "Other production"]
 
 
 def parse_feed_document(xml_bytes: bytes) -> ET.Element:
@@ -781,6 +911,11 @@ def cluster_articles(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
         public["software_tags"] = software_tags
         public["software_group"] = software_tags[0] if software_tags else (
             "Industry context" if public.get("lane") == "Industry & Business" else "Production techniques"
+        )
+        public["topic_tags"] = classify_topics(
+            public["title"],
+            public.get("summary", ""),
+            public.get("lane", "Tech & Development"),
         )
         output.append(public)
     return output

@@ -180,7 +180,7 @@ a {
 .source-button,
 .theme-button,
 .text-button,
-.software-button,
+.facet-button,
 .icon-text-button,
 .brief-button,
 .refresh-button,
@@ -760,7 +760,7 @@ kbd {
   gap: 7px;
 }
 
-.software-button {
+.facet-button {
   display: inline-flex;
   min-width: max-content;
   align-items: center;
@@ -770,11 +770,12 @@ kbd {
   border-radius: 999px;
   background: var(--card);
   color: var(--ink-muted);
+  cursor: pointer;
   font-size: 10px;
   font-weight: 700;
 }
 
-.software-button::before {
+.facet-button::before {
   content: "";
   width: 6px;
   height: 6px;
@@ -784,7 +785,7 @@ kbd {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--category-accent) 15%, transparent);
 }
 
-.software-button strong {
+.facet-button strong {
   min-width: 19px;
   padding: 1px 5px;
   border-radius: 999px;
@@ -794,12 +795,12 @@ kbd {
   text-align: center;
 }
 
-.software-button:hover {
+.facet-button:hover {
   border-color: var(--category-accent);
   color: var(--ink);
 }
 
-.software-button.is-active {
+.facet-button.is-active {
   border-color: var(--category-accent);
   background: color-mix(in srgb, var(--category-accent) 18%, var(--card));
   box-shadow: inset 0 -2px var(--category-accent);
@@ -1595,8 +1596,8 @@ body.night .lane-filters { background: #1d221d; }
 body.night .lane-button.is-active { background: #f0f2ec; color: #171b17; }
 body.night .lane-button[data-lane="Tech & Development"].is-active { background: var(--acid); }
 body.night .lane-button[data-lane="Industry & Business"].is-active { background: var(--orange); }
-body.night .software-button { background: rgba(0,0,0,.12); }
-body.night .software-button.is-active {
+body.night .facet-button { background: rgba(0,0,0,.12); }
+body.night .facet-button.is-active {
   background: color-mix(in srgb, var(--category-accent) 24%, var(--card));
   color: #f0f2ec;
 }
@@ -1684,7 +1685,7 @@ body.night .source-stack i {
     overflow-x: auto;
     padding-bottom: 4px;
   }
-  .software-button { min-width: max-content; }
+  .facet-button { min-width: max-content; }
   .result-summary { display: none; }
   .story-grid { grid-template-columns: 1fr; }
   .story-grid.is-list .story-card { display: flex; min-height: 390px; }

@@ -90,20 +90,31 @@ And is actively interested in:
 - Fold likely duplicate coverage into one lead card.
 - Retain links to related reports beneath the lead story.
 - Separate **Tech & Development** from **Industry & Business**.
-- Support software-category, information-type, source, search, saved, unread,
-  and archive filters.
+- Support software/context, topic, information-type, source, search, saved,
+  unread, and archive filters.
 
-### Latest Signal and software categories
+### Latest Signal facets
 
 - Present the primary feed in chronological, newest-first order without a
   relevance threshold, result cap, or hidden re-ranking.
-- Provide a visible **Software categories** selector containing only non-empty
-  groups, with live counts that respond to the other active filters.
-- Classify stories under Unreal Engine, Blender, Substance Painter, Substance
-  Designer, Houdini, Spine, **Production techniques**, or **Industry context**.
-- Give each story one primary category so multi-tool articles are not repeated.
-  Prefer title mentions over incidental summary mentions while retaining all
-  detected software as searchable metadata.
+- Provide visible **Tools & context** and **Topics** selectors containing only
+  non-empty groups, with live counts that respond to the other active filters.
+- Classify software/context under Unreal Engine, Blender, Substance Painter,
+  Substance Designer, Houdini, Spine, **Production techniques**, or **Industry
+  context**.
+- Classify production topics under modeling, materials, animation, rendering,
+  VFX, technical art, pipelines, or game development, with a clear fallback for
+  unmatched production coverage.
+- Classify industry topics under people and studios, business and funding,
+  labor, legal matters, publishing and markets, or events and education, with a
+  clear fallback for unmatched industry coverage.
+- Retain all detected software and topic tags. Multi-tool articles must match
+  every relevant category filter while keeping one primary card label and one
+  card in the unfiltered feed.
+- Prefer software mentions in titles over incidental summary mentions when
+  choosing the primary label.
+- Support multiple active choices. Use OR within each filter row and AND between
+  the Tools & context and Topics rows.
 - Keep read stories in Latest Signal; remove only archived stories from the
   active chronological feed.
 - Do not expose broad inferred subject filters such as Engines, 3D Art, Tools,
@@ -145,8 +156,7 @@ remain testable and easy to adjust as the user's interests change.
 ## Core user journey
 
 1. Open CG Signal from the Start menu.
-2. Review Latest Signal, narrow it by software category, or open the Daily
-   Brief.
+2. Review Latest Signal, narrow it by tool and topic, or open the Daily Brief.
 3. Open valuable stories on the original site.
 4. Save evergreen learning material, archive low-priority items, and mark the
    reviewed briefing read.
@@ -168,15 +178,17 @@ analytics:
 
 - The short Daily Brief can normally be reviewed in under ten minutes.
 - Duplicate announcements rarely require opening more than one card.
-- Latest Signal stays chronological and software categories reliably narrow it.
+- Latest Signal stays chronological while tool and topic facets reliably narrow
+  it without duplicating cards.
 - Saved material remains retrievable after browser restarts.
 - Feed failures do not prevent access to the last successful briefing.
 - The dashboard remains useful when all optional intelligence features are off.
 
 ## Quality requirements
 
-- Classification, relevance, state normalization, feed parsing, thumbnail
-  discovery, and deduplication behavior must have automated regression tests.
+- Software/topic classification, relevance, state normalization, feed parsing,
+  thumbnail discovery, and deduplication behavior must have automated regression
+  tests.
 - State writes must be bounded, validated, and atomic.
 - Controls must have accessible names and keyboard-focus behavior.
 - The UI must remain usable at desktop and mobile widths.
