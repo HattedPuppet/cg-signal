@@ -46,23 +46,27 @@ const state = {
 
 const SOFTWARE_GROUP_ORDER = [
   "Unreal Engine",
+  "Unity",
   "Blender",
   "Substance Painter",
   "Substance Designer",
   "Substance 3D",
   "Houdini",
   "Spine",
+  "AI",
   "Production techniques",
   "Industry context",
 ];
 const SOFTWARE_GROUP_COLORS = {
   "Unreal Engine": "#4b75ff",
+  Unity: "#222c37",
   Blender: "#f18a21",
   "Substance Painter": "#61d0c8",
   "Substance Designer": "#7fb9ff",
   "Substance 3D": "#9fa9ff",
   Houdini: "#ff7b38",
   Spine: "#e56d9f",
+  AI: "#a77bff",
   "Production techniques": "#d7ff57",
   "Industry context": "#f4a261",
 };
@@ -139,6 +143,7 @@ const SEARCH_ALIASES = new Map([
   ["unreal-engine", { field: "software", value: "Unreal Engine" }],
   ["ue", { field: "software", value: "Unreal Engine" }],
   ["ue5", { field: "software", value: "Unreal Engine" }],
+  ["unity", { field: "software", value: "Unity" }],
   ["blender", { field: "software", value: "Blender" }],
   ["houdini", { field: "software", value: "Houdini" }],
   ["spine", { field: "software", value: "Spine" }],
@@ -151,6 +156,8 @@ const SEARCH_ALIASES = new Map([
   ["production-techniques", { field: "software", value: "Production techniques" }],
   ["industry", { field: "software", value: "Industry context" }],
   ["industry-context", { field: "software", value: "Industry context" }],
+  ["ai", { field: "software", value: "AI" }],
+  ["genai", { field: "software", value: "AI" }],
 ]);
 
 const sourceShortNames = {
@@ -897,6 +904,9 @@ function renderFacetFilters(pool) {
 
   const softwarePool = pool;
   const softwareCounts = facetCounts(softwarePool, articleSoftwareCategories);
+  SOFTWARE_GROUP_ORDER.forEach((category) => {
+    if (!softwareCounts.has(category)) softwareCounts.set(category, 0);
+  });
   renderFacetButtons(
     elements.softwareFilters,
     "software",

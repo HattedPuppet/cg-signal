@@ -103,9 +103,10 @@ And is actively interested in:
   relevance threshold, result cap, or hidden re-ranking.
 - Provide one visible **Categories** selector containing only non-empty groups,
   with live counts that respond to the other active filters.
-- Classify software/context under Unreal Engine, Blender, Substance Painter,
-  Substance Designer, Houdini, Spine, **Production techniques**, or **Industry
-  context**.
+- Classify software/context under Unreal Engine, Unity, Blender, Substance
+  Painter, Substance Designer, Houdini, Spine, AI, **Production techniques**,
+  or **Industry context**. Keep watchlist categories visible even when their
+  current filtered count is zero.
 - Classify production topics under modeling, materials, animation, rendering,
   VFX, technical art, pipelines, game development, breakdowns, research,
   releases, or assets/inspiration, with a clear fallback for unmatched

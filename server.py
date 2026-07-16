@@ -475,6 +475,16 @@ INTEREST_TERMS = (
     ("Substance Designer", ("substance designer", "substance 3d designer"), 22),
     ("Houdini", ("houdini", "sidefx"), 22),
     ("Spine", ("spine 2d", "esoteric software", "spine animation"), 22),
+    ("Unity", ("unity", "unity engine", "unity 6", "unity technologies", "unity editor", "ユニティ"), 20),
+    (
+        "AI",
+        (
+            "ai", "artificial intelligence", "generative ai", "genai", "machine learning",
+            "neural network", "diffusion model", "large language model", "生成ai", "生成 ai",
+            "人工知能", "機械学習",
+        ),
+        12,
+    ),
 )
 
 SOFTWARE_MATCH_TERMS = (
@@ -630,6 +640,19 @@ def classify_lane(title: str, summary: str, source_id: str) -> str:
     return "Tech & Development"
 
 
+def term_position(value: str, term: str) -> int:
+    """Find a term without treating ASCII word fragments as product names."""
+
+    if term.isascii():
+        match = re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", value)
+        return match.start() if match else -1
+    return value.find(term)
+
+
+def contains_term(value: str, term: str) -> bool:
+    return term_position(value, term) >= 0
+
+
 def score_relevance(
     title: str,
     summary: str,
@@ -645,9 +668,9 @@ def score_relevance(
     reasons: list[str] = []
 
     for label, terms, points in INTEREST_TERMS:
-        if any(term in value for term in terms):
+        if any(contains_term(value, term) for term in terms):
             score += points
-            if any(term in title_value for term in terms):
+            if any(contains_term(title_value, term) for term in terms):
                 score += 4
             reasons.append(label)
 
@@ -681,8 +704,8 @@ def classify_software(title: str, summary: str) -> list[str]:
     summary_value = summary.lower()
     matches: list[tuple[tuple[int, int, int], str]] = []
     for order, (label, terms) in enumerate(SOFTWARE_MATCH_TERMS):
-        title_positions = [title_value.find(term) for term in terms if term in title_value]
-        summary_positions = [summary_value.find(term) for term in terms if term in summary_value]
+        title_positions = [position for term in terms if (position := term_position(title_value, term)) >= 0]
+        summary_positions = [position for term in terms if (position := term_position(summary_value, term)) >= 0]
         if title_positions:
             matches.append(((0, min(title_positions), order), label))
         elif summary_positions:

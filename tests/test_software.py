@@ -28,6 +28,22 @@ class SoftwareClassificationTests(unittest.TestCase):
             ["Substance 3D"],
         )
 
+    def test_unity_and_ai_are_watch_categories(self):
+        self.assertEqual(
+            classify_software("Unity 6 lighting workflow", "A game engine tutorial"),
+            ["Unity"],
+        )
+        self.assertEqual(
+            classify_software("Generative AI for concept art", "A diffusion model workflow"),
+            ["AI"],
+        )
+
+    def test_community_does_not_create_a_unity_match(self):
+        self.assertEqual(
+            classify_software("Community art showcase", "Artists share their work"),
+            [],
+        )
+
     def test_unmatched_story_has_no_software_tag(self):
         self.assertEqual(classify_software("Lighting theory", "A general production article"), [])
 

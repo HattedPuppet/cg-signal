@@ -74,8 +74,8 @@ accounts, API keys, or subscription fees.
   assets/inspiration. The main category choices and their counts remain
   visible while refining. Subcategories use the same single-selection and
   click-again-to-reset behavior, and the row stays hidden elsewhere.
-- The current tool watchlist includes Unreal Engine, Substance 3D Painter and
-  Designer, Blender, Houdini, and Spine terminology for software grouping and
+- The current category watchlist includes Unreal Engine, Unity, Substance 3D
+  Painter and Designer, Blender, Houdini, Spine, and AI terminology for grouping and
   relevance scoring.
   Unreal Engine and Blender also have first-party feeds; the other vendors do
   not currently expose reliable general RSS feeds, so their coverage comes from

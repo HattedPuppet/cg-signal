@@ -39,6 +39,16 @@ class RelevanceScoringTests(unittest.TestCase):
         self.assertGreater(multi_score, single_score)
         self.assertIn("Multiple sources", reasons)
 
+    def test_unity_and_ai_matches_are_explained(self):
+        _score, reasons = score_relevance(
+            "Unity editor adds generative AI tools",
+            "A machine learning workflow update",
+            "80-level",
+            "Tech & Development",
+        )
+        self.assertIn("Unity", reasons)
+        self.assertIn("AI", reasons)
+
 
 if __name__ == "__main__":
     unittest.main()
