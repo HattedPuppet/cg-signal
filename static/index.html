@@ -84,32 +84,6 @@
 
       <main class="main-panel">
         <header class="topbar">
-          <div class="search-wrap">
-            <label class="search-box" for="search-input">
-              <span aria-hidden="true">⌕</span>
-              <input
-                id="search-input"
-                type="search"
-                autocomplete="off"
-                placeholder="Search articles or try #unreal…"
-                aria-describedby="search-help"
-              />
-              <kbd>Ctrl K</kbd>
-            </label>
-            <div id="search-help" class="search-help">
-              <p><strong>Combine words and tags</strong><span>Use a minus to exclude anything.</span></p>
-              <div class="search-examples">
-                <button type="button" data-search-token="#unreal">#unreal</button>
-                <button type="button" data-search-token="#blender">#blender</button>
-                <button type="button" data-search-token="#topic:animation">#topic:animation</button>
-                <button type="button" data-search-token="#is:unread">#is:unread</button>
-                <button type="button" data-search-token="#is:saved">#is:saved</button>
-                <button type="button" data-search-token="-#industry">-#industry</button>
-              </div>
-              <small>Also: #software:&quot;Substance Painter&quot; · #source:&quot;80 Level&quot; · #is:new</small>
-            </div>
-          </div>
-
           <div class="topbar-actions">
             <button id="brief-button" class="brief-button" type="button" aria-haspopup="dialog" aria-expanded="false">
               <span class="brief-spark" aria-hidden="true">✦</span>
@@ -158,10 +132,45 @@
 
         <section class="feed-toolbar" aria-label="Story filters">
           <div class="filter-groups">
-            <div class="lane-filters" role="group" aria-label="Filter by information type">
-              <button class="lane-button is-active" type="button" data-lane="All">All <strong>—</strong></button>
-              <button class="lane-button" type="button" data-lane="Tech &amp; Development">Tech &amp; development <strong>—</strong></button>
-              <button class="lane-button" type="button" data-lane="Industry &amp; Business">Industry &amp; business <strong>—</strong></button>
+            <div class="feed-primary-row">
+              <div class="lane-filters" role="group" aria-label="Filter by information type">
+                <button class="lane-button is-active" type="button" data-lane="All">All <strong>—</strong></button>
+                <button class="lane-button" type="button" data-lane="Tech &amp; Development">Tech &amp; development <strong>—</strong></button>
+                <button class="lane-button" type="button" data-lane="Industry &amp; Business">Industry &amp; business <strong>—</strong></button>
+              </div>
+
+              <div class="search-wrap">
+                <label class="search-box" for="search-input">
+                  <span aria-hidden="true">⌕</span>
+                  <input
+                    id="search-input"
+                    type="search"
+                    autocomplete="off"
+                    placeholder="Search articles or try #unreal…"
+                    aria-describedby="search-help"
+                  />
+                  <kbd>Ctrl K</kbd>
+                </label>
+                <div id="search-help" class="search-help">
+                  <p><strong>Combine words and tags</strong><span>Use a minus to exclude anything.</span></p>
+                  <div class="search-examples">
+                    <button type="button" data-search-token="#unreal">#unreal</button>
+                    <button type="button" data-search-token="#blender">#blender</button>
+                    <button type="button" data-search-token="#topic:animation">#topic:animation</button>
+                    <button type="button" data-search-token="#is:unread">#is:unread</button>
+                    <button type="button" data-search-token="#is:saved">#is:saved</button>
+                    <button type="button" data-search-token="-#industry">-#industry</button>
+                  </div>
+                  <small>Also: #software:&quot;Substance Painter&quot; · #source:&quot;80 Level&quot; · #is:new</small>
+                </div>
+              </div>
+
+              <div class="result-summary">
+                <span id="visible-count">— stories</span>
+                <span id="new-since" class="new-since-count" hidden></span>
+                <span class="divider"></span>
+                <span id="sort-label">Newest first</span>
+              </div>
             </div>
 
             <div id="software-filter-group" class="software-filter-group">
@@ -179,12 +188,6 @@
             </div>
           </div>
 
-          <div class="result-summary">
-            <span id="visible-count">— stories</span>
-            <span id="new-since" class="new-since-count" hidden></span>
-            <span class="divider"></span>
-            <span id="sort-label">Newest first</span>
-          </div>
         </section>
 
         <div id="notice" class="notice" role="status" hidden></div>
