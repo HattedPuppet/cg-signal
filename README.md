@@ -30,16 +30,17 @@ accounts, API keys, or subscription fees.
 
 ## How it behaves
 
-- Feeds refresh at most every 15 minutes unless you click **Refresh**.
+- Feeds refresh at most every 15 minutes unless you click **Check feeds**, which
+  bypasses the cache and checks every source immediately.
 - A small cache is stored in `.cache/feed-cache.json` so the last successful
   briefing remains available during a temporary feed failure.
 - Read, saved, and archived states are persisted by the local server in
   `.cache/user-state.json`. Browser storage acts as a fallback and migrates
   existing saved/read state automatically.
-- **Latest Signal** keeps the primary feed chronological and offers live facets
-  for software, production topics, and industry topics. Multi-tool stories can
-  be found from every relevant software filter while appearing only once in the
-  All Stories feed and retaining one clear primary card label.
+- **Latest Signal** keeps the primary feed chronological and offers live
+  category counts. Multi-tool stories can be found from every relevant software
+  filter while appearing only once in the All Stories feed and retaining one
+  clear primary card label.
 - **Daily brief** selects up to nine high-value unread stories, prioritizing six
   technical items and reserving room for three industry updates. Its summaries
   are built from RSS excerpts and do not call an external AI service.
@@ -53,12 +54,11 @@ accounts, API keys, or subscription fees.
   and product/version signatures that often survive between Japanese and
   English headlines. Related coverage remains expandable beneath the lead card.
 - A separate information-type filter divides **Tech & Development** coverage
-  from **Industry & Business** reporting. Latest Signal adds dynamic **Tools &
-  context** and **Topics** rows with live counts. Multiple selections use OR
-  within a row and the two rows combine with AND.
-- Production topics cover modeling, materials, animation, rendering, VFX,
-  technical art, pipelines, and game development. Industry topics cover people,
-  business, labor, legal matters, publishing, platforms, markets, and events.
+  from **Industry & Business** reporting. The compact **Categories** row supports
+  multiple selections with OR behavior.
+- Selecting **Production techniques** alone reveals a contextual subcategory row
+  for modeling, materials, animation, rendering, VFX, technical art, pipelines,
+  and game development. It stays hidden for software and industry categories.
 - The current tool watchlist includes Unreal Engine, Substance 3D Painter and
   Designer, Blender, Houdini, and Spine terminology for software grouping and
   relevance scoring.

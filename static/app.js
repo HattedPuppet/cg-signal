@@ -59,14 +59,7 @@ const TOPIC_ORDER = [
   "Technical art & optimization",
   "Pipeline, tools & automation",
   "Game design & development",
-  "Studios & people",
-  "Business, funding & acquisitions",
-  "Jobs, labor & workplace",
-  "Legal & policy",
-  "Publishing, platforms & market",
-  "Events & education",
   "Other production",
-  "Other industry",
 ];
 const TOPIC_COLORS = {
   "Modeling & sculpting": "#cb7cff",
@@ -77,14 +70,7 @@ const TOPIC_COLORS = {
   "Technical art & optimization": "#4b75ff",
   "Pipeline, tools & automation": "#66b8ff",
   "Game design & development": "#9ddc65",
-  "Studios & people": "#dc8add",
-  "Business, funding & acquisitions": "#f4a261",
-  "Jobs, labor & workplace": "#e78f8e",
-  "Legal & policy": "#a8a29e",
-  "Publishing, platforms & market": "#d9a441",
-  "Events & education": "#65b8a6",
   "Other production": "#b6bfad",
-  "Other industry": "#c4a484",
 };
 let stateSaveTimer = null;
 
@@ -442,9 +428,14 @@ function articleSoftwareCategories(article) {
 }
 
 function articleTopics(article) {
+  if (softwareGroup(article) !== "Production techniques") return [];
   const tags = [...new Set(article.topic_tags || [])].filter(Boolean);
   if (tags.length) return tags;
-  return [article.lane === "Industry & Business" ? "Other industry" : "Other production"];
+  return ["Other production"];
+}
+
+function productionTopicsActive() {
+  return state.software.size === 1 && state.software.has("Production techniques");
 }
 
 function matchesSelection(values, selected) {
@@ -526,7 +517,7 @@ function storyCard(article) {
   const category = softwareGroup(article);
   const reasons = [...new Set([
     ...articleSoftwareCategories(article),
-    ...articleTopics(article),
+    ...(category === "Production techniques" ? articleTopics(article) : []),
     ...(article.priority_reasons || []),
   ])]
     .filter((reason) => reason !== category && !reason.startsWith("Other "))
@@ -618,14 +609,18 @@ function renderFacetButtons(element, kind, allLabel, allCount, categories, count
 
 function renderFacetFilters(pool) {
   const isLatestView = state.view === "all";
+  const showTopics = isLatestView && productionTopicsActive();
   elements.softwareFilterGroup.hidden = !isLatestView;
-  elements.topicFilterGroup.hidden = !isLatestView;
+  elements.topicFilterGroup.hidden = !showTopics;
   if (!isLatestView) return;
 
-  const softwarePool = pool.filter(matchesTopics);
-  const topicPool = pool.filter(matchesSoftware);
+  if (!showTopics && state.topics.size) {
+    state.topics.clear();
+    persistFilterSet(storageKeys.topics, state.topics);
+  }
+
+  const softwarePool = showTopics ? pool.filter(matchesTopics) : pool;
   const softwareCounts = facetCounts(softwarePool, articleSoftwareCategories);
-  const topicCounts = facetCounts(topicPool, articleTopics);
   renderFacetButtons(
     elements.softwareFilters,
     "software",
@@ -636,10 +631,14 @@ function renderFacetFilters(pool) {
     state.software,
     SOFTWARE_GROUP_COLORS,
   );
+  if (!showTopics) return;
+
+  const topicPool = pool.filter(matchesSoftware);
+  const topicCounts = facetCounts(topicPool, articleTopics);
   renderFacetButtons(
     elements.topicFilters,
     "topic",
-    "All topics",
+    "All techniques",
     topicPool.length,
     orderedFacetCategories(topicCounts, state.topics, TOPIC_ORDER),
     topicCounts,
@@ -822,6 +821,10 @@ document.addEventListener("click", (event) => {
       state.software.add(software);
     }
     persistFilterSet(storageKeys.software, state.software);
+    if (!productionTopicsActive() && state.topics.size) {
+      state.topics.clear();
+      persistFilterSet(storageKeys.topics, state.topics);
+    }
     render();
     return;
   }

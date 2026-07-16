@@ -543,60 +543,6 @@ PRODUCTION_TOPIC_TERMS = (
     ),
 )
 
-INDUSTRY_TOPIC_TERMS = (
-    (
-        "Studios & people",
-        (
-            "studio", "developer", "artist", "director", "executive", "founder", "ceo",
-            "appointed", "retires", "retirement", "interview", "スタジオ", "開発者",
-            "アーティスト", "監督", "社長", "代表", "就任", "引退", "インタビュー",
-        ),
-    ),
-    (
-        "Business, funding & acquisitions",
-        (
-            "acquisition", "acquires", "acquired", "funding", "investment", "earnings",
-            "revenue", "profit", "merger", "partnership", "bankruptcy", "business",
-            "買収", "資金", "投資", "決算", "売上", "利益", "合併", "提携", "倒産",
-            "事業", "企業",
-        ),
-    ),
-    (
-        "Jobs, labor & workplace",
-        (
-            "jobs", "hiring", "layoff", "labor", "union", "strike", "workplace",
-            "workforce", "recruitment", "求人", "採用", "解雇", "労働", "組合",
-            "ストライキ", "職場", "人員削減",
-        ),
-    ),
-    (
-        "Legal & policy",
-        (
-            "copyright", "lawsuit", "legal", "contract", "regulation", "policy", "court",
-            "rights", "antitrust", "著作権", "訴訟", "契約", "規制", "政策", "裁判",
-            "権利", "独占禁止",
-        ),
-    ),
-    (
-        "Publishing, platforms & market",
-        (
-            "publisher", "platform", "launch", "release", "delayed", "delay", "cancelled",
-            "canceled", "pricing", "price", "sales", "market", "steam", "playstation",
-            "xbox", "nintendo", "google play", "app store", "パブリッシャー", "プラットフォーム",
-            "配信", "発売", "延期", "中止", "価格", "値上げ", "市場", "販売",
-        ),
-    ),
-    (
-        "Events & education",
-        (
-            "event", "conference", "festival", "expo", "awards", "summit", "workshop",
-            "school", "course", "education", "concert", "イベント", "カンファレンス",
-            "フェスティバル", "展示会", "アワード", "授賞", "講座", "教育", "学校",
-            "ワークショップ", "コンサート",
-        ),
-    ),
-)
-
 DEPTH_TERMS = (
     ("Tutorial or breakdown", ("tutorial", "breakdown", "how to", "making of", "チュートリアル", "メイキング", "解説"), 10),
     ("Workflow or pipeline", ("workflow", "pipeline", "ワークフロー", "パイプライン"), 8),
@@ -698,14 +644,15 @@ def classify_software(title: str, summary: str) -> list[str]:
 
 
 def classify_topics(title: str, summary: str, lane: str) -> list[str]:
-    """Return overlapping production or industry topics for faceted filtering."""
+    """Return overlapping subcategories only for general production coverage."""
 
+    if lane != "Tech & Development":
+        return []
     value = f"{title} {summary}".lower()
-    groups = INDUSTRY_TOPIC_TERMS if lane == "Industry & Business" else PRODUCTION_TOPIC_TERMS
-    labels = [label for label, terms in groups if any(term in value for term in terms)]
+    labels = [label for label, terms in PRODUCTION_TOPIC_TERMS if any(term in value for term in terms)]
     if labels:
         return labels
-    return ["Other industry" if lane == "Industry & Business" else "Other production"]
+    return ["Other production"]
 
 
 def parse_feed_document(xml_bytes: bytes) -> ET.Element:
@@ -912,10 +859,14 @@ def cluster_articles(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
         public["software_group"] = software_tags[0] if software_tags else (
             "Industry context" if public.get("lane") == "Industry & Business" else "Production techniques"
         )
-        public["topic_tags"] = classify_topics(
-            public["title"],
-            public.get("summary", ""),
-            public.get("lane", "Tech & Development"),
+        public["topic_tags"] = (
+            classify_topics(
+                public["title"],
+                public.get("summary", ""),
+                public.get("lane", "Tech & Development"),
+            )
+            if public["software_group"] == "Production techniques"
+            else []
         )
         output.append(public)
     return output

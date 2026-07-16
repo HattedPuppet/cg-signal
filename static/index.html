@@ -105,9 +105,9 @@
               <span aria-hidden="true">▦</span>
               <span class="button-label">View</span>
             </button>
-            <button id="refresh-button" class="refresh-button" type="button">
+            <button id="refresh-button" class="refresh-button" type="button" aria-label="Check all feeds for new articles now" title="Bypass the 15-minute cache and check every source">
               <span class="refresh-icon" aria-hidden="true">↻</span>
-              <span>Refresh</span>
+              <span>Check feeds</span>
             </button>
           </div>
         </header>
@@ -150,16 +150,16 @@
             </div>
 
             <div id="software-filter-group" class="software-filter-group">
-              <span class="software-filter-label">Tools &amp; context</span>
+              <span class="software-filter-label">Categories</span>
               <div id="software-filters" class="software-filters" role="group" aria-label="Filter Latest Signal by software or context">
                 <button class="facet-button software-button is-active" type="button" data-software="All">All categories <strong>—</strong></button>
               </div>
             </div>
 
-            <div id="topic-filter-group" class="software-filter-group">
-              <span class="software-filter-label">Topics</span>
-              <div id="topic-filters" class="software-filters" role="group" aria-label="Filter Latest Signal by production or industry topic">
-                <button class="facet-button topic-button is-active" type="button" data-topic="All">All topics <strong>—</strong></button>
+            <div id="topic-filter-group" class="software-filter-group topic-filter-group" hidden>
+              <span class="software-filter-label">Production subcategories</span>
+              <div id="topic-filters" class="software-filters" role="group" aria-label="Refine Production techniques by subcategory">
+                <button class="facet-button topic-button is-active" type="button" data-topic="All">All techniques <strong>—</strong></button>
               </div>
             </div>
           </div>

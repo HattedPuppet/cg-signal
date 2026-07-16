@@ -500,7 +500,7 @@ kbd {
 }
 
 .refresh-button {
-  min-width: 96px;
+  min-width: 108px;
   background: var(--ink);
   color: #fff;
 }
@@ -744,6 +744,41 @@ kbd {
 
 .software-filter-group[hidden] {
   display: none;
+}
+
+.topic-filter-group {
+  max-width: 100%;
+  gap: 6px;
+  padding: 9px 10px 9px 12px;
+  overflow: hidden;
+  border-left: 2px solid var(--acid);
+  border-radius: 0 10px 10px 0;
+  background: color-mix(in srgb, var(--acid) 7%, transparent);
+}
+
+.topic-filter-group .software-filter-label {
+  color: var(--ink);
+  letter-spacing: 0.1em;
+}
+
+.topic-filter-group .software-filters {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.topic-filter-group .facet-button {
+  gap: 7px;
+  padding: 6px 9px;
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  font-size: 9px;
+}
+
+.topic-filter-group .facet-button::before {
+  width: 5px;
+  height: 5px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--category-accent) 15%, transparent);
 }
 
 .software-filter-label {

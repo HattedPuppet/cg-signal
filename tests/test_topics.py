@@ -24,34 +24,28 @@ class TopicClassificationTests(unittest.TestCase):
             ["Animation, rigging & mocap"],
         )
 
-    def test_industry_story_can_have_multiple_topics(self):
+    def test_industry_stories_have_no_production_subcategories(self):
         self.assertEqual(
             classify_topics(
                 "Animation studio announces acquisition and new funding",
                 "The founder discussed the deal",
                 "Industry & Business",
             ),
-            ["Studios & people", "Business, funding & acquisitions"],
+            [],
         )
-
-    def test_japanese_rights_story_is_legal(self):
         self.assertEqual(
             classify_topics(
                 "ゲーム会社が著作権侵害をめぐり訴訟",
                 "権利保護について発表",
                 "Industry & Business",
             ),
-            ["Legal & policy"],
+            [],
         )
 
-    def test_unmatched_topics_use_lane_specific_fallbacks(self):
+    def test_unmatched_production_story_uses_fallback(self):
         self.assertEqual(
             classify_topics("A general creative story", "No specific technique", "Tech & Development"),
             ["Other production"],
-        )
-        self.assertEqual(
-            classify_topics("A general creative story", "No specific theme", "Industry & Business"),
-            ["Other industry"],
         )
 
 
