@@ -619,7 +619,7 @@ function renderFacetFilters(pool) {
     persistFilterSet(storageKeys.topics, state.topics);
   }
 
-  const softwarePool = showTopics ? pool.filter(matchesTopics) : pool;
+  const softwarePool = pool;
   const softwareCounts = facetCounts(softwarePool, articleSoftwareCategories);
   renderFacetButtons(
     elements.softwareFilters,

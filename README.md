@@ -58,7 +58,8 @@ accounts, API keys, or subscription fees.
   multiple selections with OR behavior.
 - Selecting **Production techniques** alone reveals a contextual subcategory row
   for modeling, materials, animation, rendering, VFX, technical art, pipelines,
-  and game development. It stays hidden for software and industry categories.
+  and game development. The main category choices and their counts remain
+  visible while refining, and the subcategory row stays hidden elsewhere.
 - The current tool watchlist includes Unreal Engine, Substance 3D Painter and
   Designer, Blender, Houdini, and Spine terminology for software grouping and
   relevance scoring.

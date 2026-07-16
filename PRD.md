@@ -108,6 +108,8 @@ And is actively interested in:
 - Reveal production subcategories only when **Production techniques** is the
   sole selected category. Hide and clear them for software and industry
   categories to keep the filter area compact.
+- Keep every main category choice and its unrefined count visible while a
+  Production techniques subcategory is active.
 - Retain all detected software and production-topic tags. Multi-tool articles
   must match every relevant category filter while keeping one primary card label
   and one card in the unfiltered feed.
