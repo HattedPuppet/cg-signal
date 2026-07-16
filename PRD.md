@@ -164,6 +164,12 @@ And is actively interested in:
 - Attach searchable local research notes to saved stories.
 - Archive stories out of Latest Signal and Unread views.
 - Provide a dedicated archive with restore controls.
+- Retain gathered article metadata in a durable local history after articles
+  rotate out of their publishers' RSS feeds.
+- Provide paginated full-history search using the same text, hashtag,
+  information-type, and source filters as the current feed.
+- Populate the Learning Library and archive views from durable history rather
+  than limiting them to the current RSS window.
 - Persist read, saved, archived, note, feedback, and source-preference state in
   the local server's data directory, with browser storage as a migration and
   failure fallback.
@@ -174,6 +180,9 @@ And is actively interested in:
   muted, or restored.
 - Make a normal source click isolate that source, a repeated click restore all,
   and Ctrl/Cmd-click combine multiple sources.
+- Provide an interface to add custom RSS or Atom URLs, test a feed before or
+  after adding it, and disable or re-enable built-in and custom sources.
+- Preserve historical articles when their source is disabled.
 - Check feeds every 15 minutes while the visible dashboard is open, retain the
   current board on a background failure, and announce newly arrived stories.
 
@@ -208,8 +217,8 @@ remain testable and easy to adjust as the user's interests change.
 
 - No telemetry, advertising, or external user profile.
 - No paid APIs or recurring SaaS dependency.
-- Feed metadata, preview-image cache, and user state remain under the local
-  project directory.
+- Feed metadata, preview-image cache, SQLite article history, source
+  configuration, and user state remain under the local project directory.
 - Optional future models must be opt-in, local, and removable without breaking
   the core feed.
 
@@ -223,14 +232,15 @@ analytics:
 - Latest Signal stays chronological while categories and contextual production
   subcategories reliably narrow it without duplicating cards.
 - Saved material and notes remain retrievable and searchable after browser restarts.
+- Historical articles remain searchable after the live RSS feed has rotated.
 - Feed failures do not prevent access to the last successful briefing.
 - The dashboard remains useful when all optional intelligence features are off.
 
 ## Quality requirements
 
 - Software and production-topic classification, relevance, state normalization,
-  feed parsing, thumbnail discovery, and deduplication behavior must have
-  automated regression tests.
+  feed parsing, thumbnail discovery, source configuration, archive search, and
+  deduplication behavior must have automated regression tests.
 - State writes must be bounded, validated, and atomic.
 - Controls must have accessible names and keyboard-focus behavior.
 - The UI must remain usable at desktop and mobile widths.
@@ -239,8 +249,8 @@ analytics:
 
 ### Near term
 
-- Searchable long-term article archive.
 - Carefully selected official YouTube RSS sources.
+- Optional local backup and export for the accumulated archive and notes.
 
 ### Optional intelligence
 

@@ -19,6 +19,12 @@ const storageKeys = {
 const state = {
   payload: null,
   articles: [],
+  archiveArticles: [],
+  archiveTotal: 0,
+  archiveHasMore: false,
+  archiveLoading: false,
+  archiveRequestId: 0,
+  managedSources: [],
   activeSources: new Set(),
   lane: localStorage.getItem(storageKeys.lane) || "All",
   software: readFilterSet(storageKeys.software),
@@ -97,6 +103,7 @@ const TOPIC_COLORS = {
 let stateSaveTimer = null;
 let noteSaveTimer = null;
 let backgroundRefreshTimer = null;
+let archiveSearchTimer = null;
 
 const elements = {
   grid: document.querySelector("#story-grid"),
@@ -114,6 +121,7 @@ const elements = {
   savedCount: document.querySelector("#saved-count"),
   unreadCount: document.querySelector("#unread-count"),
   archivedCount: document.querySelector("#archived-count"),
+  historyCount: document.querySelector("#history-count"),
   heroUnique: document.querySelector("#hero-unique"),
   heroCollapsed: document.querySelector("#hero-collapsed"),
   lastUpdated: document.querySelector("#last-updated"),
@@ -130,6 +138,17 @@ const elements = {
   briefingMarkRead: document.querySelector("#briefing-mark-read"),
   briefingDate: document.querySelector("#briefing-date"),
   sortLabel: document.querySelector("#sort-label"),
+  manageSources: document.querySelector("#manage-sources"),
+  sourceManagerPanel: document.querySelector("#source-manager-panel"),
+  sourceManagerClose: document.querySelector("#source-manager-close"),
+  sourceForm: document.querySelector("#source-form"),
+  sourceFeedUrl: document.querySelector("#source-feed-url"),
+  sourceName: document.querySelector("#source-name"),
+  sourceSiteUrl: document.querySelector("#source-site-url"),
+  testFeedUrl: document.querySelector("#test-feed-url"),
+  sourceFormStatus: document.querySelector("#source-form-status"),
+  managedSourceList: document.querySelector("#managed-source-list"),
+  configuredSourceCount: document.querySelector("#configured-source-count"),
 };
 
 const SEARCH_ALIASES = new Map([
@@ -735,9 +754,80 @@ function applyFacetFilters(articles) {
   return articles.filter((article) => matchesSoftware(article) && matchesTopics(article));
 }
 
+function usesArchiveView() {
+  return state.view === "history" || state.view === "saved" || state.view === "archived";
+}
+
+function archiveViewQuery() {
+  const status = state.view === "saved"
+    ? "#is:saved"
+    : state.view === "archived" ? "#is:archived" : "";
+  return [state.search.trim(), status].filter(Boolean).join(" ");
+}
+
+function archiveSourceFilter() {
+  const enabledIds = (state.payload?.sources || []).map((source) => source.id);
+  const selectedIds = enabledIds.filter(
+    (sourceId) => state.activeSources.has(sourceId) && !state.mutedSources.has(sourceId),
+  );
+  if (selectedIds.length === enabledIds.length) return [];
+  return selectedIds.length ? selectedIds : ["__none__"];
+}
+
+async function loadArchive({ append = false } = {}) {
+  if (!state.payload || !usesArchiveView()) return;
+  const requestId = ++state.archiveRequestId;
+  const offset = append ? state.archiveArticles.length : 0;
+  if (!append) {
+    state.archiveArticles = [];
+    state.archiveTotal = 0;
+    state.archiveHasMore = false;
+  }
+  state.archiveLoading = true;
+  render();
+  const parameters = new URLSearchParams({
+    q: archiveViewQuery(),
+    lane: state.lane,
+    limit: "60",
+    offset: String(offset),
+  });
+  const sourceIds = archiveSourceFilter();
+  if (sourceIds.length) parameters.set("sources", sourceIds.join(","));
+  if (state.sessionCutoff) parameters.set("new_after", state.sessionCutoff.toISOString());
+  try {
+    const response = await fetch(`/api/archive?${parameters}`, { cache: "no-store" });
+    const payload = await response.json();
+    if (!response.ok || payload.error) throw new Error(payload.detail || payload.error || `Archive request failed (${response.status})`);
+    if (requestId !== state.archiveRequestId) return;
+    state.archiveArticles = append
+      ? [...state.archiveArticles, ...(payload.articles || [])]
+      : (payload.articles || []);
+    state.archiveTotal = payload.total || 0;
+    state.archiveHasMore = Boolean(payload.has_more);
+    if (elements.historyCount) elements.historyCount.textContent = payload.archive_count ?? state.archiveTotal;
+  } catch (error) {
+    if (requestId !== state.archiveRequestId) return;
+    elements.notice.textContent = `Article history could not be searched. ${error.message}`;
+    elements.notice.hidden = false;
+  } finally {
+    if (requestId === state.archiveRequestId) {
+      state.archiveLoading = false;
+      render();
+    }
+  }
+}
+
 function filteredArticles() {
   if (state.view === "all") {
     return applyFacetFilters(latestPool());
+  }
+
+  if (usesArchiveView()) {
+    return state.archiveArticles.filter((article) => {
+      if (state.view === "saved" && !state.saved.has(article.id)) return false;
+      if (state.view === "archived" && !state.archived.has(article.id)) return false;
+      return true;
+    });
   }
 
   const query = state.search;
@@ -913,6 +1003,20 @@ function libraryStoryMarkup(visible) {
     </section>`).join("");
 }
 
+function archiveControlsMarkup() {
+  if (!usesArchiveView()) return "";
+  if (state.archiveLoading && !state.archiveArticles.length) {
+    return `<div class="archive-loading" role="status"><span></span> Searching your local history…</div>`;
+  }
+  if (!state.archiveHasMore && !state.archiveLoading) return "";
+  return `
+    <div class="archive-load-more">
+      <button type="button" data-load-more-archive ${state.archiveLoading ? "disabled" : ""}>
+        ${state.archiveLoading ? "Loading…" : `Load more · ${state.archiveArticles.length} of ${state.archiveTotal}`}
+      </button>
+    </div>`;
+}
+
 function softwareGroup(article) {
   const explicitGroup = normalizeSoftwareCategory(article.software_group);
   if (explicitGroup) return explicitGroup;
@@ -1021,31 +1125,37 @@ function render() {
   if (state.keyboardArticleId && !state.visibleArticleIds.includes(state.keyboardArticleId)) {
     state.keyboardArticleId = null;
   }
-  elements.grid.innerHTML = state.view === "saved"
+  const storyMarkup = state.view === "saved"
     ? libraryStoryMarkup(visible)
     : latestStoryMarkup(visible);
-  elements.empty.hidden = visible.length > 0;
-  elements.grid.hidden = visible.length === 0;
+  elements.grid.innerHTML = `${storyMarkup}${archiveControlsMarkup()}`;
+  const initialArchiveLoad = usesArchiveView() && state.archiveLoading && !visible.length;
+  elements.empty.hidden = visible.length > 0 || initialArchiveLoad;
+  elements.grid.hidden = visible.length === 0 && !initialArchiveLoad;
   const emptyCopy = {
     saved: ["Your learning library is empty", "Save a story, then add a note so useful techniques remain easy to find."],
     unread: ["You’re all caught up", "New unread stories will appear after the next feed refresh."],
     archived: ["The archive is empty", "Archived stories stay out of your active feed and can be restored here."],
+    history: ["No articles match", "Try a broader search or restore your source filters."],
   }[state.view] || ["No signal here yet", "Try another category, clear your source filters, or refresh the feeds."];
   elements.empty.querySelector("h2").textContent = emptyCopy[0];
   elements.empty.querySelector("p").textContent = emptyCopy[1];
-  elements.visibleCount.textContent = `${visible.length} ${visible.length === 1 ? "story" : "stories"}`;
-  const newCount = visible.filter(articleIsNew).length;
+  const resultCount = usesArchiveView() ? state.archiveTotal : visible.length;
+  elements.visibleCount.textContent = `${resultCount} ${resultCount === 1 ? "story" : "stories"}`;
+  const newCount = usesArchiveView() ? 0 : visible.filter(articleIsNew).length;
   elements.newSince.textContent = state.sessionCutoff && newCount ? `${newCount} new` : "";
   elements.newSince.hidden = !(state.sessionCutoff && newCount);
   elements.allCount.textContent = state.articles.filter((article) => !state.archived.has(article.id)).length;
-  elements.savedCount.textContent = state.articles.filter((article) => state.saved.has(article.id)).length;
+  elements.savedCount.textContent = state.saved.size;
   elements.unreadCount.textContent = unreadArticles().length;
-  elements.archivedCount.textContent = state.articles.filter((article) => state.archived.has(article.id)).length;
+  elements.archivedCount.textContent = state.archived.size;
+  elements.historyCount.textContent = state.payload.archive_count ?? state.archiveTotal ?? "—";
   elements.briefCount.textContent = dailyBriefArticles().length;
   elements.sortLabel.textContent = {
     saved: "Learning library",
     unread: "Newest unread",
     archived: "Recently archived",
+    history: "Full history",
     all: "Newest first",
   }[state.view] || "Newest first";
   if (state.briefOpen) buildBriefing();
@@ -1172,8 +1282,123 @@ async function loadFeed(force = false, { background = false } = {}) {
   }
 }
 
+async function requestJson(url, options = {}) {
+  const response = await fetch(url, {
+    cache: "no-store",
+    ...options,
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+  });
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error(`The local server returned an unreadable response (${response.status}).`);
+  }
+  if (!response.ok || payload.error) {
+    throw new Error(payload.detail || payload.error || `Request failed (${response.status})`);
+  }
+  return payload;
+}
+
+function renderManagedSources() {
+  elements.configuredSourceCount.textContent = `${state.managedSources.length} configured`;
+  elements.managedSourceList.innerHTML = state.managedSources.map((source) => `
+    <article class="managed-source${source.enabled ? "" : " is-disabled"}" style="--source-accent:${escapeHtml(source.accent)}">
+      <span class="managed-source-accent" aria-hidden="true"></span>
+      <div class="managed-source-copy">
+        <div class="managed-source-title">
+          <strong>${escapeHtml(source.name)}</strong>
+          <span>${source.is_builtin ? "Built in" : "Custom"}</span>
+          ${source.enabled ? "" : "<em>Disabled</em>"}
+        </div>
+        <a href="${escapeHtml(safeUrl(source.feed))}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.feed)}</a>
+        <p data-source-test-status="${escapeHtml(source.id)}"></p>
+      </div>
+      <div class="managed-source-actions">
+        <button class="secondary-action" type="button" data-test-source="${escapeHtml(source.id)}">Test</button>
+        <button class="source-toggle${source.enabled ? "" : " is-enable"}" type="button" data-toggle-source="${escapeHtml(source.id)}" data-source-enabled="${source.enabled}">${source.enabled ? "Disable" : "Enable"}</button>
+      </div>
+    </article>`).join("");
+}
+
+async function loadManagedSources() {
+  elements.managedSourceList.innerHTML = `<div class="managed-source-loading"><span></span> Loading configured sources…</div>`;
+  try {
+    const payload = await requestJson("/api/sources");
+    state.managedSources = payload.sources || [];
+    renderManagedSources();
+  } catch (error) {
+    elements.managedSourceList.innerHTML = `<p class="source-manager-error">${escapeHtml(error.message)}</p>`;
+  }
+}
+
+function setSourceFormStatus(message, type = "") {
+  elements.sourceFormStatus.textContent = message;
+  elements.sourceFormStatus.dataset.status = type;
+}
+
+async function openSourceManager() {
+  elements.sourceManagerPanel.hidden = false;
+  elements.manageSources.setAttribute("aria-expanded", "true");
+  document.body.classList.add("source-manager-open");
+  setSourceFormStatus("");
+  await loadManagedSources();
+  elements.sourceFeedUrl.focus();
+}
+
+function closeSourceManager() {
+  elements.sourceManagerPanel.hidden = true;
+  elements.manageSources.setAttribute("aria-expanded", "false");
+  document.body.classList.remove("source-manager-open");
+  elements.manageSources.focus();
+}
+
+async function testConfiguredSource(sourceId, button) {
+  const status = elements.managedSourceList.querySelector(`[data-source-test-status="${CSS.escape(sourceId)}"]`);
+  button.disabled = true;
+  button.textContent = "Testing…";
+  if (status) status.textContent = "Contacting the feed…";
+  try {
+    const result = await requestJson("/api/sources/test", {
+      method: "POST",
+      body: JSON.stringify({ id: sourceId }),
+    });
+    if (status) {
+      status.textContent = result.ok
+        ? `Working · ${result.count} recent ${result.count === 1 ? "item" : "items"} · ${result.duration_ms} ms`
+        : `Could not read feed · ${result.message || "No valid articles were returned."}`;
+      status.dataset.status = result.ok ? "success" : "error";
+    }
+  } catch (error) {
+    if (status) {
+      status.textContent = error.message;
+      status.dataset.status = "error";
+    }
+  } finally {
+    button.disabled = false;
+    button.textContent = "Test";
+  }
+}
+
+async function toggleConfiguredSource(sourceId, enabled, button) {
+  button.disabled = true;
+  button.textContent = enabled ? "Enabling…" : "Disabling…";
+  try {
+    await requestJson("/api/sources/toggle", {
+      method: "POST",
+      body: JSON.stringify({ id: sourceId, enabled }),
+    });
+    await loadManagedSources();
+    await loadFeed(true);
+  } catch (error) {
+    setSourceFormStatus(error.message, "error");
+    button.disabled = false;
+    button.textContent = enabled ? "Enable" : "Disable";
+  }
+}
+
 function setFeedback(articleId, requestedValue) {
-  const article = state.articles.find((item) => item.id === articleId);
+  const article = [...state.articles, ...state.archiveArticles].find((item) => item.id === articleId);
   if (!article) return;
   const current = state.feedback.get(articleId)?.value || 0;
   if (current === requestedValue) {
@@ -1205,7 +1430,8 @@ function setSourcePreference(sourceId, action) {
   }
   queueUserStateSave();
   renderSources(state.payload.sources || []);
-  render();
+  if (usesArchiveView()) loadArchive();
+  else render();
 }
 
 function toggleRead(articleId) {
@@ -1261,7 +1487,27 @@ document.addEventListener("click", (event) => {
     elements.search.value = existing ? `${existing} ${token}` : token;
     state.search = elements.search.value;
     elements.search.focus();
-    render();
+    if (usesArchiveView()) loadArchive();
+    else render();
+    return;
+  }
+
+  const loadMoreArchive = event.target.closest("[data-load-more-archive]");
+  if (loadMoreArchive) {
+    loadArchive({ append: true });
+    return;
+  }
+
+  const testSourceButton = event.target.closest("[data-test-source]");
+  if (testSourceButton) {
+    testConfiguredSource(testSourceButton.dataset.testSource, testSourceButton);
+    return;
+  }
+
+  const toggleSourceButton = event.target.closest("[data-toggle-source]");
+  if (toggleSourceButton) {
+    const enable = toggleSourceButton.dataset.sourceEnabled !== "true";
+    toggleConfiguredSource(toggleSourceButton.dataset.toggleSource, enable, toggleSourceButton);
     return;
   }
 
@@ -1280,7 +1526,9 @@ document.addEventListener("click", (event) => {
   const saveButton = event.target.closest("[data-save-id]");
   if (saveButton) {
     const id = saveButton.dataset.saveId;
-    state.saved.has(id) ? state.saved.delete(id) : state.saved.add(id);
+    const wasSaved = state.saved.has(id);
+    wasSaved ? state.saved.delete(id) : state.saved.add(id);
+    if (state.view === "saved" && wasSaved) state.archiveTotal = Math.max(0, state.archiveTotal - 1);
     queueUserStateSave();
     render();
     return;
@@ -1289,7 +1537,9 @@ document.addEventListener("click", (event) => {
   const archiveButton = event.target.closest("[data-archive-id]");
   if (archiveButton) {
     const id = archiveButton.dataset.archiveId;
-    state.archived.has(id) ? state.archived.delete(id) : state.archived.add(id);
+    const wasArchived = state.archived.has(id);
+    wasArchived ? state.archived.delete(id) : state.archived.add(id);
+    if (state.view === "archived" && wasArchived) state.archiveTotal = Math.max(0, state.archiveTotal - 1);
     queueUserStateSave();
     render();
     return;
@@ -1321,7 +1571,8 @@ document.addEventListener("click", (event) => {
         : new Set([id]);
     }
     renderSources(state.payload.sources || []);
-    render();
+    if (usesArchiveView()) loadArchive();
+    else render();
     return;
   }
 
@@ -1351,20 +1602,27 @@ document.addEventListener("click", (event) => {
   if (laneButton) {
     state.lane = laneButton.dataset.lane;
     localStorage.setItem(storageKeys.lane, state.lane);
-    render();
+    if (usesArchiveView()) loadArchive();
+    else render();
     return;
   }
 
   const viewButton = event.target.closest("[data-view]");
   if (viewButton) {
     state.view = viewButton.dataset.view;
-    render();
+    if (usesArchiveView()) loadArchive();
+    else render();
   }
 });
 
 elements.search.addEventListener("input", () => {
   state.search = elements.search.value;
-  render();
+  window.clearTimeout(archiveSearchTimer);
+  if (usesArchiveView()) {
+    archiveSearchTimer = window.setTimeout(() => loadArchive(), 250);
+  } else {
+    render();
+  }
 });
 
 document.addEventListener("input", (event) => {
@@ -1383,8 +1641,73 @@ elements.refresh.addEventListener("click", () => loadFeed(true));
 
 elements.briefButton.addEventListener("click", openBriefing);
 
+elements.manageSources.addEventListener("click", openSourceManager);
+
 document.querySelectorAll("[data-close-briefing]").forEach((button) => {
   button.addEventListener("click", closeBriefing);
+});
+
+document.querySelectorAll("[data-close-source-manager]").forEach((button) => {
+  button.addEventListener("click", closeSourceManager);
+});
+
+elements.testFeedUrl.addEventListener("click", async () => {
+  if (!elements.sourceFeedUrl.reportValidity()) return;
+  const payload = {
+    feed: elements.sourceFeedUrl.value.trim(),
+    name: elements.sourceName.value.trim(),
+    site: elements.sourceSiteUrl.value.trim(),
+  };
+  elements.testFeedUrl.disabled = true;
+  elements.testFeedUrl.textContent = "Testing…";
+  setSourceFormStatus("Contacting the feed…");
+  try {
+    const result = await requestJson("/api/sources/test", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    const sample = result.sample_titles?.[0] ? ` First item: ${result.sample_titles[0]}` : "";
+    setSourceFormStatus(
+      result.ok
+        ? `Feed works · ${result.count} recent ${result.count === 1 ? "item" : "items"} · ${result.duration_ms} ms.${sample}`
+        : `Could not read this feed. ${result.message || "No valid RSS or Atom items were found."}`,
+      result.ok ? "success" : "error",
+    );
+  } catch (error) {
+    setSourceFormStatus(error.message, "error");
+  } finally {
+    elements.testFeedUrl.disabled = false;
+    elements.testFeedUrl.textContent = "Test URL";
+  }
+});
+
+elements.sourceForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!elements.sourceForm.reportValidity()) return;
+  const submit = elements.sourceForm.querySelector('[type="submit"]');
+  const payload = {
+    feed: elements.sourceFeedUrl.value.trim(),
+    name: elements.sourceName.value.trim(),
+    site: elements.sourceSiteUrl.value.trim(),
+  };
+  submit.disabled = true;
+  submit.textContent = "Adding…";
+  setSourceFormStatus("Saving this source locally…");
+  try {
+    const result = await requestJson("/api/sources", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    elements.sourceForm.reset();
+    setSourceFormStatus(`${result.source.name} was added and enabled.`, "success");
+    await loadManagedSources();
+    await loadFeed(true);
+  } catch (error) {
+    setSourceFormStatus(error.message, "error");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Add source";
+  }
 });
 
 elements.briefingMarkRead.addEventListener("click", () => {
@@ -1405,7 +1728,8 @@ document.querySelector("#reset-sources").addEventListener("click", () => {
   state.reducedSources.clear();
   queueUserStateSave();
   renderSources(state.payload.sources || []);
-  render();
+  if (usesArchiveView()) loadArchive();
+  else render();
 });
 
 document.querySelector("#clear-filters").addEventListener("click", () => {
@@ -1446,9 +1770,11 @@ document.addEventListener("keydown", (event) => {
     render();
   } else if (event.key === "Escape" && state.briefOpen) {
     closeBriefing();
+  } else if (event.key === "Escape" && !elements.sourceManagerPanel.hidden) {
+    closeSourceManager();
   }
 
-  if (event.ctrlKey || event.metaKey || event.altKey || state.briefOpen || keyboardTargetIsEditable(event.target)) return;
+  if (event.ctrlKey || event.metaKey || event.altKey || state.briefOpen || !elements.sourceManagerPanel.hidden || keyboardTargetIsEditable(event.target)) return;
   const key = event.key.toLocaleLowerCase();
   if (key === "j" || key === "k") {
     event.preventDefault();
@@ -1461,16 +1787,16 @@ document.addEventListener("keydown", (event) => {
     elements.grid.querySelector(`[data-id="${CSS.escape(state.keyboardArticleId)}"] .story-title a`)?.click();
   } else if (key === "s") {
     event.preventDefault();
-    state.saved.has(state.keyboardArticleId)
-      ? state.saved.delete(state.keyboardArticleId)
-      : state.saved.add(state.keyboardArticleId);
+    const wasSaved = state.saved.has(state.keyboardArticleId);
+    wasSaved ? state.saved.delete(state.keyboardArticleId) : state.saved.add(state.keyboardArticleId);
+    if (state.view === "saved" && wasSaved) state.archiveTotal = Math.max(0, state.archiveTotal - 1);
     queueUserStateSave();
     render();
   } else if (key === "a") {
     event.preventDefault();
-    state.archived.has(state.keyboardArticleId)
-      ? state.archived.delete(state.keyboardArticleId)
-      : state.archived.add(state.keyboardArticleId);
+    const wasArchived = state.archived.has(state.keyboardArticleId);
+    wasArchived ? state.archived.delete(state.keyboardArticleId) : state.archived.add(state.keyboardArticleId);
+    if (state.view === "archived" && wasArchived) state.archiveTotal = Math.max(0, state.archiveTotal - 1);
     queueUserStateSave();
     render();
   } else if (key === "m") {

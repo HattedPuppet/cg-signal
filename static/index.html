@@ -47,6 +47,11 @@
             <span>Unread</span>
             <strong id="unread-count">—</strong>
           </button>
+          <button class="nav-item" type="button" data-view="history">
+            <span class="nav-symbol" aria-hidden="true">◫</span>
+            <span>History</span>
+            <strong id="history-count">—</strong>
+          </button>
           <button class="nav-item" type="button" data-view="archived">
             <span class="nav-symbol archive-symbol" aria-hidden="true">⌄</span>
             <span>Archived</span>
@@ -57,7 +62,10 @@
         <div class="sidebar-section">
           <div class="section-label-row">
             <h2>Sources</h2>
-            <button id="reset-sources" class="text-button" type="button" title="Restore every source and clear source tuning">Reset</button>
+            <div class="section-actions">
+              <button id="manage-sources" class="text-button" type="button" aria-haspopup="dialog" aria-expanded="false">Manage</button>
+              <button id="reset-sources" class="text-button" type="button" title="Restore every source and clear source tuning">Reset</button>
+            </div>
           </div>
           <p class="source-filter-hint">Click to isolate · Ctrl-click to combine</p>
           <div id="source-filters" class="source-filters" aria-label="Filter by source">
@@ -236,6 +244,59 @@
           <p>Built from RSS excerpts on this device. Nothing is sent to an AI service.</p>
           <button id="briefing-mark-read" type="button">Mark brief as read</button>
         </footer>
+      </div>
+    </section>
+
+    <section id="source-manager-panel" class="source-manager-panel" aria-labelledby="source-manager-title" aria-modal="true" role="dialog" hidden>
+      <button class="source-manager-scrim" type="button" aria-label="Close source manager" data-close-source-manager></button>
+      <div class="source-manager-drawer">
+        <header class="source-manager-header">
+          <div>
+            <p class="eyebrow"><span></span> Local feed controls</p>
+            <h2 id="source-manager-title">Manage RSS sources</h2>
+            <p>Add an RSS or Atom feed, verify it before saving, or temporarily disable noisy sources.</p>
+          </div>
+          <button id="source-manager-close" class="briefing-close" type="button" aria-label="Close source manager" data-close-source-manager>×</button>
+        </header>
+
+        <div class="source-manager-content">
+          <form id="source-form" class="source-form">
+            <div class="source-form-heading">
+              <h3>Add a source</h3>
+              <span>Nothing is saved until you choose Add source.</span>
+            </div>
+            <label>
+              <span>RSS or Atom URL <strong>Required</strong></span>
+              <input id="source-feed-url" name="feed_url" type="url" inputmode="url" autocomplete="url" maxlength="2048" required placeholder="https://example.com/feed.xml" />
+            </label>
+            <div class="source-form-grid">
+              <label>
+                <span>Name <small>Optional</small></span>
+                <input id="source-name" name="name" type="text" maxlength="100" placeholder="Example Studio" />
+              </label>
+              <label>
+                <span>Website <small>Optional</small></span>
+                <input id="source-site-url" name="site_url" type="url" inputmode="url" autocomplete="url" maxlength="2048" placeholder="https://example.com" />
+              </label>
+            </div>
+            <div class="source-form-actions">
+              <button id="test-feed-url" class="secondary-action" type="button">Test URL</button>
+              <button class="primary-action" type="submit">Add source</button>
+            </div>
+            <p id="source-form-status" class="source-form-status" role="status" aria-live="polite"></p>
+          </form>
+
+          <section class="managed-sources" aria-labelledby="configured-sources-title">
+            <header>
+              <div>
+                <h3 id="configured-sources-title">Configured sources</h3>
+                <p>Disabled sources remain in your article history and can be restored at any time.</p>
+              </div>
+              <span id="configured-source-count">—</span>
+            </header>
+            <div id="managed-source-list" class="managed-source-list" aria-live="polite"></div>
+          </section>
+        </div>
       </div>
     </section>
 

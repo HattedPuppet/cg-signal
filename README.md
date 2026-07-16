@@ -34,9 +34,13 @@ accounts, API keys, or subscription fees.
   **Check feeds** bypasses the cache and checks every source immediately.
 - A small cache is stored in `.cache/feed-cache.json` so the last successful
   briefing remains available during a temporary feed failure.
+- Every gathered story is also retained in `.cache/cg-signal.db`, a local
+  SQLite archive. **History** searches this complete collection with paging, so
+  articles remain findable after they disappear from a publisher's feed.
 - Read, saved, archived, research-note, recommendation, and source-tuning states are persisted by the local server in
   `.cache/user-state.json`. Browser storage acts as a fallback and migrates
-  existing saved/read state automatically.
+  existing saved/read state automatically. The database mirrors article state
+  so full-history searches can use `#is:` filters and research notes.
 - **Latest Signal** keeps the primary feed chronological and offers live
   category counts. Multi-tool stories can be found from every relevant software
   filter while appearing only once in the All Stories feed and retaining one
@@ -50,16 +54,19 @@ accounts, API keys, or subscription fees.
   panel shows the learned category, technique, and source weights and the
   adjustment applied to each selected story. Its summaries are built from RSS
   excerpts and do not call an external AI service.
-- Saved stories form a Learning Library grouped by software/context. Each item
-  accepts a searchable research note. The archive remains searchable and every
-  item can be restored.
+- Saved stories form a durable Learning Library grouped by software/context.
+  Each item accepts a searchable research note. Saved and archived items remain
+  available even after the live RSS window moves on, and every archived item
+  can be restored.
 - Search supports ordinary text plus combinable tags: `#unreal`, `#blender`,
   `#substance`, `#topic:animation`, `#source:"80 Level"`,
   `#is:unread`, `#is:saved`, and `#is:new`. Prefix a term with `-` to exclude it,
   such as `-#industry`.
 - Individual sources can be temporarily filtered, reduced in the Daily Brief,
   or muted. Clicking a source isolates it; clicking it again restores all
-  sources, and Ctrl/Cmd-click combines sources. **Reset** restores all source settings.
+  sources, and Ctrl/Cmd-click combines sources. **Reset** restores all source
+  settings. **Manage** opens a local source manager where RSS/Atom URLs can be
+  tested, added, disabled, or re-enabled without editing code.
 - Articles remain on their publishers' websites; the dashboard only shows RSS
   metadata and short excerpts.
 - When a feed omits thumbnails, the dashboard reads the article's standard
