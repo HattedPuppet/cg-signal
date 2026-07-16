@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import concurrent.futures
 import email.utils
 import hashlib
@@ -9,7 +10,9 @@ import json
 import mimetypes
 import os
 import re
+import shlex
 import socket
+import sqlite3
 import threading
 import time
 import urllib.error
@@ -21,7 +24,7 @@ from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -30,6 +33,7 @@ CACHE_DIR = BASE_DIR / ".cache"
 CACHE_FILE = CACHE_DIR / "feed-cache.json"
 IMAGE_INDEX_FILE = CACHE_DIR / "image-index.json"
 USER_STATE_FILE = CACHE_DIR / "user-state.json"
+ARCHIVE_DB_FILE = CACHE_DIR / "cg-signal.db"
 PID_FILE = CACHE_DIR / "server.pid"
 CACHE_TTL_SECONDS = 15 * 60
 IMAGE_INDEX_TTL_SECONDS = 30 * 86400
@@ -40,6 +44,11 @@ MAX_NOTE_LENGTH = 4000
 MAX_FEEDBACK_ITEMS = 500
 MAX_STATE_SOURCES = 200
 USER_STATE_LOCK = threading.Lock()
+ARCHIVE_INIT_LOCK = threading.Lock()
+ARCHIVE_INITIALIZED = False
+MAX_ARCHIVE_PAGE_SIZE = 200
+MAX_SOURCE_NAME_LENGTH = 100
+MAX_SOURCE_URL_LENGTH = 2048
 
 FEEDS = (
     {
@@ -142,6 +151,222 @@ FEEDS = (
         "limit": 20,
     },
 )
+
+SOURCE_ACCENTS = ("#4b75ff", "#f18a21", "#61d0c8", "#ff7857", "#a77bff", "#d7ff57")
+
+
+@contextmanager
+def archive_connection() -> Iterator[sqlite3.Connection]:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(ARCHIVE_DB_FILE, timeout=10)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA journal_mode=WAL")
+    connection.execute("PRAGMA busy_timeout=10000")
+    try:
+        yield connection
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def initialize_archive_db(force: bool = False) -> None:
+    global ARCHIVE_INITIALIZED
+    if ARCHIVE_INITIALIZED and not force:
+        return
+    with ARCHIVE_INIT_LOCK:
+        if ARCHIVE_INITIALIZED and not force:
+            return
+        with archive_connection() as connection:
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS articles (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    url TEXT NOT NULL,
+                    summary TEXT NOT NULL DEFAULT '',
+                    source TEXT NOT NULL DEFAULT '',
+                    source_id TEXT NOT NULL DEFAULT '',
+                    published_at TEXT NOT NULL,
+                    lane TEXT NOT NULL DEFAULT '',
+                    software_group TEXT NOT NULL DEFAULT '',
+                    software_tags TEXT NOT NULL DEFAULT '[]',
+                    topic_tags TEXT NOT NULL DEFAULT '[]',
+                    sources_text TEXT NOT NULL DEFAULT '',
+                    search_text TEXT NOT NULL DEFAULT '',
+                    data_json TEXT NOT NULL,
+                    first_seen_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS articles_published_idx ON articles(published_at DESC)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS articles_source_idx ON articles(source_id)"
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS article_state (
+                    article_id TEXT PRIMARY KEY,
+                    is_read INTEGER NOT NULL DEFAULT 0,
+                    is_saved INTEGER NOT NULL DEFAULT 0,
+                    is_archived INTEGER NOT NULL DEFAULT 0,
+                    note TEXT NOT NULL DEFAULT '',
+                    feedback_value INTEGER NOT NULL DEFAULT 0,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sources (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    site TEXT NOT NULL DEFAULT '',
+                    feed TEXT NOT NULL UNIQUE,
+                    accent TEXT NOT NULL,
+                    item_limit INTEGER NOT NULL DEFAULT 40,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    is_builtin INTEGER NOT NULL DEFAULT 0,
+                    sort_order INTEGER NOT NULL DEFAULT 1000,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            now = datetime.now(timezone.utc).isoformat()
+            for order, source in enumerate(FEEDS):
+                connection.execute(
+                    """
+                    INSERT INTO sources (
+                        id, name, site, feed, accent, item_limit, enabled,
+                        is_builtin, sort_order, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        name = excluded.name,
+                        site = excluded.site,
+                        feed = excluded.feed,
+                        accent = excluded.accent,
+                        item_limit = excluded.item_limit,
+                        is_builtin = 1,
+                        sort_order = excluded.sort_order,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        source["id"], source["name"], source["site"], source["feed"],
+                        source["accent"], int(source.get("limit", MAX_ITEMS_PER_SOURCE)),
+                        order, now, now,
+                    ),
+                )
+        ARCHIVE_INITIALIZED = True
+
+
+def source_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "site": row["site"],
+        "feed": row["feed"],
+        "accent": row["accent"],
+        "limit": int(row["item_limit"]),
+        "enabled": bool(row["enabled"]),
+        "is_builtin": bool(row["is_builtin"]),
+    }
+
+
+def list_source_configs(enabled_only: bool = False) -> list[dict[str, Any]]:
+    initialize_archive_db()
+    query = "SELECT * FROM sources"
+    if enabled_only:
+        query += " WHERE enabled = 1"
+    query += " ORDER BY sort_order, name COLLATE NOCASE"
+    with archive_connection() as connection:
+        return [source_row_to_dict(row) for row in connection.execute(query).fetchall()]
+
+
+def source_config(source_id: str) -> dict[str, Any] | None:
+    initialize_archive_db()
+    with archive_connection() as connection:
+        row = connection.execute("SELECT * FROM sources WHERE id = ?", (source_id,)).fetchone()
+    return source_row_to_dict(row) if row else None
+
+
+def validated_http_url(value: Any, label: str, required: bool = True) -> str:
+    if value in (None, "") and not required:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a URL.")
+    clean = value.strip()
+    if not clean or len(clean) > MAX_SOURCE_URL_LENGTH:
+        raise ValueError(f"{label} must be a valid HTTP or HTTPS URL.")
+    parsed = urllib.parse.urlsplit(clean)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"{label} must be a valid HTTP or HTTPS URL.")
+    return urllib.parse.urlunsplit(parsed)
+
+
+def invalidate_feed_cache() -> None:
+    try:
+        CACHE_FILE.unlink()
+    except FileNotFoundError:
+        pass
+
+
+def add_source_config(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("Source details must be an object.")
+    feed = validated_http_url(payload.get("feed"), "Feed URL")
+    site = validated_http_url(payload.get("site"), "Website URL", required=False)
+    parsed = urllib.parse.urlsplit(feed)
+    raw_name = payload.get("name", "")
+    name = raw_name.strip() if isinstance(raw_name, str) else ""
+    if not name:
+        name = parsed.hostname or "Custom feed"
+    if len(name) > MAX_SOURCE_NAME_LENGTH:
+        raise ValueError("Source name is too long.")
+    base_slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:45] or "custom"
+    digest = hashlib.sha1(feed.encode("utf-8")).hexdigest()[:8]
+    source_id = f"{base_slug}-{digest}"
+    accent = SOURCE_ACCENTS[int(digest[:2], 16) % len(SOURCE_ACCENTS)]
+    now = datetime.now(timezone.utc).isoformat()
+    initialize_archive_db()
+    try:
+        with archive_connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO sources (
+                    id, name, site, feed, accent, item_limit, enabled,
+                    is_builtin, sort_order, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 1, 0, 1000, ?, ?)
+                """,
+                (source_id, name, site, feed, accent, MAX_ITEMS_PER_SOURCE, now, now),
+            )
+    except sqlite3.IntegrityError as exc:
+        raise ValueError("That feed URL is already configured.") from exc
+    invalidate_feed_cache()
+    return source_config(source_id) or {}
+
+
+def set_source_enabled(source_id: Any, enabled: Any) -> dict[str, Any]:
+    if not isinstance(source_id, str) or not source_id:
+        raise ValueError("A source id is required.")
+    if not isinstance(enabled, bool):
+        raise ValueError("Enabled must be true or false.")
+    initialize_archive_db()
+    now = datetime.now(timezone.utc).isoformat()
+    with archive_connection() as connection:
+        cursor = connection.execute(
+            "UPDATE sources SET enabled = ?, updated_at = ? WHERE id = ?",
+            (int(enabled), now, source_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError("Source not found.")
+    invalidate_feed_cache()
+    return source_config(source_id) or {}
 
 TRACKING_PARAMETERS = {
     "fbclid",
@@ -811,6 +1036,39 @@ def fetch_source(source: dict[str, Any]) -> dict[str, Any]:
         }
 
 
+def test_source(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("Source test details must be an object.")
+    source_id = payload.get("id")
+    if isinstance(source_id, str) and source_id:
+        source = source_config(source_id)
+        if not source:
+            raise ValueError("Source not found.")
+    else:
+        feed = validated_http_url(payload.get("feed"), "Feed URL")
+        site = validated_http_url(payload.get("site"), "Website URL", required=False)
+        parsed = urllib.parse.urlsplit(feed)
+        raw_name = payload.get("name", "")
+        name = raw_name.strip() if isinstance(raw_name, str) else ""
+        source = {
+            "id": "source-test",
+            "name": name or parsed.hostname or "Feed test",
+            "site": site,
+            "feed": feed,
+            "accent": "#7fa9ff",
+            "limit": 3,
+        }
+    result = fetch_source(source)
+    return {
+        "ok": result["ok"],
+        "message": result["message"],
+        "count": len(result["articles"]),
+        "duration_ms": result["duration_ms"],
+        "sample_titles": [article["title"] for article in result["articles"][:3]],
+        "source": source,
+    }
+
+
 def normalized_title(value: str) -> str:
     value = html.unescape(value).lower()
     value = re.sub(r"https?://\S+", " ", value)
@@ -966,6 +1224,246 @@ def cluster_articles(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return output
 
 
+def archive_search_text(article: dict[str, Any]) -> str:
+    values: list[str] = [
+        article.get("title", ""), article.get("summary", ""), article.get("source", ""),
+        article.get("source_id", ""), article.get("lane", ""), article.get("software_group", ""),
+    ]
+    values.extend(article.get("software_tags", []))
+    values.extend(article.get("topic_tags", []))
+    values.extend(article.get("priority_reasons", []))
+    values.extend(
+        f"{item.get('source', '')} {item.get('title', '')}"
+        for item in article.get("related", [])
+    )
+    return " ".join(str(value) for value in values if value).lower()
+
+
+def archive_articles(articles: list[dict[str, Any]]) -> int:
+    if not articles:
+        return archive_article_count()
+    initialize_archive_db()
+    now = datetime.now(timezone.utc).isoformat()
+    rows = []
+    for article in articles:
+        rows.append(
+            (
+                article["id"], article.get("title", ""), article.get("url", ""),
+                article.get("summary", ""), article.get("source", ""),
+                article.get("source_id", ""), article.get("published_at", now),
+                article.get("lane", ""), article.get("software_group", ""),
+                json.dumps(article.get("software_tags", []), ensure_ascii=False),
+                json.dumps(article.get("topic_tags", []), ensure_ascii=False),
+                " ".join(
+                    f"{source.get('id', '')} {source.get('name', '')}"
+                    for source in article.get("sources", [])
+                ),
+                archive_search_text(article), json.dumps(article, ensure_ascii=False), now, now,
+            )
+        )
+    with archive_connection() as connection:
+        connection.executemany(
+            """
+            INSERT INTO articles (
+                id, title, url, summary, source, source_id, published_at, lane,
+                software_group, software_tags, topic_tags, sources_text,
+                search_text, data_json, first_seen_at, last_seen_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                url = excluded.url,
+                summary = excluded.summary,
+                source = excluded.source,
+                source_id = excluded.source_id,
+                published_at = excluded.published_at,
+                lane = excluded.lane,
+                software_group = excluded.software_group,
+                software_tags = excluded.software_tags,
+                topic_tags = excluded.topic_tags,
+                sources_text = excluded.sources_text,
+                search_text = excluded.search_text,
+                data_json = excluded.data_json,
+                last_seen_at = excluded.last_seen_at
+            """,
+            rows,
+        )
+        count = connection.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
+    return int(count)
+
+
+def archive_article_count() -> int:
+    initialize_archive_db()
+    with archive_connection() as connection:
+        return int(connection.execute("SELECT COUNT(*) FROM articles").fetchone()[0])
+
+
+ARCHIVE_SEARCH_ALIASES = {
+    "unreal": ("software", "unreal engine"),
+    "unreal-engine": ("software", "unreal engine"),
+    "ue": ("software", "unreal engine"),
+    "ue5": ("software", "unreal engine"),
+    "unity": ("software", "unity"),
+    "blender": ("software", "blender"),
+    "houdini": ("software", "houdini"),
+    "painter": ("software", "substance 3d"),
+    "designer": ("software", "substance 3d"),
+    "substance": ("software", "substance 3d"),
+    "substance-painter": ("software", "substance 3d"),
+    "substance-designer": ("software", "substance 3d"),
+    "production": ("software", "production techniques"),
+    "production-techniques": ("software", "production techniques"),
+    "industry": ("software", "industry context"),
+    "industry-context": ("software", "industry context"),
+    "ai": ("software", "ai"),
+    "genai": ("software", "ai"),
+}
+
+
+def parse_archive_search(query: str) -> list[dict[str, Any]]:
+    normalized = re.sub(
+        r"#unreal\s+engine\b", '#software:"Unreal Engine"', query, flags=re.IGNORECASE
+    )
+    normalized = re.sub(
+        r"#substance\s+(?:painter|designer|3d)\b",
+        '#software:"Substance 3D"', normalized, flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"#production\s+techniques\b",
+        '#software:"Production techniques"', normalized, flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"#industry\s+context\b",
+        '#software:"Industry context"', normalized, flags=re.IGNORECASE,
+    )
+    try:
+        raw_tokens = shlex.split(normalized)
+    except ValueError:
+        raw_tokens = normalized.split()
+    tokens: list[dict[str, Any]] = []
+    for raw in raw_tokens:
+        negative = raw.startswith("-")
+        token = raw[1:] if negative else raw
+        field = "text"
+        value = token
+        if token.startswith("#"):
+            token = token[1:]
+            if ":" in token:
+                candidate_field, candidate_value = token.split(":", 1)
+                if candidate_field.lower() in {"software", "topic", "source", "is"}:
+                    field = candidate_field.lower()
+                    value = candidate_value
+            else:
+                alias = ARCHIVE_SEARCH_ALIASES.get(token.lower().replace("_", "-"))
+                if alias:
+                    field, value = alias
+                else:
+                    value = token
+        value = value.strip().lower()
+        if field == "software" and value in {"substance painter", "substance designer"}:
+            value = "substance 3d"
+        if value:
+            tokens.append({"negative": negative, "field": field, "value": value})
+    return tokens
+
+
+def archive_like_pattern(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
+
+
+def archive_token_sql(token: dict[str, Any], new_after: str) -> tuple[str, list[Any]]:
+    field = token["field"]
+    value = token["value"]
+    pattern = archive_like_pattern(value)
+    if field == "software":
+        clause = "(LOWER(a.software_group) LIKE ? ESCAPE '\\' OR LOWER(a.software_tags) LIKE ? ESCAPE '\\')"
+        parameters: list[Any] = [pattern, pattern]
+    elif field == "topic":
+        clause = "LOWER(a.topic_tags) LIKE ? ESCAPE '\\'"
+        parameters = [pattern]
+    elif field == "source":
+        clause = "(LOWER(a.source) LIKE ? ESCAPE '\\' OR LOWER(a.source_id) LIKE ? ESCAPE '\\' OR LOWER(a.sources_text) LIKE ? ESCAPE '\\')"
+        parameters = [pattern, pattern, pattern]
+    elif field == "is":
+        status_clauses = {
+            "read": "COALESCE(s.is_read, 0) = 1",
+            "unread": "COALESCE(s.is_read, 0) = 0",
+            "saved": "COALESCE(s.is_saved, 0) = 1",
+            "library": "COALESCE(s.is_saved, 0) = 1",
+            "archived": "COALESCE(s.is_archived, 0) = 1",
+            "liked": "COALESCE(s.feedback_value, 0) = 1",
+            "reduced": "COALESCE(s.feedback_value, 0) = -1",
+        }
+        if value == "new":
+            clause = "a.published_at > ?" if new_after else "0 = 1"
+            parameters = [new_after] if new_after else []
+        else:
+            clause = status_clauses.get(value, "0 = 1")
+            parameters = []
+    else:
+        clause = "(a.search_text LIKE ? ESCAPE '\\' OR LOWER(COALESCE(s.note, '')) LIKE ? ESCAPE '\\')"
+        parameters = [pattern, pattern]
+    if token["negative"]:
+        clause = f"NOT ({clause})"
+    return clause, parameters
+
+
+def query_archive(
+    query: str = "",
+    lane: str = "All",
+    source_ids: list[str] | None = None,
+    limit: int = 60,
+    offset: int = 0,
+    new_after: str = "",
+) -> dict[str, Any]:
+    initialize_archive_db()
+    limit = max(1, min(MAX_ARCHIVE_PAGE_SIZE, int(limit)))
+    offset = max(0, int(offset))
+    clauses: list[str] = []
+    parameters: list[Any] = []
+    for token in parse_archive_search(query):
+        clause, token_parameters = archive_token_sql(token, new_after)
+        clauses.append(clause)
+        parameters.extend(token_parameters)
+    if lane in {"Tech & Development", "Industry & Business"}:
+        clauses.append("a.lane = ?")
+        parameters.append(lane)
+    valid_source_ids = [source_id for source_id in (source_ids or []) if source_id]
+    if valid_source_ids:
+        source_clauses = []
+        for source_id in valid_source_ids[:MAX_STATE_SOURCES]:
+            source_clauses.append("(a.source_id = ? OR (' ' || a.sources_text || ' ') LIKE ?)")
+            parameters.extend([source_id, f"% {source_id} %"])
+        clauses.append(f"({' OR '.join(source_clauses)})")
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    base = "FROM articles a LEFT JOIN article_state s ON s.article_id = a.id"
+    with archive_connection() as connection:
+        total = int(connection.execute(f"SELECT COUNT(*) {base} {where}", parameters).fetchone()[0])
+        rows = connection.execute(
+            f"""
+            SELECT a.data_json, a.first_seen_at, a.last_seen_at
+            {base} {where}
+            ORDER BY a.published_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            [*parameters, limit, offset],
+        ).fetchall()
+    articles = []
+    for row in rows:
+        article = json.loads(row["data_json"])
+        article["archive_first_seen_at"] = row["first_seen_at"]
+        article["archive_last_seen_at"] = row["last_seen_at"]
+        articles.append(article)
+    return {
+        "articles": articles,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": offset + len(articles) < total,
+        "archive_count": archive_article_count(),
+    }
+
+
 def read_cache() -> dict[str, Any] | None:
     try:
         return json.loads(CACHE_FILE.read_text(encoding="utf-8"))
@@ -1047,12 +1545,49 @@ def normalize_user_state(payload: Any) -> dict[str, Any]:
     return normalized
 
 
+def sync_user_state_to_archive(state: dict[str, Any]) -> None:
+    initialize_archive_db()
+    read_ids = set(state.get("read", []))
+    saved_ids = set(state.get("saved", []))
+    archived_ids = set(state.get("archived", []))
+    notes = state.get("notes", {})
+    feedback = {item["id"]: item["value"] for item in state.get("feedback", [])}
+    article_ids = read_ids | saved_ids | archived_ids | set(notes) | set(feedback)
+    updated_at = state.get("updated_at") or datetime.now(timezone.utc).isoformat()
+    rows = [
+        (
+            article_id,
+            int(article_id in read_ids),
+            int(article_id in saved_ids),
+            int(article_id in archived_ids),
+            notes.get(article_id, ""),
+            int(feedback.get(article_id, 0)),
+            updated_at,
+        )
+        for article_id in article_ids
+    ]
+    with archive_connection() as connection:
+        connection.execute("DELETE FROM article_state")
+        if rows:
+            connection.executemany(
+                """
+                INSERT INTO article_state (
+                    article_id, is_read, is_saved, is_archived,
+                    note, feedback_value, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+
+
 def read_user_state() -> dict[str, Any]:
     with USER_STATE_LOCK:
         try:
-            return normalize_user_state(json.loads(USER_STATE_FILE.read_text(encoding="utf-8")))
+            state = normalize_user_state(json.loads(USER_STATE_FILE.read_text(encoding="utf-8")))
         except (FileNotFoundError, json.JSONDecodeError, OSError):
-            return normalize_user_state({})
+            state = normalize_user_state({})
+    sync_user_state_to_archive(state)
+    return state
 
 
 def write_user_state(payload: Any) -> dict[str, Any]:
@@ -1062,6 +1597,7 @@ def write_user_state(payload: Any) -> dict[str, Any]:
         temporary = USER_STATE_FILE.with_suffix(".tmp")
         temporary.write_text(json.dumps(normalized, ensure_ascii=False), encoding="utf-8")
         temporary.replace(USER_STATE_FILE)
+    sync_user_state_to_archive(normalized)
     return normalized
 
 
@@ -1070,18 +1606,27 @@ def build_feed(force: bool = False) -> dict[str, Any]:
     if cached and not force:
         generated = datetime.fromisoformat(cached["generated_at"])
         if (datetime.now(timezone.utc) - generated).total_seconds() < CACHE_TTL_SECONDS:
+            try:
+                cached["archive_count"] = archive_articles(cached.get("articles", []))
+            except (OSError, sqlite3.Error):
+                cached["archive_count"] = 0
             cached["cached"] = True
             return cached
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(FEEDS)) as executor:
-        results = list(executor.map(fetch_source, FEEDS))
+    configured_sources = list_source_configs(enabled_only=True)
+    if configured_sources:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(configured_sources))) as executor:
+            results = list(executor.map(fetch_source, configured_sources))
+    else:
+        results = []
 
     all_articles = [article for result in results for article in result["articles"]]
     failed = [result for result in results if not result["ok"]]
-    if not all_articles and cached:
+    if configured_sources and not all_articles and cached:
         cached["cached"] = True
         cached["stale"] = True
         cached["warnings"] = [f"{item['source']['name']}: {item['message']}" for item in failed]
+        cached["archive_count"] = archive_article_count()
         return cached
 
     enrich_missing_images(all_articles)
@@ -1106,7 +1651,11 @@ def build_feed(force: bool = False) -> dict[str, Any]:
         ],
         "warnings": [f"{item['source']['name']}: {item['message']}" for item in failed],
     }
-    if all_articles:
+    try:
+        payload["archive_count"] = archive_articles(clusters)
+    except (OSError, sqlite3.Error):
+        payload["archive_count"] = archive_article_count()
+    if configured_sources:
         try:
             write_cache(payload)
         except OSError:
@@ -1130,6 +1679,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def read_json_body(self, maximum_size: int = 50_000) -> Any:
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise ValueError("Invalid content length.") from exc
+        if content_length <= 0 or content_length > maximum_size:
+            raise ValueError("Invalid request payload size.")
+        try:
+            return json.loads(self.rfile.read(content_length).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("Invalid JSON request payload.") from exc
+
     def do_GET(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
         if parsed.path == "/api/health":
@@ -1144,6 +1705,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/state":
             self.send_json(read_user_state())
+            return
+        if parsed.path == "/api/archive":
+            parameters = urllib.parse.parse_qs(parsed.query)
+            try:
+                source_ids = [
+                    source_id
+                    for value in parameters.get("sources", [])
+                    for source_id in value.split(",")
+                    if source_id
+                ]
+                self.send_json(
+                    query_archive(
+                        query=parameters.get("q", [""])[0],
+                        lane=parameters.get("lane", ["All"])[0],
+                        source_ids=source_ids,
+                        limit=int(parameters.get("limit", ["60"])[0]),
+                        offset=int(parameters.get("offset", ["0"])[0]),
+                        new_after=parameters.get("new_after", [""])[0],
+                    )
+                )
+            except (ValueError, sqlite3.Error) as exc:
+                self.send_json({"error": "Unable to search archive", "detail": str(exc)}, status=400)
+            return
+        if parsed.path == "/api/sources":
+            self.send_json({"sources": list_source_configs()})
             return
 
         relative_path = "index.html" if parsed.path in {"", "/"} else parsed.path.lstrip("/")
@@ -1170,26 +1756,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
-        if parsed.path != "/api/state":
+        supported_paths = {
+            "/api/state", "/api/sources", "/api/sources/test", "/api/sources/toggle"
+        }
+        if parsed.path not in supported_paths:
             self.send_error(404)
             return
-
         try:
-            content_length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            self.send_json({"error": "Invalid content length"}, status=400)
-            return
-        if content_length <= 0 or content_length > 750_000:
-            self.send_json({"error": "Invalid state payload size"}, status=400)
-            return
-
-        try:
-            payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
-            self.send_json(write_user_state(payload))
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            self.send_json({"error": "Invalid JSON state payload"}, status=400)
-        except OSError as exc:
-            self.send_json({"error": "Unable to save local state", "detail": str(exc)}, status=500)
+            maximum_size = 750_000 if parsed.path == "/api/state" else 50_000
+            payload = self.read_json_body(maximum_size)
+            if parsed.path == "/api/state":
+                self.send_json(write_user_state(payload))
+            elif parsed.path == "/api/sources":
+                self.send_json({"source": add_source_config(payload)}, status=201)
+            elif parsed.path == "/api/sources/test":
+                self.send_json(test_source(payload))
+            else:
+                if not isinstance(payload, dict):
+                    raise ValueError("Source toggle details must be an object.")
+                self.send_json(
+                    {"source": set_source_enabled(payload.get("id"), payload.get("enabled"))}
+                )
+        except ValueError as exc:
+            self.send_json({"error": str(exc)}, status=400)
+        except (OSError, sqlite3.Error) as exc:
+            self.send_json({"error": "Unable to update local data", "detail": str(exc)}, status=500)
 
 
 class DashboardServer(ThreadingHTTPServer):
