@@ -27,6 +27,28 @@ const state = {
 
 const FOCUS_MIN_SCORE = 36;
 const FOCUS_LIMIT = 30;
+const SOFTWARE_GROUP_ORDER = [
+  "Unreal Engine",
+  "Blender",
+  "Substance Painter",
+  "Substance Designer",
+  "Substance 3D",
+  "Houdini",
+  "Spine",
+  "Production techniques",
+  "Industry context",
+];
+const SOFTWARE_GROUP_DETAILS = {
+  "Unreal Engine": "Current tool · engine workflows and production",
+  Blender: "Current tool · modeling, animation and rendering",
+  "Substance Painter": "Current tool · texturing and material workflows",
+  "Substance Designer": "Exploring · procedural material creation",
+  "Substance 3D": "Shared Substance ecosystem updates",
+  Houdini: "Exploring · procedural workflows, simulation and FX",
+  Spine: "Exploring · real-time 2D animation",
+  "Production techniques": "Cross-tool craft, pipelines and research",
+  "Industry context": "Business developments worth keeping in view",
+};
 let stateSaveTimer = null;
 
 const elements = {
@@ -351,6 +373,8 @@ function filteredArticles() {
         article.source,
         article.topic,
         article.lane,
+        article.software_group,
+        ...(article.software_tags || []),
         ...(article.priority_reasons || []),
         ...article.related.map((item) => `${item.source} ${item.title}`),
       ]
@@ -406,7 +430,9 @@ function storyCard(article) {
   const priorityBadge = score >= FOCUS_MIN_SCORE
     ? `<span class="priority-badge">Focus ${score}</span>`
     : "";
-  const reasons = (article.priority_reasons || []).slice(0, 2);
+  const reasons = (article.priority_reasons || [])
+    .filter((reason) => state.view !== "focus" || reason !== article.software_group)
+    .slice(0, 2);
   const reasonMarkup = reasons.length
     ? `<div class="story-reasons">${reasons.map((reason) => `<span>${escapeHtml(reason)}</span>`).join("")}</div>`
     : "";
@@ -443,12 +469,53 @@ function storyCard(article) {
     </article>`;
 }
 
+function softwareGroup(article) {
+  if (article.software_group) return article.software_group;
+  const matchedReason = SOFTWARE_GROUP_ORDER.find((group) => (article.priority_reasons || []).includes(group));
+  if (matchedReason) return matchedReason;
+  return article.lane === "Industry & Business" ? "Industry context" : "Production techniques";
+}
+
+function focusGroupMarkup(articles) {
+  const groups = new Map();
+  articles.forEach((article) => {
+    const group = softwareGroup(article);
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push(article);
+  });
+  const orderedGroups = [...groups.entries()].sort(([left], [right]) => {
+    const leftIndex = SOFTWARE_GROUP_ORDER.indexOf(left);
+    const rightIndex = SOFTWARE_GROUP_ORDER.indexOf(right);
+    if (leftIndex === -1 && rightIndex === -1) return left.localeCompare(right);
+    if (leftIndex === -1) return 1;
+    if (rightIndex === -1) return -1;
+    return leftIndex - rightIndex;
+  });
+  return orderedGroups
+    .map(([group, groupedArticles], index) => `
+      <section class="focus-group" aria-labelledby="focus-group-${index}">
+        <header class="focus-group-header">
+          <div>
+            <span class="focus-group-kicker">Software signal ${String(index + 1).padStart(2, "0")}</span>
+            <h2 id="focus-group-${index}">${escapeHtml(group)}</h2>
+            <p>${escapeHtml(SOFTWARE_GROUP_DETAILS[group] || "Related production coverage")}</p>
+          </div>
+          <strong>${groupedArticles.length} ${groupedArticles.length === 1 ? "story" : "stories"}</strong>
+        </header>
+        <div class="focus-group-grid">${groupedArticles.map(storyCard).join("")}</div>
+      </section>`)
+    .join("");
+}
+
 function render() {
   if (!state.payload) return;
   const visible = filteredArticles();
   elements.grid.classList.toggle("is-list", state.layout === "list");
+  elements.grid.classList.toggle("is-grouped", state.view === "focus");
   elements.grid.classList.remove("loading-grid");
-  elements.grid.innerHTML = visible.map(storyCard).join("");
+  elements.grid.innerHTML = state.view === "focus"
+    ? focusGroupMarkup(visible)
+    : visible.map(storyCard).join("");
   elements.empty.hidden = visible.length > 0;
   elements.grid.hidden = visible.length === 0;
   const emptyCopy = {
@@ -467,7 +534,7 @@ function render() {
   elements.archivedCount.textContent = state.articles.filter((article) => state.archived.has(article.id)).length;
   elements.briefCount.textContent = dailyBriefArticles().length;
   elements.sortLabel.textContent = {
-    focus: "Priority ranked",
+    focus: "Grouped by software",
     saved: "Saved collection",
     unread: "Newest unread",
     archived: "Recently archived",

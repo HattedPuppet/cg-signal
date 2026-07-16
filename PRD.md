@@ -99,6 +99,13 @@ And is actively interested in:
 - Give title matches more weight than incidental summary mentions.
 - Show concise reasons such as `Unreal Engine`, `Workflow or pipeline`, or
   `Multiple sources`.
+- Group the resulting inbox into software sections for Unreal Engine, Blender,
+  Substance Painter, Substance Designer, Houdini, and Spine.
+- Give each story one primary software section so multi-tool articles are not
+  repeated. Prefer title mentions over incidental summary mentions while
+  retaining all detected software as searchable metadata.
+- Place strong cross-tool stories under **Production techniques** and unmatched
+  business stories under **Industry context**.
 - Display only unread, non-archived strong matches.
 - Cap the inbox at 30 items and limit early results from any one source.
 

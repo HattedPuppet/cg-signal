@@ -39,6 +39,9 @@ accounts, API keys, or subscription fees.
 - **Focus inbox** ranks unread stories against the configured software
   interests and technical-depth signals. It explains the strongest matches,
   caps the list at 30, and balances sources so one publication cannot dominate.
+  Results are divided into non-overlapping software sections for Unreal Engine,
+  Blender, Substance, Houdini, and Spine, with cross-tool techniques kept in a
+  separate fallback section.
 - **Daily brief** selects up to nine high-value unread stories, prioritizing six
   technical items and reserving room for three industry updates. Its summaries
   are built from RSS excerpts and do not call an external AI service.

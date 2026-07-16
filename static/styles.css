@@ -805,6 +805,66 @@ kbd {
   gap: 16px;
 }
 
+.story-grid.is-grouped {
+  display: block;
+}
+
+.focus-group + .focus-group {
+  margin-top: 38px;
+  padding-top: 31px;
+  border-top: 1px solid var(--line);
+}
+
+.focus-group-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 16px;
+  padding-inline: 2px;
+}
+
+.focus-group-kicker {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--orange);
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.focus-group-header h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+}
+
+.focus-group-header p {
+  margin: 6px 0 0;
+  color: var(--ink-muted);
+  font-size: 10px;
+}
+
+.focus-group-header > strong {
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-muted);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.focus-group-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
 .story-card {
   position: relative;
   display: flex;
@@ -1144,6 +1204,10 @@ kbd {
 .related-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .story-grid.is-list {
+  grid-template-columns: 1fr;
+}
+
+.story-grid.is-list .focus-group-grid {
   grid-template-columns: 1fr;
 }
 
@@ -1581,10 +1645,12 @@ body.night .source-stack i {
 
 @media (min-width: 1500px) {
   .story-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .focus-group-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 @media (max-width: 1120px) {
   .story-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .focus-group-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .hero { grid-template-columns: 1fr; }
   .hero-aside { max-width: 520px; }
 }
@@ -1657,6 +1723,10 @@ body.night .source-stack i {
   .topic-button { min-width: max-content; }
   .result-summary { display: none; }
   .story-grid { grid-template-columns: 1fr; }
+  .focus-group-grid { grid-template-columns: 1fr; }
+  .focus-group + .focus-group { margin-top: 30px; padding-top: 25px; }
+  .focus-group-header { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .focus-group-header h2 { font-size: 27px; }
   .story-grid.is-list .story-card { display: flex; min-height: 390px; }
   .story-grid.is-list .story-visual { height: 174px; }
   .story-grid.is-list .story-title { font-size: 21px; }

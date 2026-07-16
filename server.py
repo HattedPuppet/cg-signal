@@ -473,6 +473,11 @@ INTEREST_TERMS = (
     ("Spine", ("spine 2d", "esoteric software", "spine animation"), 22),
 )
 
+SOFTWARE_MATCH_TERMS = (
+    *((label, terms) for label, terms, _points in INTEREST_TERMS),
+    ("Substance 3D", ("substance 3d", "substance")),
+)
+
 DEPTH_TERMS = (
     ("Tutorial or breakdown", ("tutorial", "breakdown", "how to", "making of", "チュートリアル", "メイキング", "解説"), 10),
     ("Workflow or pipeline", ("workflow", "pipeline", "ワークフロー", "パイプライン"), 8),
@@ -551,6 +556,26 @@ def score_relevance(
     # Keep explanations compact and deterministic while preserving order.
     unique_reasons = list(dict.fromkeys(reasons))[:3]
     return max(0, min(100, score)), unique_reasons
+
+
+def classify_software(title: str, summary: str) -> list[str]:
+    """Return software tags ordered by prominence without duplicating cards."""
+
+    title_value = title.lower()
+    summary_value = summary.lower()
+    matches: list[tuple[tuple[int, int, int], str]] = []
+    for order, (label, terms) in enumerate(SOFTWARE_MATCH_TERMS):
+        title_positions = [title_value.find(term) for term in terms if term in title_value]
+        summary_positions = [summary_value.find(term) for term in terms if term in summary_value]
+        if title_positions:
+            matches.append(((0, min(title_positions), order), label))
+        elif summary_positions:
+            matches.append(((1, min(summary_positions), order), label))
+
+    labels = [label for _rank, label in sorted(matches)]
+    if any(label in {"Substance Painter", "Substance Designer"} for label in labels):
+        labels = [label for label in labels if label != "Substance 3D"]
+    return labels
 
 
 def parse_feed_document(xml_bytes: bytes) -> ET.Element:
@@ -752,6 +777,11 @@ def cluster_articles(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
         public["priority_score"] = priority_score
         public["priority_reasons"] = priority_reasons
+        software_tags = classify_software(public["title"], public.get("summary", ""))
+        public["software_tags"] = software_tags
+        public["software_group"] = software_tags[0] if software_tags else (
+            "Industry context" if public.get("lane") == "Industry & Business" else "Production techniques"
+        )
         output.append(public)
     return output
 
