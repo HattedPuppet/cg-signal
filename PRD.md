@@ -26,8 +26,8 @@ The product must answer three questions quickly:
 
 ## Product vision
 
-Create a calm, trustworthy research inbox that turns a broad feed into a short
-daily decision queue while keeping the original publishers one click away.
+Create a calm, trustworthy research dashboard that makes a broad chronological
+feed easy to narrow, while keeping the original publishers one click away.
 
 ## Primary user
 
@@ -93,26 +93,21 @@ And is actively interested in:
 - Support software-category, information-type, source, search, saved, unread,
   and archive filters.
 
-### Focus Inbox
+### Latest Signal and software categories
 
-- Score stories locally using software-interest matches, practical-depth terms,
-  source authority, corroborating coverage, and promotional-noise penalties.
-- Give title matches more weight than incidental summary mentions.
-- Show concise reasons such as `Unreal Engine`, `Workflow or pipeline`, or
-  `Multiple sources`.
-- Group the resulting inbox into software sections for Unreal Engine, Blender,
-  Substance Painter, Substance Designer, Houdini, and Spine.
-- Give each story one primary software section so multi-tool articles are not
-  repeated. Prefer title mentions over incidental summary mentions while
-  retaining all detected software as searchable metadata.
-- Place strong cross-tool stories under **Production techniques** and unmatched
-  business stories under **Industry context**.
-- Provide a visible **Focus categories** selector containing only non-empty
-  software groups, with live counts that respond to the other active filters.
+- Present the primary feed in chronological, newest-first order without a
+  relevance threshold, result cap, or hidden re-ranking.
+- Provide a visible **Software categories** selector containing only non-empty
+  groups, with live counts that respond to the other active filters.
+- Classify stories under Unreal Engine, Blender, Substance Painter, Substance
+  Designer, Houdini, Spine, **Production techniques**, or **Industry context**.
+- Give each story one primary category so multi-tool articles are not repeated.
+  Prefer title mentions over incidental summary mentions while retaining all
+  detected software as searchable metadata.
+- Keep read stories in Latest Signal; remove only archived stories from the
+  active chronological feed.
 - Do not expose broad inferred subject filters such as Engines, 3D Art, Tools,
   Game Development, or Industry when their classification is unreliable.
-- Display only unread, non-archived strong matches.
-- Cap the inbox at 30 items and limit early results from any one source.
 
 ### Daily Brief
 
@@ -126,7 +121,7 @@ And is actively interested in:
 ### Save and archive
 
 - Save stories as a durable research collection.
-- Archive stories out of Latest, Focus, and Unread views.
+- Archive stories out of Latest Signal and Unread views.
 - Provide a dedicated archive with restore controls.
 - Persist read, saved, and archived identifiers in the local server's data
   directory, with browser storage as a migration and failure fallback.
@@ -139,22 +134,23 @@ And is actively interested in:
 
 ## Relevance model
 
-The current ranking is deterministic and rule-based:
+Daily Brief ranking is deterministic and rule-based:
 
 `priority = technical base + tool matches + depth signals + source confidence + corroboration - promotional noise`
 
-Scores are a sorting aid, not a claim about objective article quality. Ranking
-rules must remain testable and easy to adjust as the user's interests change.
+Scores select and order the short Daily Brief; they do not reorder Latest
+Signal and are not a claim about objective article quality. Ranking rules must
+remain testable and easy to adjust as the user's interests change.
 
 ## Core user journey
 
 1. Open CG Signal from the Start menu.
-2. Review the Focus Inbox or open the Daily Brief.
+2. Review Latest Signal, narrow it by software category, or open the Daily
+   Brief.
 3. Open valuable stories on the original site.
 4. Save evergreen learning material, archive low-priority items, and mark the
    reviewed briefing read.
-5. Use Latest, software categories, or source filters when deeper exploration
-   is desired.
+5. Use source, information-type, and search filters for deeper exploration.
 
 ## Privacy, cost, and data constraints
 
@@ -170,9 +166,9 @@ rules must remain testable and easy to adjust as the user's interests change.
 Success is evaluated through the user's experience rather than remote
 analytics:
 
-- The daily high-value queue can normally be reviewed in under ten minutes.
+- The short Daily Brief can normally be reviewed in under ten minutes.
 - Duplicate announcements rarely require opening more than one card.
-- Focus results visibly favor the configured tools and practical techniques.
+- Latest Signal stays chronological and software categories reliably narrow it.
 - Saved material remains retrievable after browser restarts.
 - Feed failures do not prevent access to the last successful briefing.
 - The dashboard remains useful when all optional intelligence features are off.

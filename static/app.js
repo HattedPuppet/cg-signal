@@ -16,7 +16,7 @@ const state = {
   activeSources: new Set(),
   lane: localStorage.getItem(storageKeys.lane) || "All",
   software: localStorage.getItem(storageKeys.software) || "All",
-  view: "focus",
+  view: "all",
   search: "",
   read: readSet(storageKeys.read),
   saved: readSet(storageKeys.saved),
@@ -26,8 +26,6 @@ const state = {
   briefArticleIds: [],
 };
 
-const FOCUS_MIN_SCORE = 36;
-const FOCUS_LIMIT = 30;
 const SOFTWARE_GROUP_ORDER = [
   "Unreal Engine",
   "Blender",
@@ -39,17 +37,6 @@ const SOFTWARE_GROUP_ORDER = [
   "Production techniques",
   "Industry context",
 ];
-const SOFTWARE_GROUP_DETAILS = {
-  "Unreal Engine": "Current tool · engine workflows and production",
-  Blender: "Current tool · modeling, animation and rendering",
-  "Substance Painter": "Current tool · texturing and material workflows",
-  "Substance Designer": "Exploring · procedural material creation",
-  "Substance 3D": "Shared Substance ecosystem updates",
-  Houdini: "Exploring · procedural workflows, simulation and FX",
-  Spine: "Exploring · real-time 2D animation",
-  "Production techniques": "Cross-tool craft, pipelines and research",
-  "Industry context": "Business developments worth keeping in view",
-};
 const SOFTWARE_GROUP_COLORS = {
   "Unreal Engine": "#4b75ff",
   Blender: "#f18a21",
@@ -73,7 +60,6 @@ const elements = {
   softwareFilters: document.querySelector("#software-filters"),
   visibleCount: document.querySelector("#visible-count"),
   allCount: document.querySelector("#all-count"),
-  focusCount: document.querySelector("#focus-count"),
   savedCount: document.querySelector("#saved-count"),
   unreadCount: document.querySelector("#unread-count"),
   archivedCount: document.querySelector("#archived-count"),
@@ -233,7 +219,7 @@ function prioritySort(left, right) {
     || new Date(right.published_at).getTime() - new Date(left.published_at).getTime();
 }
 
-function balancedPriorityArticles(articles, limit = FOCUS_LIMIT, perSource = 3) {
+function balancedPriorityArticles(articles, limit = 30, perSource = 3) {
   const ranked = [...articles].sort(prioritySort);
   const selected = [];
   const selectedIds = new Set();
@@ -256,12 +242,6 @@ function balancedPriorityArticles(articles, limit = FOCUS_LIMIT, perSource = 3) 
 
 function unreadArticles() {
   return state.articles.filter((article) => !state.read.has(article.id) && !state.archived.has(article.id));
-}
-
-function focusArticles() {
-  return balancedPriorityArticles(
-    unreadArticles().filter((article) => priorityScore(article) >= FOCUS_MIN_SCORE),
-  );
 }
 
 function dailyBriefArticles() {
@@ -390,21 +370,19 @@ function matchesSearch(article, query) {
   return haystack.includes(query);
 }
 
-function focusPool() {
+function latestPool() {
   const query = state.search.trim().toLocaleLowerCase();
-  const candidates = state.articles.filter((article) => {
+  return state.articles.filter((article) => {
     if (!matchesSource(article)) return false;
     if (state.lane !== "All" && (article.lane || "Tech & Development") !== state.lane) return false;
-    if (state.archived.has(article.id) || state.read.has(article.id)) return false;
-    if (priorityScore(article) < FOCUS_MIN_SCORE) return false;
+    if (state.archived.has(article.id)) return false;
     return matchesSearch(article, query);
   });
-  return balancedPriorityArticles(candidates);
 }
 
 function filteredArticles() {
-  if (state.view === "focus") {
-    const pool = focusPool();
+  if (state.view === "all") {
+    const pool = latestPool();
     return state.software === "All"
       ? pool
       : pool.filter((article) => softwareGroup(article) === state.software);
@@ -466,12 +444,8 @@ function storyCard(article) {
   const lane = article.lane || "Tech & Development";
   const laneLabel = lane === "Industry & Business" ? "Business" : "Tech";
   const category = softwareGroup(article);
-  const score = priorityScore(article);
-  const priorityBadge = score >= FOCUS_MIN_SCORE
-    ? `<span class="priority-badge">Focus ${score}</span>`
-    : "";
   const reasons = (article.priority_reasons || [])
-    .filter((reason) => state.view !== "focus" || reason !== category)
+    .filter((reason) => reason !== category)
     .slice(0, 2);
   const reasonMarkup = reasons.length
     ? `<div class="story-reasons">${reasons.map((reason) => `<span>${escapeHtml(reason)}</span>`).join("")}</div>`
@@ -482,7 +456,6 @@ function storyCard(article) {
         ${image}
         <div class="visual-overlay"></div>
         <span class="visual-category">${escapeHtml(category)}</span>
-        ${priorityBadge}
       </div>
       <div class="story-body">
         <div class="story-meta">
@@ -517,9 +490,9 @@ function softwareGroup(article) {
 }
 
 function renderSoftwareFilters(pool) {
-  const isFocusView = state.view === "focus";
-  elements.softwareFilterGroup.hidden = !isFocusView;
-  if (!isFocusView) return;
+  const isLatestView = state.view === "all";
+  elements.softwareFilterGroup.hidden = !isLatestView;
+  if (!isLatestView) return;
 
   const counts = new Map();
   pool.forEach((article) => {
@@ -540,7 +513,7 @@ function renderSoftwareFilters(pool) {
   }
 
   const buttons = [
-    { label: "All focus", value: "All", count: pool.length, color: "#d7ff57" },
+    { label: "All stories", value: "All", count: pool.length, color: "#d7ff57" },
     ...categories.map((category) => ({
       label: category,
       value: category,
@@ -560,54 +533,19 @@ function renderSoftwareFilters(pool) {
     .join("");
 }
 
-function focusGroupMarkup(articles) {
-  const groups = new Map();
-  articles.forEach((article) => {
-    const group = softwareGroup(article);
-    if (!groups.has(group)) groups.set(group, []);
-    groups.get(group).push(article);
-  });
-  const orderedGroups = [...groups.entries()].sort(([left], [right]) => {
-    const leftIndex = SOFTWARE_GROUP_ORDER.indexOf(left);
-    const rightIndex = SOFTWARE_GROUP_ORDER.indexOf(right);
-    if (leftIndex === -1 && rightIndex === -1) return left.localeCompare(right);
-    if (leftIndex === -1) return 1;
-    if (rightIndex === -1) return -1;
-    return leftIndex - rightIndex;
-  });
-  return orderedGroups
-    .map(([group, groupedArticles], index) => `
-      <section class="focus-group" aria-labelledby="focus-group-${index}">
-        <header class="focus-group-header">
-          <div>
-            <span class="focus-group-kicker">Software signal ${String(index + 1).padStart(2, "0")}</span>
-            <h2 id="focus-group-${index}">${escapeHtml(group)}</h2>
-            <p>${escapeHtml(SOFTWARE_GROUP_DETAILS[group] || "Related production coverage")}</p>
-          </div>
-          <strong>${groupedArticles.length} ${groupedArticles.length === 1 ? "story" : "stories"}</strong>
-        </header>
-        <div class="focus-group-grid">${groupedArticles.map(storyCard).join("")}</div>
-      </section>`)
-    .join("");
-}
-
 function render() {
   if (!state.payload) return;
-  const pool = state.view === "focus" ? focusPool() : [];
+  const pool = state.view === "all" ? latestPool() : [];
   renderSoftwareFilters(pool);
-  const visible = state.view === "focus"
+  const visible = state.view === "all"
     ? (state.software === "All" ? pool : pool.filter((article) => softwareGroup(article) === state.software))
     : filteredArticles();
   elements.grid.classList.toggle("is-list", state.layout === "list");
-  elements.grid.classList.toggle("is-grouped", state.view === "focus");
   elements.grid.classList.remove("loading-grid");
-  elements.grid.innerHTML = state.view === "focus"
-    ? focusGroupMarkup(visible)
-    : visible.map(storyCard).join("");
+  elements.grid.innerHTML = visible.map(storyCard).join("");
   elements.empty.hidden = visible.length > 0;
   elements.grid.hidden = visible.length === 0;
   const emptyCopy = {
-    focus: ["Focus inbox cleared", "You have reviewed today’s strongest matches. Check Latest signal for everything else."],
     saved: ["Nothing saved yet", "Use the star on a story to keep it in your research collection."],
     unread: ["You’re all caught up", "New unread stories will appear after the next feed refresh."],
     archived: ["The archive is empty", "Archived stories stay out of your active feed and can be restored here."],
@@ -616,13 +554,11 @@ function render() {
   elements.empty.querySelector("p").textContent = emptyCopy[1];
   elements.visibleCount.textContent = `${visible.length} ${visible.length === 1 ? "story" : "stories"}`;
   elements.allCount.textContent = state.articles.filter((article) => !state.archived.has(article.id)).length;
-  elements.focusCount.textContent = focusArticles().length;
   elements.savedCount.textContent = state.articles.filter((article) => state.saved.has(article.id)).length;
   elements.unreadCount.textContent = unreadArticles().length;
   elements.archivedCount.textContent = state.articles.filter((article) => state.archived.has(article.id)).length;
   elements.briefCount.textContent = dailyBriefArticles().length;
   elements.sortLabel.textContent = {
-    focus: "Grouped by software",
     saved: "Saved collection",
     unread: "Newest unread",
     archived: "Recently archived",
@@ -820,7 +756,7 @@ document.querySelector("#clear-filters").addEventListener("click", () => {
   state.software = "All";
   localStorage.setItem(storageKeys.lane, state.lane);
   localStorage.setItem(storageKeys.software, state.software);
-  state.view = "focus";
+  state.view = "all";
   state.search = "";
   elements.search.value = "";
   renderSources(state.payload.sources || []);

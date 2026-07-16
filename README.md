@@ -36,12 +36,10 @@ accounts, API keys, or subscription fees.
 - Read, saved, and archived states are persisted by the local server in
   `.cache/user-state.json`. Browser storage acts as a fallback and migrates
   existing saved/read state automatically.
-- **Focus inbox** ranks unread stories against the configured software
-  interests and technical-depth signals. It explains the strongest matches,
-  caps the list at 30, and balances sources so one publication cannot dominate.
-  Results are divided into non-overlapping software sections for Unreal Engine,
-  Blender, Substance, Houdini, and Spine, with cross-tool techniques kept in a
-  separate fallback section.
+- **Latest Signal** keeps the primary feed chronological and offers live
+  software-category counts for Unreal Engine, Blender, Substance, Houdini,
+  Spine, Production techniques, and Industry context. Each story belongs to one
+  primary category, so selecting a category never repeats an article.
 - **Daily brief** selects up to nine high-value unread stories, prioritizing six
   technical items and reserving room for three industry updates. Its summaries
   are built from RSS excerpts and do not call an external AI service.
@@ -55,9 +53,9 @@ accounts, API keys, or subscription fees.
   and product/version signatures that often survive between Japanese and
   English headlines. Related coverage remains expandable beneath the lead card.
 - A separate information-type filter divides **Tech & Development** coverage
-  from **Industry & Business** reporting. In the Focus Inbox, a dynamic
-  **Focus categories** selector replaces the former broad subject filters with
-  the software groups actually present, including live story counts.
+  from **Industry & Business** reporting. In Latest Signal, a dynamic
+  **Software categories** selector shows only the software groups currently
+  present, including live story counts.
 - The current tool watchlist includes Unreal Engine, Substance 3D Painter and
   Designer, Blender, Houdini, and Spine terminology for software grouping and
   relevance scoring.
