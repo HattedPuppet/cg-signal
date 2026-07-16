@@ -11,7 +11,11 @@ class TopicClassificationTests(unittest.TestCase):
                 "A workflow breakdown",
                 "Tech & Development",
             ),
-            ["Technical art & optimization", "Pipeline, tools & automation"],
+            [
+                "Technical art & optimization",
+                "Pipeline, tools & automation",
+                "Breakdowns & production stories",
+            ],
         )
 
     def test_japanese_animation_story_is_classified(self):
@@ -33,6 +37,17 @@ class TopicClassificationTests(unittest.TestCase):
             ),
             [],
         )
+
+    def test_general_production_topics_are_more_specific(self):
+        cases = [
+            ("Creature production breakdown", "A detailed making of", "Breakdowns & production stories"),
+            ("SIGGRAPH neural rendering research", "A new paper", "Research & emerging tech"),
+            ("A new tool version is released", "The update adds features", "Releases & product updates"),
+            ("Environment art showcase", "A gallery for inspiration", "Assets & inspiration"),
+        ]
+        for title, summary, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertIn(expected, classify_topics(title, summary, "Tech & Development"))
         self.assertEqual(
             classify_topics(
                 "ゲーム会社が著作権侵害をめぐり訴訟",

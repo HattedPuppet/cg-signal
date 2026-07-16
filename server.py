@@ -35,6 +35,10 @@ CACHE_TTL_SECONDS = 15 * 60
 IMAGE_INDEX_TTL_SECONDS = 30 * 86400
 MAX_ITEMS_PER_SOURCE = 40
 MAX_STATE_IDS = 5000
+MAX_STATE_NOTES = 1200
+MAX_NOTE_LENGTH = 4000
+MAX_FEEDBACK_ITEMS = 500
+MAX_STATE_SOURCES = 200
 USER_STATE_LOCK = threading.Lock()
 
 FEEDS = (
@@ -541,6 +545,53 @@ PRODUCTION_TOPIC_TERMS = (
             "ゲーム制作", "ゲームプレイ", "レベルデザイン", "プロトタイプ", "開発日誌",
         ),
     ),
+    (
+        "Breakdowns & production stories",
+        (
+            "breakdown", "making of", "behind the scenes", "case study", "production story",
+            "production diary", "dev diary", "メイキング", "制作事例", "制作の裏側", "事例紹介",
+            "開発秘話", "制作工程", "インタビュー",
+        ),
+    ),
+    (
+        "Research & emerging tech",
+        (
+            "research", "researcher", "paper", "siggraph", "machine learning", "neural",
+            "gaussian splatting", "radiance field", "generative", "artificial intelligence",
+            "研究", "論文", "機械学習", "ニューラル", "生成ai", "生成 ai", "新技術",
+        ),
+    ),
+    (
+        "Releases & product updates",
+        (
+            "release", "released", "update", "version", "beta", "roadmap", "new feature",
+            "now available", "リリース", "アップデート", "バージョン", "ベータ", "新機能",
+            "提供開始", "公開", "ロードマップ",
+        ),
+    ),
+    (
+        "Assets & inspiration",
+        (
+            "character art", "environment art", "concept art", "asset pack", "showcase",
+            "gallery", "portfolio", "artstation", "inspiration", "キャラクターアート",
+            "背景アート", "コンセプトアート", "アセット", "作品紹介", "ショーケース",
+        ),
+    ),
+)
+
+EVENT_TERM_GROUPS = (
+    ("release", ("release", "released", "launch", "リリース", "発売", "公開")),
+    ("update", ("update", "version", "アップデート", "バージョン", "新機能")),
+    ("acquisition", ("acquisition", "acquires", "acquired", "merger", "買収", "合併")),
+    ("layoffs", ("layoff", "job cuts", "workforce reduction", "解雇", "人員削減")),
+    ("closure", ("shutdown", "shuts down", "closure", "closes", "閉鎖", "終了", "倒産")),
+    ("retirement", ("retires", "retirement", "steps down", "引退", "退任")),
+    ("legal", ("lawsuit", "legal action", "copyright", "訴訟", "著作権", "権利侵害")),
+    ("funding", ("funding", "investment", "資金調達", "投資")),
+    ("partnership", ("partnership", "partners with", "collaboration", "提携", "協業")),
+    ("pricing", ("price increase", "pricing", "値上げ", "価格改定")),
+    ("delay", ("delayed", "postponed", "延期")),
+    ("cancellation", ("cancelled", "canceled", "discontinued", "中止", "開発中止")),
 )
 
 DEPTH_TERMS = (
@@ -751,6 +802,15 @@ def ascii_signature(value: str) -> set[str]:
     return {token.strip("-+.") for token in tokens if token.strip("-+.") not in ASCII_STOPWORDS}
 
 
+def event_signatures(value: str) -> set[str]:
+    normalized = value.lower()
+    return {
+        label
+        for label, terms in EVENT_TERM_GROUPS
+        if any(term in normalized for term in terms)
+    }
+
+
 def same_story(left: dict[str, Any], right: dict[str, Any]) -> bool:
     if left["url"] == right["url"]:
         return True
@@ -783,6 +843,14 @@ def same_story(left: dict[str, Any], right: dict[str, Any]) -> bool:
     ascii_shared = ascii_signature(left["title"]) & ascii_signature(right["title"])
     version_match = any(any(character.isdigit() for character in token) for token in ascii_shared)
     distinctive = sum(len(token) >= 6 for token in ascii_shared)
+    event_shared = event_signatures(left["title"]) & event_signatures(right["title"])
+    event_noise = {
+        "announcement", "announces", "creator", "developer", "official", "industry",
+        "latest", "major", "release", "released", "update", "version",
+    }
+    event_entities = {token for token in ascii_shared if len(token) >= 4 and token not in event_noise}
+    if event_shared and (len(event_entities) >= 2 or version_match):
+        return True
     # Three shared tokens keeps common product/version pairs from collapsing an
     # unrelated tutorial published near a release announcement.
     return len(ascii_shared) >= 3 and (version_match or distinctive >= 2)
@@ -886,15 +954,69 @@ def write_cache(payload: dict[str, Any]) -> None:
     temporary.replace(CACHE_FILE)
 
 
+def normalize_string_list(values: Any, limit: int, max_length: int = 80) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    valid = [value for value in values if isinstance(value, str) and 1 <= len(value) <= max_length]
+    return list(dict.fromkeys(valid))[-limit:]
+
+
+def normalize_feedback(values: Any) -> list[dict[str, Any]]:
+    if not isinstance(values, list):
+        return []
+    by_id: dict[str, dict[str, Any]] = {}
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        article_id = item.get("id")
+        value = item.get("value")
+        if not isinstance(article_id, str) or not 1 <= len(article_id) <= 80:
+            continue
+        if isinstance(value, bool) or value not in {-1, 1}:
+            continue
+        source_id = item.get("source_id", "")
+        if not isinstance(source_id, str) or len(source_id) > 80:
+            source_id = ""
+        normalized_item = {
+            "id": article_id,
+            "value": value,
+            "source_id": source_id,
+            "software_tags": normalize_string_list(item.get("software_tags", []), 12),
+            "topic_tags": normalize_string_list(item.get("topic_tags", []), 12),
+        }
+        by_id.pop(article_id, None)
+        by_id[article_id] = normalized_item
+    return list(by_id.values())[-MAX_FEEDBACK_ITEMS:]
+
+
 def normalize_user_state(payload: Any) -> dict[str, Any]:
     source = payload if isinstance(payload, dict) else {}
     normalized: dict[str, Any] = {}
     for key in ("read", "saved", "archived"):
-        values = source.get(key, [])
-        if not isinstance(values, list):
-            values = []
-        valid = [value for value in values if isinstance(value, str) and 1 <= len(value) <= 80]
-        normalized[key] = list(dict.fromkeys(valid))[-MAX_STATE_IDS:]
+        normalized[key] = normalize_string_list(source.get(key, []), MAX_STATE_IDS)
+
+    notes = source.get("notes", {})
+    normalized_notes: dict[str, str] = {}
+    if isinstance(notes, dict):
+        for article_id, note in notes.items():
+            if not isinstance(article_id, str) or not 1 <= len(article_id) <= 80:
+                continue
+            if not isinstance(note, str):
+                continue
+            clean = note.strip()[:MAX_NOTE_LENGTH]
+            if clean:
+                normalized_notes[article_id] = clean
+    normalized["notes"] = dict(list(normalized_notes.items())[-MAX_STATE_NOTES:])
+    normalized["feedback"] = normalize_feedback(source.get("feedback", []))
+    normalized["muted_sources"] = normalize_string_list(
+        source.get("muted_sources", []), MAX_STATE_SOURCES
+    )
+    muted = set(normalized["muted_sources"])
+    normalized["reduced_sources"] = [
+        source_id
+        for source_id in normalize_string_list(source.get("reduced_sources", []), MAX_STATE_SOURCES)
+        if source_id not in muted
+    ]
     normalized["updated_at"] = datetime.now(timezone.utc).isoformat()
     return normalized
 

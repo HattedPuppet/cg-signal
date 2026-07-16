@@ -35,6 +35,22 @@ class DeduplicationTests(unittest.TestCase):
         right = article("Blender 5.2 Geometry Nodes Tutorial", "https://b.example/tutorial")
         self.assertFalse(same_story(left, right))
 
+    def test_japanese_and_english_retirement_report_is_grouped(self):
+        left = article(
+            "Dead Space creator Glen Schofield retires after 35 years",
+            "https://a.example/retirement",
+        )
+        right = article(
+            "『Dead Space』生みの親グレン・スコフィールド氏が業界から引退",
+            "https://b.example/retirement",
+        )
+        self.assertTrue(same_story(left, right))
+
+    def test_same_entity_different_event_is_not_grouped(self):
+        left = article("Blender Foundation announces a new conference", "https://a.example/event")
+        right = article("Blender 5.2 LTS has been released", "https://b.example/release")
+        self.assertFalse(same_story(left, right))
+
     def test_shared_official_link_is_grouped(self):
         official = "https://vendor.example/product/announcement"
         left = article("A major update is here", "https://a.example/story", [official])
