@@ -35,6 +35,9 @@ The public-safe mobile edition is built from `mobile/` and deployed through the
 runs the existing classification and deduplication rules, and refreshes the
 hosted static feed every 30 minutes. The Windows PC does not need to be on.
 
+Open [CG Signal Mobile](https://hattedpuppet.github.io/cg-signal/) on Android,
+then use the browser menu to install it or add it to the home screen.
+
 The mobile edition includes Latest Signal, source and category filters, text
 and hashtag search, an unread view, a short Daily Brief, offline fallback, and
 Android home-screen installation. Read markers are stored only in that phone's
