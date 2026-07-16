@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="A private local dashboard for CG and game-development news."
+    />
+    <meta name="theme-color" content="#161a16" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="alternate icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/icon-180.png" />
+    <link rel="manifest" href="/manifest.json" />
+    <title>CG Signal — Your creative-tech briefing</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#stories">Skip to stories</a>
+
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Dashboard navigation">
+        <div class="brand-row">
+          <a class="brand" href="/" aria-label="CG Signal home">
+            <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span>CG<span>//</span>SIGNAL</span>
+          </a>
+          <span class="local-pill"><span></span> Local</span>
+        </div>
+
+        <p class="sidebar-kicker">Your creative-tech briefing</p>
+
+        <nav class="primary-nav" aria-label="Views">
+          <button class="nav-item is-active" type="button" data-view="all">
+            <span class="nav-symbol" aria-hidden="true">⌁</span>
+            <span>Latest signal</span>
+            <strong id="all-count">—</strong>
+          </button>
+          <button class="nav-item" type="button" data-view="saved">
+            <span class="nav-symbol" aria-hidden="true">☆</span>
+            <span>Learning library</span>
+            <strong id="saved-count">0</strong>
+          </button>
+          <button class="nav-item" type="button" data-view="unread">
+            <span class="nav-symbol dot-symbol" aria-hidden="true"></span>
+            <span>Unread</span>
+            <strong id="unread-count">—</strong>
+          </button>
+          <button class="nav-item" type="button" data-view="history">
+            <span class="nav-symbol" aria-hidden="true">◫</span>
+            <span>History</span>
+            <strong id="history-count">—</strong>
+          </button>
+          <button class="nav-item" type="button" data-view="archived">
+            <span class="nav-symbol archive-symbol" aria-hidden="true">⌄</span>
+            <span>Archived</span>
+            <strong id="archived-count">0</strong>
+          </button>
+        </nav>
+
+        <div class="sidebar-section">
+          <div class="section-label-row">
+            <h2>Sources</h2>
+            <div class="section-actions">
+              <button id="manage-sources" class="text-button" type="button" aria-haspopup="dialog" aria-expanded="false">Manage</button>
+              <button id="reset-sources" class="text-button" type="button" title="Restore every source and clear source tuning">Reset</button>
+            </div>
+          </div>
+          <p class="source-filter-hint">Click to isolate · Ctrl-click to combine</p>
+          <div id="source-filters" class="source-filters" aria-label="Filter by source">
+            <div class="source-placeholder"></div>
+            <div class="source-placeholder"></div>
+            <div class="source-placeholder"></div>
+          </div>
+        </div>
+
+        <div class="sidebar-note">
+          <span class="privacy-mark" aria-hidden="true">◎</span>
+          <div>
+            <strong>Private by design</strong>
+            <p>No account. No tracking. Reading, saving and archiving stay on this computer.</p>
+          </div>
+        </div>
+
+        <div class="sidebar-footer">
+          <button id="theme-toggle" class="theme-button" type="button" aria-label="Toggle theme">
+            <span aria-hidden="true">◐</span> Switch atmosphere
+          </button>
+          <span>CG Signal v1.0</span>
+        </div>
+      </aside>
+
+      <main class="main-panel">
+        <header class="topbar">
+          <div class="topbar-actions">
+            <button id="brief-button" class="brief-button" type="button" aria-haspopup="dialog" aria-expanded="false">
+              <span class="brief-spark" aria-hidden="true">✦</span>
+              <span class="button-label">Daily brief</span>
+              <strong id="brief-count">—</strong>
+            </button>
+            <button id="layout-toggle" class="icon-text-button" type="button" aria-label="Switch layout">
+              <span aria-hidden="true">▦</span>
+              <span class="button-label">View</span>
+            </button>
+            <button id="refresh-button" class="refresh-button" type="button" aria-label="Check all feeds for new articles now" title="Bypass the 15-minute cache and check every source">
+              <span class="refresh-icon" aria-hidden="true">↻</span>
+              <span>Check feeds</span>
+            </button>
+          </div>
+        </header>
+
+        <section class="hero" aria-labelledby="hero-title">
+          <div class="hero-grid-lines" aria-hidden="true"></div>
+          <div class="hero-copy">
+            <p class="eyebrow"><span></span> Curated across trusted sources</p>
+            <h1 id="hero-title">The craft,<br /><em>without the noise.</em></h1>
+            <p class="hero-description">
+              Fresh CG and game-development stories, organized around your tools with repeated coverage quietly folded away.
+            </p>
+          </div>
+
+          <div class="hero-aside">
+            <p class="today-label">Today’s board</p>
+            <div class="hero-stat-grid">
+              <div class="hero-stat primary-stat">
+                <strong id="hero-unique">—</strong>
+                <span>unique stories</span>
+              </div>
+              <div class="hero-stat">
+                <strong id="hero-collapsed">—</strong>
+                <span>repeats folded</span>
+              </div>
+              <div class="hero-stat wide-stat">
+                <div class="source-orbit" id="source-orbit" aria-label="Feed source status"></div>
+                <span id="last-updated">Gathering the latest signal…</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="feed-toolbar" aria-label="Story filters">
+          <div class="filter-groups">
+            <div class="feed-primary-row">
+              <div class="lane-filters" role="group" aria-label="Filter by information type">
+                <button class="lane-button is-active" type="button" data-lane="All">All <strong>—</strong></button>
+                <button class="lane-button" type="button" data-lane="Tech &amp; Development">Tech &amp; development <strong>—</strong></button>
+                <button class="lane-button" type="button" data-lane="Industry &amp; Business">Industry &amp; business <strong>—</strong></button>
+              </div>
+
+              <div class="search-wrap">
+                <label class="search-box" for="search-input">
+                  <span aria-hidden="true">⌕</span>
+                  <input
+                    id="search-input"
+                    type="search"
+                    autocomplete="off"
+                    placeholder="Search articles or try #unreal…"
+                    aria-describedby="search-help"
+                  />
+                  <kbd>Ctrl K</kbd>
+                </label>
+                <div id="search-help" class="search-help">
+                  <p><strong>Combine words and tags</strong><span>Use a minus to exclude anything.</span></p>
+                  <div class="search-examples">
+                    <button type="button" data-search-token="#unreal">#unreal</button>
+                    <button type="button" data-search-token="#blender">#blender</button>
+                    <button type="button" data-search-token="#topic:animation">#topic:animation</button>
+                    <button type="button" data-search-token="#is:unread">#is:unread</button>
+                    <button type="button" data-search-token="#is:saved">#is:saved</button>
+                    <button type="button" data-search-token="-#industry">-#industry</button>
+                  </div>
+                  <small>Also: #software:&quot;Substance Painter&quot; · #source:&quot;80 Level&quot; · #is:new</small>
+                </div>
+              </div>
+
+              <div class="result-summary">
+                <span id="visible-count">— stories</span>
+                <span id="new-since" class="new-since-count" hidden></span>
+                <span class="divider"></span>
+                <span id="sort-label">Newest first</span>
+              </div>
+            </div>
+
+            <div id="software-filter-group" class="software-filter-group">
+              <span class="software-filter-label">Categories</span>
+              <div id="software-filters" class="software-filters" role="group" aria-label="Filter Latest Signal by software or context">
+                <button class="facet-button software-button is-active" type="button" data-software="All" aria-pressed="true">All categories <strong>—</strong></button>
+              </div>
+            </div>
+
+            <div id="topic-filter-group" class="software-filter-group topic-filter-group" hidden>
+              <span class="software-filter-label">Production subcategories</span>
+              <div id="topic-filters" class="software-filters" role="group" aria-label="Refine Production techniques by subcategory">
+                <button class="facet-button topic-button is-active" type="button" data-topic="All" aria-pressed="true">All techniques <strong>—</strong></button>
+              </div>
+            </div>
+          </div>
+
+        </section>
+
+        <div id="notice" class="notice" role="status" hidden></div>
+
+        <section id="stories" class="stories-section" aria-live="polite" aria-busy="true">
+          <div id="story-grid" class="story-grid loading-grid">
+            <article class="story-card skeleton-card"><div></div><span></span><span></span><span></span></article>
+            <article class="story-card skeleton-card"><div></div><span></span><span></span><span></span></article>
+            <article class="story-card skeleton-card"><div></div><span></span><span></span><span></span></article>
+            <article class="story-card skeleton-card"><div></div><span></span><span></span><span></span></article>
+          </div>
+
+          <div id="empty-state" class="empty-state" hidden>
+            <span aria-hidden="true">◇</span>
+            <h2>No signal here yet</h2>
+            <p>Try another category, clear your source filters, or refresh the feeds.</p>
+            <button id="clear-filters" type="button">Clear filters</button>
+          </div>
+        </section>
+
+        <footer class="main-footer">
+          <p>Built for quiet research. Articles always open on the original publisher’s website.</p>
+          <div class="footer-actions">
+            <span class="shortcut-legend"><kbd>J</kbd>/<kbd>K</kbd> move · <kbd>Enter</kbd> open · <kbd>S</kbd> save · <kbd>A</kbd> archive · <kbd>M</kbd> read</span>
+            <button id="mark-all-read" class="text-button" type="button">Mark visible as read</button>
+          </div>
+        </footer>
+      </main>
+    </div>
+
+    <section id="briefing-panel" class="briefing-panel" aria-labelledby="briefing-title" aria-modal="true" role="dialog" hidden>
+      <button class="briefing-scrim" type="button" aria-label="Close unread briefing" data-close-briefing></button>
+      <div class="briefing-drawer">
+        <header class="briefing-header">
+          <div>
+            <p class="eyebrow"><span></span> <span id="briefing-date">Today</span></p>
+            <h2 id="briefing-title">Your daily briefing</h2>
+          </div>
+          <button id="briefing-close" class="briefing-close" type="button" aria-label="Close unread briefing" data-close-briefing>×</button>
+        </header>
+
+        <div id="briefing-content" class="briefing-content"></div>
+
+        <footer class="briefing-footer">
+          <p>Built from RSS excerpts on this device. Nothing is sent to an AI service.</p>
+          <button id="briefing-mark-read" type="button">Mark brief as read</button>
+        </footer>
+      </div>
+    </section>
+
+    <section id="source-manager-panel" class="source-manager-panel" aria-labelledby="source-manager-title" aria-modal="true" role="dialog" hidden>
+      <button class="source-manager-scrim" type="button" aria-label="Close source manager" data-close-source-manager></button>
+      <div class="source-manager-drawer">
+        <header class="source-manager-header">
+          <div>
+            <p class="eyebrow"><span></span> Local feed controls</p>
+            <h2 id="source-manager-title">Manage RSS sources</h2>
+            <p>Add an RSS or Atom feed, verify it before saving, or temporarily disable noisy sources.</p>
+          </div>
+          <button id="source-manager-close" class="briefing-close" type="button" aria-label="Close source manager" data-close-source-manager>×</button>
+        </header>
+
+        <div class="source-manager-content">
+          <form id="source-form" class="source-form">
+            <div class="source-form-heading">
+              <h3>Add a source</h3>
+              <span>Nothing is saved until you choose Add source.</span>
+            </div>
+            <label>
+              <span>RSS or Atom URL <strong>Required</strong></span>
+              <input id="source-feed-url" name="feed_url" type="url" inputmode="url" autocomplete="url" maxlength="2048" required placeholder="https://example.com/feed.xml" />
+            </label>
+            <div class="source-form-grid">
+              <label>
+                <span>Name <small>Optional</small></span>
+                <input id="source-name" name="name" type="text" maxlength="100" placeholder="Example Studio" />
+              </label>
+              <label>
+                <span>Website <small>Optional</small></span>
+                <input id="source-site-url" name="site_url" type="url" inputmode="url" autocomplete="url" maxlength="2048" placeholder="https://example.com" />
+              </label>
+            </div>
+            <div class="source-form-actions">
+              <button id="test-feed-url" class="secondary-action" type="button">Test URL</button>
+              <button class="primary-action" type="submit">Add source</button>
+            </div>
+            <p id="source-form-status" class="source-form-status" role="status" aria-live="polite"></p>
+          </form>
+
+          <section class="managed-sources" aria-labelledby="configured-sources-title">
+            <header>
+              <div>
+                <h3 id="configured-sources-title">Configured sources</h3>
+                <p>Disabled sources remain in your article history and can be restored at any time.</p>
+              </div>
+              <span id="configured-source-count">—</span>
+            </header>
+            <div id="managed-source-list" class="managed-source-list" aria-live="polite"></div>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <noscript>
+      <div class="noscript-message">CG Signal needs JavaScript enabled to gather and organize your feeds.</div>
+    </noscript>
+  </body>
+</html>

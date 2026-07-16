@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="description" content="CG Signal Mobile — a lightweight briefing for CG, animation, and game-development news." />
+    <meta name="theme-color" content="#161a16" />
+    <link rel="icon" href="./favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="./icon-180.png" />
+    <link rel="manifest" href="./manifest.json" />
+    <link rel="stylesheet" href="./styles.css" />
+    <title>CG Signal Mobile</title>
+    <script src="./app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#story-list">Skip to stories</a>
+
+    <header class="app-header">
+      <a class="brand" href="./" aria-label="CG Signal Mobile home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>CG<span>//</span>SIGNAL</span>
+        <small>Mobile</small>
+      </a>
+      <button id="install-button" class="install-button" type="button" hidden>
+        <span aria-hidden="true">↓</span> Install
+      </button>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-grid" aria-hidden="true"></div>
+        <p class="eyebrow"><span></span> Your creative-tech field signal</p>
+        <h1 id="hero-title">Stay current.<br /><em>Keep moving.</em></h1>
+        <p class="hero-copy">A lightweight mobile briefing generated from the same trusted CG and game-development sources as your desktop dashboard.</p>
+        <div class="hero-stats">
+          <div><strong id="story-total">—</strong><span>current stories</span></div>
+          <div><strong id="repeat-total">—</strong><span>repeats folded</span></div>
+          <button id="brief-hero-button" type="button"><strong id="brief-total">—</strong><span>in today’s brief</span><i aria-hidden="true">→</i></button>
+        </div>
+        <div class="update-row">
+          <span id="connection-dot" class="connection-dot"></span>
+          <span id="update-status">Gathering the latest signal…</span>
+        </div>
+      </section>
+
+      <section class="controls" aria-label="Article filters">
+        <label class="search-box" for="search-input">
+          <span aria-hidden="true">⌕</span>
+          <input id="search-input" type="search" autocomplete="off" placeholder="Search or try #unreal…" />
+          <button id="clear-search" type="button" aria-label="Clear search" hidden>×</button>
+        </label>
+
+        <div class="lane-row" role="group" aria-label="Information type">
+          <button class="lane-button is-active" type="button" data-lane="All">All <strong>—</strong></button>
+          <button class="lane-button" type="button" data-lane="Tech &amp; Development">Tech <strong>—</strong></button>
+          <button class="lane-button" type="button" data-lane="Industry &amp; Business">Industry <strong>—</strong></button>
+        </div>
+
+        <div class="category-section">
+          <div class="filter-heading"><span>Categories</span><small>Tap the selected category to reset</small></div>
+          <div id="category-list" class="category-list" role="group" aria-label="Software and context categories"></div>
+        </div>
+
+        <div class="source-row">
+          <label for="source-select">Source</label>
+          <select id="source-select"><option value="All">All sources</option></select>
+          <span id="result-count">— results</span>
+        </div>
+      </section>
+
+      <div id="notice" class="notice" role="status" hidden></div>
+
+      <section class="feed-section" aria-labelledby="feed-title">
+        <header class="feed-heading">
+          <div>
+            <p class="eyebrow"><span></span> <span id="feed-kicker">Latest signal</span></p>
+            <h2 id="feed-title">What’s worth a look</h2>
+          </div>
+          <button id="mark-visible-read" type="button">Mark visible read</button>
+        </header>
+
+        <div id="story-list" class="story-list" aria-live="polite" aria-busy="true">
+          <article class="story-card skeleton"><div></div><span></span><span></span><span></span></article>
+          <article class="story-card skeleton"><div></div><span></span><span></span><span></span></article>
+          <article class="story-card skeleton"><div></div><span></span><span></span><span></span></article>
+        </div>
+
+        <div id="empty-state" class="empty-state" hidden>
+          <span aria-hidden="true">◇</span>
+          <h2>No matching signal</h2>
+          <p>Try a broader search or clear your filters.</p>
+          <button id="clear-filters" type="button">Clear filters</button>
+        </div>
+      </section>
+
+      <section class="mobile-boundary" aria-label="Mobile edition privacy">
+        <span aria-hidden="true">◎</span>
+        <div>
+          <strong>Public feed, private research</strong>
+          <p>This mobile edition contains public RSS excerpts only. Saved articles, notes, history, and preference tuning remain exclusively on your PC. Read markers stay on this phone.</p>
+        </div>
+      </section>
+    </main>
+
+    <nav class="bottom-nav" aria-label="Mobile views">
+      <button class="is-active" type="button" data-view="latest"><span aria-hidden="true">⌁</span><small>Latest</small></button>
+      <button type="button" data-view="unread"><span class="unread-dot" aria-hidden="true"></span><small>Unread</small><strong id="unread-total">—</strong></button>
+      <button type="button" data-view="brief"><span aria-hidden="true">✦</span><small>Brief</small></button>
+    </nav>
+
+    <section id="brief-panel" class="brief-panel" role="dialog" aria-modal="true" aria-labelledby="brief-title" hidden>
+      <div class="brief-drawer">
+        <header>
+          <div>
+            <p class="eyebrow"><span></span> Mobile briefing</p>
+            <h2 id="brief-title">Nine useful signals</h2>
+          </div>
+          <button type="button" data-close-brief aria-label="Close briefing">×</button>
+        </header>
+        <p id="brief-intro" class="brief-intro"></p>
+        <div id="brief-list" class="brief-list"></div>
+        <footer>
+          <p>Extracted from RSS on GitHub. No article text or personal data is sent to an AI service.</p>
+          <button id="brief-mark-read" type="button">Mark brief read</button>
+        </footer>
+      </div>
+    </section>
+
+    <noscript><p class="noscript">CG Signal Mobile needs JavaScript enabled.</p></noscript>
+  </body>
+</html>

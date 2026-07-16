@@ -1,0 +1,21 @@
+{
+  "name": "CG Signal",
+  "short_name": "CG Signal",
+  "description": "A private local CG and game-development news dashboard.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#151915",
+  "theme_color": "#151915",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
