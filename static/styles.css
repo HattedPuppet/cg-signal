@@ -629,6 +629,12 @@ kbd {
   background: rgba(255, 255, 255, 0.42);
 }
 
+.icon-text-button.is-active {
+  border-color: color-mix(in srgb, var(--blue) 55%, var(--line));
+  background: color-mix(in srgb, var(--blue) 12%, rgba(255, 255, 255, 0.42));
+  color: var(--blue);
+}
+
 .refresh-button {
   min-width: 108px;
   background: var(--ink);
@@ -1586,6 +1592,76 @@ kbd {
 
 .story-grid.is-list .story-summary {
   -webkit-line-clamp: 2;
+}
+
+.story-grid.is-compact {
+  gap: 10px;
+}
+
+.story-grid.is-compact .story-card {
+  min-height: 286px;
+}
+
+.story-grid.is-compact .story-visual {
+  height: 112px;
+}
+
+.story-grid.is-compact .story-body {
+  padding: 11px 12px 10px;
+}
+
+.story-grid.is-compact .story-meta {
+  gap: 7px;
+}
+
+.story-grid.is-compact .source-label,
+.story-grid.is-compact .story-time {
+  font-size: 8px;
+}
+
+.story-grid.is-compact .story-title {
+  margin-top: 8px;
+  font-size: 17px;
+  line-height: 1.18;
+}
+
+.story-grid.is-compact .story-summary {
+  margin: 7px 0 10px;
+  font-size: 10px;
+  line-height: 1.4;
+  -webkit-line-clamp: 2;
+}
+
+.story-grid.is-compact .story-reasons {
+  gap: 4px;
+  margin: -4px 0 9px;
+}
+
+.story-grid.is-compact .story-reasons span {
+  padding: 3px 5px;
+  font-size: 7px;
+}
+
+.story-grid.is-compact .story-footer {
+  gap: 7px;
+  padding-top: 8px;
+}
+
+.story-grid.is-compact .story-visual .visual-category {
+  bottom: 8px;
+  left: 9px;
+  padding: 4px 6px;
+  font-size: 8px;
+}
+
+.story-grid.is-compact.is-list .story-card {
+  grid-template-columns: 152px minmax(0, 1fr);
+  min-height: 190px;
+}
+
+.story-grid.is-compact.is-list .story-visual {
+  height: auto;
+  min-height: 190px;
 }
 
 .story-grid.is-library {

@@ -12,6 +12,7 @@ class DesktopShellTests(unittest.TestCase):
         self.assertEqual(html.count('class="search-wrap"'), 1)
         self.assertLess(html.index('class="search-wrap"'), html.index('class="topbar-actions"'))
         self.assertIn('id="scroll-top-button"', html)
+        self.assertIn('id="density-toggle"', html)
 
     def test_first_article_jump_is_instant_and_persistent(self):
         javascript = (SITE / "app.js").read_text(encoding="utf-8")
@@ -20,6 +21,7 @@ class DesktopShellTests(unittest.TestCase):
         self.assertIn('scrollIntoView({ behavior: "auto", block: "center" })', javascript)
         self.assertIn(".scroll-top-button", styles)
         self.assertIn("position: fixed", styles)
+        self.assertIn(".story-grid.is-compact", styles)
 
 
 if __name__ == "__main__":

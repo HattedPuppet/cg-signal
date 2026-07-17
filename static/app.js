@@ -14,6 +14,7 @@ const storageKeys = {
   lastVisit: "cg-signal:last-visit",
   stateDirty: "cg-signal:state-dirty",
   stateMigrated: "cg-signal:state-migrated",
+  density: "cg-signal:density",
 };
 
 const state = {
@@ -39,6 +40,7 @@ const state = {
   mutedSources: readSet(storageKeys.mutedSources),
   reducedSources: readSet(storageKeys.reducedSources),
   layout: localStorage.getItem(storageKeys.layout) || "grid",
+  density: localStorage.getItem(storageKeys.density) || "comfortable",
   briefOpen: false,
   briefArticleIds: [],
   visibleArticleIds: [],
@@ -130,6 +132,7 @@ const elements = {
   scrollTop: document.querySelector("#scroll-top-button"),
   refresh: document.querySelector("#refresh-button"),
   layout: document.querySelector("#layout-toggle"),
+  density: document.querySelector("#density-toggle"),
   notice: document.querySelector("#notice"),
   briefButton: document.querySelector("#brief-button"),
   briefCount: document.querySelector("#brief-count"),
@@ -1120,6 +1123,7 @@ function render() {
     ? applyFacetFilters(pool)
     : filteredArticles();
   elements.grid.classList.toggle("is-list", state.layout === "list");
+  elements.grid.classList.toggle("is-compact", state.density === "compact");
   elements.grid.classList.toggle("is-library", state.view === "saved");
   elements.grid.classList.remove("loading-grid");
   state.visibleArticleIds = visible.map((article) => article.id);
@@ -1177,6 +1181,11 @@ function render() {
     button.querySelector("strong").textContent = count;
   });
   elements.layout.querySelector("span:first-child").textContent = state.layout === "grid" ? "▦" : "☷";
+  const compact = state.density === "compact";
+  elements.density.classList.toggle("is-active", compact);
+  elements.density.setAttribute("aria-pressed", String(compact));
+  elements.density.setAttribute("aria-label", compact ? "Use comfortable cards" : "Use compact cards");
+  elements.density.title = compact ? "Use comfortable cards" : "Use compact cards";
 }
 
 function sourceCount(sourceId) {
@@ -1720,6 +1729,12 @@ elements.briefingMarkRead.addEventListener("click", () => {
 elements.layout.addEventListener("click", () => {
   state.layout = state.layout === "grid" ? "list" : "grid";
   localStorage.setItem(storageKeys.layout, state.layout);
+  render();
+});
+
+elements.density.addEventListener("click", () => {
+  state.density = state.density === "compact" ? "comfortable" : "compact";
+  localStorage.setItem(storageKeys.density, state.density);
   render();
 });
 
