@@ -365,7 +365,7 @@ button { color: inherit; }
 }
 
 .filter-heading span,
-.source-row label {
+.source-row-label {
   color: var(--muted);
   font-size: 8px;
   font-weight: 850;
@@ -426,19 +426,35 @@ button { color: inherit; }
   border-top: 1px solid var(--line);
 }
 
-.source-row select {
+.source-shortcut {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
   min-width: 0;
-  height: 34px;
-  padding: 0 28px 0 9px;
+  min-height: 44px;
+  align-items: center;
+  padding: 6px 9px;
   border: 1px solid var(--line);
-  border-radius: 9px;
-  outline: 0;
+  border-radius: 10px;
   background: var(--card);
   color: var(--ink);
-  font-size: 9px;
+  text-align: left;
 }
 
-.source-row > span { color: var(--muted); font-size: 8px; white-space: nowrap; }
+.source-shortcut-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--source-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--source-accent) 12%, transparent);
+}
+
+.source-shortcut > span { min-width: 0; }
+.source-shortcut strong { display: block; overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.source-shortcut small { display: block; margin-top: 2px; color: var(--muted); font-size: 7px; }
+.source-shortcut b { color: var(--muted); font-size: 18px; font-weight: 400; line-height: 1; }
+
+.source-row > span:last-child { color: var(--muted); font-size: 8px; white-space: nowrap; }
 
 .notice {
   margin: 8px 12px 0;

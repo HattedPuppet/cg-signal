@@ -207,7 +207,8 @@ And is actively interested in:
   selection, text and hashtag search, unread filtering, and a short Daily Brief.
 - Keep search, information type, category, and source controls reachable from
   any scroll position through a compact mobile discovery surface, with
-  touch-sized one-tap source choices and clear active-state feedback.
+  touch-sized one-tap source choices, a compact active-source summary in place
+  of a native combo box, and clear active-state feedback.
 - Let each phone enable or disable hosted sources independently, storing the
   disposable preference only in that browser and providing an Enable all reset.
 - Automatically expose every source present in the hosted feed to mobile source

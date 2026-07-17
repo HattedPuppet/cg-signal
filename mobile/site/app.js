@@ -71,7 +71,9 @@ const elements = {
   updateStatus: document.querySelector("#update-status"),
   connectionDot: document.querySelector("#connection-dot"),
   categoryLists: [...document.querySelectorAll("[data-category-list]")],
-  sourceSelects: [...document.querySelectorAll("[data-source-select]")],
+  sourceShortcut: document.querySelector("#source-shortcut"),
+  sourceCurrentLabel: document.querySelector("#source-current-label"),
+  sourceCurrentMeta: document.querySelector("#source-current-meta"),
   sourceButtonList: document.querySelector("#drawer-source-list"),
   sourceManagerPanel: document.querySelector("#source-manager-panel"),
   sourceManagerList: document.querySelector("#source-manager-list"),
@@ -287,9 +289,6 @@ function syncControlValues() {
   elements.searchInputs.forEach((input) => {
     if (input.value !== state.search) input.value = state.search;
   });
-  elements.sourceSelects.forEach((select) => {
-    if (select.value !== state.source) select.value = state.source;
-  });
 }
 
 function activeFilterCount() {
@@ -467,6 +466,7 @@ function render() {
   renderCategories();
   renderSourceButtons();
   renderSourceManager();
+  renderSources();
   updateLaneCounts();
   elements.storyTotal.textContent = enabledArticles.length;
   elements.repeatTotal.textContent = state.payload.duplicates_collapsed || 0;
@@ -501,12 +501,18 @@ function render() {
 }
 
 function renderSources() {
-  const enabledSources = (state.payload.sources || []).filter((source) => !state.disabledSources.has(source.id));
-  const markup = `<option value="All">All sources</option>${enabledSources.map((source) => `<option value="${escapeHtml(source.id)}">${escapeHtml(source.name)} · ${source.count || 0}</option>`).join("")}`;
-  elements.sourceSelects.forEach((select) => {
-    select.innerHTML = markup;
-    select.value = state.source;
-  });
+  const sources = state.payload.sources || [];
+  const enabledCount = sources.filter((source) => !state.disabledSources.has(source.id)).length;
+  const selected = state.source === "All" ? null : sources.find((source) => source.id === state.source);
+  const label = selected?.name || "All sources";
+  const count = Number(selected?.count || 0);
+  const meta = selected
+    ? `${count} current ${count === 1 ? "story" : "stories"}`
+    : `${enabledCount} of ${sources.length} enabled`;
+  elements.sourceCurrentLabel.textContent = label;
+  elements.sourceCurrentMeta.textContent = meta;
+  elements.sourceShortcut.style.setProperty("--source-accent", selected?.accent || "#d7ff57");
+  elements.sourceShortcut.setAttribute("aria-label", `Source: ${label}. ${meta}. Open source picker.`);
 }
 
 function updateConnection(online, cached = false) {
@@ -529,7 +535,6 @@ async function loadFeed() {
     persistRead();
     persistDisabledSources();
     if (state.disabledSources.has(state.source)) state.source = "All";
-    renderSources();
     render();
     updateConnection(true);
     if (payload.unavailable_sources?.length) {
@@ -546,7 +551,6 @@ async function loadFeed() {
       state.articles = cached.articles;
       persistDisabledSources();
       if (state.disabledSources.has(state.source)) state.source = "All";
-      renderSources();
       render();
       updateConnection(false, true);
       elements.notice.textContent = "The network is unavailable, so the most recent copy stored on this phone is shown.";
@@ -572,7 +576,7 @@ function resetFilters() {
   render();
 }
 
-function openExplore() {
+function openExplore(target = "") {
   if (!elements.briefPanel.hidden) closeBrief();
   exploreReturnFocus = document.activeElement;
   render();
@@ -580,7 +584,15 @@ function openExplore() {
   elements.exploreButton.classList.add("is-active");
   elements.exploreButton.setAttribute("aria-expanded", "true");
   document.body.classList.add("explore-open");
-  window.requestAnimationFrame(() => elements.explorePanel.querySelector(".explore-drawer > header button").focus());
+  window.requestAnimationFrame(() => {
+    if (target === "sources") {
+      const sourceSection = elements.explorePanel.querySelector(".source-section");
+      sourceSection.scrollIntoView({ block: "center" });
+      sourceSection.querySelector("[data-source-option]")?.focus();
+    } else {
+      elements.explorePanel.querySelector(".explore-drawer > header button").focus();
+    }
+  });
 }
 
 function closeExplore(showResults = false) {
@@ -644,13 +656,13 @@ document.addEventListener("click", (event) => {
     else state.disabledSources.add(sourceId);
     if (state.disabledSources.has(state.source)) state.source = "All";
     persistDisabledSources();
-    renderSources();
     render();
     return;
   }
 
-  if (event.target.closest("[data-open-explore]")) {
-    openExplore();
+  const exploreTrigger = event.target.closest("[data-open-explore]");
+  if (exploreTrigger) {
+    openExplore(exploreTrigger.dataset.exploreTarget || "");
     return;
   }
 
@@ -716,18 +728,11 @@ elements.clearSearchButtons.forEach((button) => button.addEventListener("click",
   render();
 }));
 
-elements.sourceSelects.forEach((select) => select.addEventListener("change", () => {
-  state.source = select.value;
-  syncControlValues();
-  render();
-}));
-
 document.querySelector("#drawer-reset").addEventListener("click", resetFilters);
 document.querySelector("#show-results").addEventListener("click", () => closeExplore(true));
 document.querySelector("#enable-all-sources").addEventListener("click", () => {
   state.disabledSources.clear();
   persistDisabledSources();
-  renderSources();
   render();
 });
 
@@ -735,7 +740,6 @@ elements.clearFilters.addEventListener("click", () => {
   if (elements.clearFilters.dataset.action === "enable-sources") {
     state.disabledSources.clear();
     persistDisabledSources();
-    renderSources();
   }
   resetFilters();
 });

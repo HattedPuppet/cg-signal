@@ -62,8 +62,12 @@
         </div>
 
         <div class="source-row">
-          <label for="source-select">Source</label>
-          <select id="source-select" data-source-select><option value="All">All sources</option></select>
+          <span class="source-row-label">Source</span>
+          <button id="source-shortcut" class="source-shortcut" type="button" data-open-explore data-explore-target="sources" aria-controls="explore-panel">
+            <i class="source-shortcut-dot" aria-hidden="true"></i>
+            <span><strong id="source-current-label">All sources</strong><small id="source-current-meta">— enabled</small></span>
+            <b aria-hidden="true">›</b>
+          </button>
           <span id="result-count">— results</span>
         </div>
       </section>
