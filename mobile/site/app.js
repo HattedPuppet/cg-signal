@@ -2,6 +2,7 @@ const storageKeys = {
   read: "cg-signal-mobile:read",
   feed: "cg-signal-mobile:last-feed",
   disabledSources: "cg-signal-mobile:disabled-sources",
+  density: "cg-signal-mobile:density",
 };
 
 const CATEGORY_ORDER = [
@@ -53,6 +54,7 @@ const state = {
   source: "All",
   search: "",
   view: "latest",
+  density: localStorage.getItem(storageKeys.density) === "compact" ? "compact" : "comfortable",
   installPrompt: null,
   lastFetchAt: 0,
 };
@@ -83,6 +85,7 @@ const elements = {
   filterDrawer: document.querySelector(".filter-drawer"),
   filterDrawerHandle: document.querySelector("#filter-drawer-handle"),
   filterDrawerSummary: document.querySelector("#filter-drawer-summary"),
+  densityToggle: document.querySelector("#density-toggle"),
   briefPanel: document.querySelector("#brief-panel"),
   briefList: document.querySelector("#brief-list"),
   briefIntro: document.querySelector("#brief-intro"),
@@ -456,6 +459,7 @@ function render() {
   elements.feedKicker.textContent = state.view === "unread" ? "Unread signal" : "Latest signal";
   elements.feedTitle.textContent = state.view === "unread" ? "Still waiting for you" : "What’s worth a look";
   elements.storyList.innerHTML = articles.map(storyMarkup).join("");
+  elements.storyList.classList.toggle("is-compact", state.density === "compact");
   elements.storyList.hidden = articles.length === 0;
   elements.empty.hidden = articles.length > 0;
   const allSourcesDisabled = Boolean(state.payload.sources?.length)
@@ -471,6 +475,12 @@ function render() {
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-current", active ? "page" : "false");
   });
+  const compact = state.density === "compact";
+  elements.densityToggle.classList.toggle("is-active", compact);
+  elements.densityToggle.setAttribute("aria-pressed", String(compact));
+  elements.densityToggle.setAttribute("aria-label", compact ? "Use comfortable cards" : "Use compact cards");
+  elements.densityToggle.title = compact ? "Use comfortable cards" : "Use compact cards";
+  elements.densityToggle.querySelector("span:last-child").textContent = compact ? "Comfort" : "Compact";
   renderBrief();
 }
 
@@ -713,6 +723,22 @@ elements.scrollTop.addEventListener("click", () => {
   firstArticle.scrollIntoView({ behavior: "auto", block: "center" });
   window.requestAnimationFrame(() => elements.filterDrawer.classList.remove("is-jumping"));
 });
+
+elements.densityToggle.addEventListener("click", () => {
+  state.density = state.density === "compact" ? "comfortable" : "compact";
+  localStorage.setItem(storageKeys.density, state.density);
+  render();
+});
+
+let lastScrollY = window.scrollY;
+window.addEventListener("scroll", () => {
+  const currentScrollY = window.scrollY;
+  const startedScrolling = currentScrollY > lastScrollY + 2;
+  lastScrollY = currentScrollY;
+  if (startedScrolling && currentScrollY > 12 && !elements.filterDrawer.classList.contains("is-collapsed")) {
+    setFilterDrawerExpanded(false);
+  }
+}, { passive: true });
 
 elements.filterDrawerHandle.addEventListener("click", () => {
   if (ignoreNextFilterClick) {
