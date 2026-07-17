@@ -94,6 +94,22 @@ class MobileExportTests(unittest.TestCase):
         self.assertIn(".source-button", styles)
         self.assertIn("grid-template-columns: repeat(4, 1fr)", styles)
 
+    def test_mobile_source_management_is_device_local(self):
+        site = MODULE_PATH.parent / "site"
+        html = (site / "index.html").read_text(encoding="utf-8")
+        javascript = (site / "app.js").read_text(encoding="utf-8")
+        styles = (site / "styles.css").read_text(encoding="utf-8")
+        self.assertIn('id="source-manager-panel"', html)
+        self.assertIn('id="enable-all-sources"', html)
+        self.assertNotIn("Add RSS", html)
+        self.assertIn('disabledSources: "cg-signal-mobile:disabled-sources"', javascript)
+        self.assertIn("function persistDisabledSources()", javascript)
+        self.assertIn("function articleHasEnabledSource(article)", javascript)
+        self.assertIn("function renderSourceManager()", javascript)
+        self.assertIn("localStorage.removeItem(storageKeys.disabledSources)", javascript)
+        self.assertIn(".source-manager-panel", styles)
+        self.assertIn(".source-manager-item.is-enabled", styles)
+
 
 if __name__ == "__main__":
     unittest.main()

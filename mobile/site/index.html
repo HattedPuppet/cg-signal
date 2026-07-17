@@ -141,15 +141,37 @@
           </div>
 
           <div class="source-section">
-            <div class="filter-heading"><span>Sources</span><small>Tap the selected source to reset</small></div>
+            <div class="filter-heading source-heading">
+              <span>Sources</span>
+              <button id="source-manage-button" type="button" data-open-source-manager aria-controls="source-manager-panel">Manage <strong id="source-enabled-total">—</strong></button>
+            </div>
             <div id="drawer-source-list" class="source-list" role="group" aria-label="Article sources"></div>
-            <div class="source-result-row"><span id="drawer-result-count">— results</span></div>
+            <div class="source-result-row"><small>Tap the selected source to reset</small><span id="drawer-result-count">— results</span></div>
           </div>
         </div>
 
         <footer class="explore-footer">
           <button id="drawer-reset" class="explore-reset" type="button">Reset</button>
           <button id="show-results" class="explore-show" type="button">Show <span id="drawer-show-count">—</span> stories</button>
+        </footer>
+      </div>
+    </section>
+
+    <section id="source-manager-panel" class="source-manager-panel" role="dialog" aria-modal="true" aria-labelledby="source-manager-title" hidden>
+      <button class="source-manager-backdrop" type="button" data-close-source-manager aria-label="Close source manager"></button>
+      <div class="source-manager-drawer">
+        <header>
+          <div>
+            <p class="eyebrow"><span></span> On this phone only</p>
+            <h2 id="source-manager-title">Manage sources</h2>
+          </div>
+          <button type="button" data-close-source-manager aria-label="Close source manager">×</button>
+        </header>
+        <p class="source-manager-intro">Choose which published sources appear on this device. These preferences stay in your browser and are never sent to GitHub or your desktop.</p>
+        <div id="source-manager-list" class="source-manager-list" role="group" aria-label="Enabled mobile sources"></div>
+        <footer>
+          <button id="enable-all-sources" class="source-enable-all" type="button">Enable all</button>
+          <button class="source-manager-done" type="button" data-close-source-manager>Done</button>
         </footer>
       </div>
     </section>

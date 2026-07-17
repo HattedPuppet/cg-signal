@@ -43,6 +43,12 @@ one-tap source grid and category filters, text and hashtag search, an unread
 view, a short Daily Brief, offline fallback, and Android home-screen
 installation. Read markers are stored only in that phone's browser.
 
+Mobile source enablement is also device-local: **Manage sources** can hide or
+restore any source present in the hosted feed without changing the desktop or
+uploading the preference. Newly hosted sources appear automatically. Custom
+RSS URLs added only to the desktop remain desktop-only unless they are later
+added to the repository's public feed configuration.
+
 The export uses an explicit field allowlist. It never publishes the desktop
 SQLite archive, saved or archived IDs, notes, source preferences, feedback, or
 any `.cache` file. Learning Library, History, source management, and preference

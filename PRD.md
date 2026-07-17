@@ -208,6 +208,11 @@ And is actively interested in:
 - Keep search, information type, category, and source controls reachable from
   any scroll position through a compact mobile discovery surface, with
   touch-sized one-tap source choices and clear active-state feedback.
+- Let each phone enable or disable hosted sources independently, storing the
+  disposable preference only in that browser and providing an Enable all reset.
+- Automatically expose every source present in the hosted feed to mobile source
+  management; keep desktop-only custom RSS URLs local unless explicitly added
+  to a future public feed configuration.
 - Support Android home-screen installation and retain the most recently opened
   feed for temporary offline access.
 - Store read markers only in the phone's local browser storage.

@@ -1,6 +1,7 @@
 const storageKeys = {
   read: "cg-signal-mobile:read",
   feed: "cg-signal-mobile:last-feed",
+  disabledSources: "cg-signal-mobile:disabled-sources",
 };
 
 const CATEGORY_ORDER = [
@@ -46,6 +47,7 @@ const state = {
   payload: null,
   articles: [],
   read: readSet(),
+  disabledSources: disabledSourceSet(),
   lane: "All",
   category: "All",
   source: "All",
@@ -58,6 +60,7 @@ const state = {
 const elements = {
   storyList: document.querySelector("#story-list"),
   empty: document.querySelector("#empty-state"),
+  clearFilters: document.querySelector("#clear-filters"),
   storyTotal: document.querySelector("#story-total"),
   repeatTotal: document.querySelector("#repeat-total"),
   briefTotal: document.querySelector("#brief-total"),
@@ -70,6 +73,9 @@ const elements = {
   categoryLists: [...document.querySelectorAll("[data-category-list]")],
   sourceSelects: [...document.querySelectorAll("[data-source-select]")],
   sourceButtonList: document.querySelector("#drawer-source-list"),
+  sourceManagerPanel: document.querySelector("#source-manager-panel"),
+  sourceManagerList: document.querySelector("#source-manager-list"),
+  sourceEnabledTotal: document.querySelector("#source-enabled-total"),
   searchInputs: [...document.querySelectorAll("[data-search-input]")],
   clearSearchButtons: [...document.querySelectorAll("[data-clear-search]")],
   notice: document.querySelector("#notice"),
@@ -87,6 +93,7 @@ const elements = {
 };
 
 let exploreReturnFocus = null;
+let sourceManagerReturnFocus = null;
 
 function readSet() {
   try {
@@ -97,11 +104,28 @@ function readSet() {
   }
 }
 
+function disabledSourceSet() {
+  try {
+    const value = JSON.parse(localStorage.getItem(storageKeys.disabledSources) || "[]");
+    return new Set(Array.isArray(value) ? value.filter((id) => typeof id === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
 function persistRead() {
   const currentIds = new Set(state.articles.map((article) => article.id));
   const bounded = [...state.read].filter((id) => currentIds.has(id)).slice(-1500);
   state.read = new Set(bounded);
   localStorage.setItem(storageKeys.read, JSON.stringify(bounded));
+}
+
+function persistDisabledSources() {
+  const sourceIds = new Set((state.payload?.sources || []).map((source) => source.id));
+  const disabled = [...state.disabledSources].filter((id) => sourceIds.has(id));
+  state.disabledSources = new Set(disabled);
+  if (disabled.length) localStorage.setItem(storageKeys.disabledSources, JSON.stringify(disabled));
+  else localStorage.removeItem(storageKeys.disabledSources);
 }
 
 function escapeHtml(value) {
@@ -224,9 +248,22 @@ function matchesSearch(article) {
   return parseSearch(state.search).every((token) => tokenMatches(article, token) !== token.negative);
 }
 
+function articleSourceIds(article) {
+  const ids = new Set((article.sources || []).map((source) => source.id).filter(Boolean));
+  if (article.source_id) ids.add(article.source_id);
+  return ids;
+}
+
+function articleHasEnabledSource(article) {
+  if (article.source_id) return !state.disabledSources.has(article.source_id);
+  const sourceIds = articleSourceIds(article);
+  return sourceIds.size === 0 || [...sourceIds].some((id) => !state.disabledSources.has(id));
+}
+
 function matchesBaseFilters(article) {
+  if (!articleHasEnabledSource(article)) return false;
   if (state.lane !== "All" && article.lane !== state.lane) return false;
-  if (state.source !== "All" && !(article.sources || []).some((source) => source.id === state.source)) return false;
+  if (state.source !== "All" && !articleSourceIds(article).has(state.source)) return false;
   if (state.view === "unread" && state.read.has(article.id)) return false;
   return matchesSearch(article);
 }
@@ -261,6 +298,7 @@ function activeFilterCount() {
     state.category !== "All",
     state.source !== "All",
     Boolean(state.search.trim()),
+    state.disabledSources.size > 0,
   ].filter(Boolean).length;
 }
 
@@ -275,6 +313,10 @@ function activeFilterSummary() {
   if (state.search.trim()) {
     const query = state.search.trim();
     parts.push(`“${query.length > 28 ? `${query.slice(0, 27)}…` : query}”`);
+  }
+  if (state.disabledSources.size) {
+    const total = state.payload?.sources?.length || 0;
+    parts.push(`${Math.max(0, total - state.disabledSources.size)}/${total} sources`);
   }
   return parts.length ? parts.join(" · ") : "All stories";
 }
@@ -295,6 +337,7 @@ function renderCategories() {
 
 function sourceContext() {
   const articles = state.articles.filter((article) => {
+    if (!articleHasEnabledSource(article)) return false;
     if (state.lane !== "All" && article.lane !== state.lane) return false;
     if (state.view === "unread" && state.read.has(article.id)) return false;
     if (!matchesSearch(article)) return false;
@@ -302,9 +345,7 @@ function sourceContext() {
   });
   const counts = new Map();
   articles.forEach((article) => {
-    const sourceIds = new Set((article.sources || []).map((source) => source.id).filter(Boolean));
-    if (article.source_id) sourceIds.add(article.source_id);
-    sourceIds.forEach((id) => counts.set(id, (counts.get(id) || 0) + 1));
+    articleSourceIds(article).forEach((id) => counts.set(id, (counts.get(id) || 0) + 1));
   });
   return { articles, counts };
 }
@@ -313,12 +354,27 @@ function renderSourceButtons() {
   const { articles, counts } = sourceContext();
   const sources = [
     { id: "All", name: "All sources", accent: "#d7ff57", count: articles.length },
-    ...(state.payload?.sources || []).map((source) => ({ ...source, count: counts.get(source.id) || 0 })),
+    ...(state.payload?.sources || [])
+      .filter((source) => !state.disabledSources.has(source.id))
+      .map((source) => ({ ...source, count: counts.get(source.id) || 0 })),
   ];
   elements.sourceButtonList.innerHTML = sources.map((source) => {
     const active = source.id === state.source;
     const countLabel = `${source.count} ${source.count === 1 ? "story" : "stories"}`;
     return `<button class="source-button${source.id === "All" ? " is-all" : ""}${active ? " is-active" : ""}" type="button" data-source-option="${escapeHtml(source.id)}" aria-pressed="${active}" aria-label="${escapeHtml(`${source.name}, ${countLabel}`)}" style="--source-accent:${escapeHtml(source.accent || "#7fa9ff")}"><span>${escapeHtml(source.name)}</span><strong>${source.count}</strong></button>`;
+  }).join("");
+}
+
+function renderSourceManager() {
+  const sources = state.payload?.sources || [];
+  const enabledCount = sources.filter((source) => !state.disabledSources.has(source.id)).length;
+  elements.sourceEnabledTotal.textContent = `${enabledCount}/${sources.length}`;
+  elements.sourceManagerList.innerHTML = sources.map((source) => {
+    const enabled = !state.disabledSources.has(source.id);
+    const count = Number(source.count || 0);
+    const countLabel = `${count} ${count === 1 ? "story" : "stories"}`;
+    const action = enabled ? "Disable" : "Enable";
+    return `<button class="source-manager-item${enabled ? " is-enabled" : ""}" type="button" data-toggle-source="${escapeHtml(source.id)}" aria-pressed="${enabled}" aria-label="${escapeHtml(`${action} ${source.name}, ${countLabel}`)}" style="--source-accent:${escapeHtml(source.accent || "#7fa9ff")}"><span class="source-manager-label"><i aria-hidden="true"></i><span><strong>${escapeHtml(source.name)}</strong><small>${escapeHtml(countLabel)}</small></span></span><span class="source-switch" aria-hidden="true"><i></i></span></button>`;
   }).join("");
 }
 
@@ -358,7 +414,7 @@ function storyMarkup(article) {
 
 function briefArticles() {
   const ranked = state.articles
-    .filter((article) => !state.read.has(article.id))
+    .filter((article) => articleHasEnabledSource(article) && !state.read.has(article.id))
     .sort((left, right) => (right.priority_score || 0) - (left.priority_score || 0));
   const technical = ranked.filter((article) => article.lane !== "Industry & Business").slice(0, 6);
   const industry = ranked.filter((article) => article.lane === "Industry & Business").slice(0, 3);
@@ -389,9 +445,10 @@ function renderBrief() {
 }
 
 function updateLaneCounts() {
+  const enabledArticles = state.articles.filter(articleHasEnabledSource);
   document.querySelectorAll("[data-lane]").forEach((button) => {
     const lane = button.dataset.lane;
-    const count = lane === "All" ? state.articles.length : state.articles.filter((article) => article.lane === lane).length;
+    const count = lane === "All" ? enabledArticles.length : enabledArticles.filter((article) => article.lane === lane).length;
     const active = lane === state.lane;
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-pressed", String(active));
@@ -402,14 +459,16 @@ function updateLaneCounts() {
 function render() {
   if (!state.payload) return;
   const articles = visibleArticles();
-  const unread = state.articles.filter((article) => !state.read.has(article.id)).length;
+  const enabledArticles = state.articles.filter(articleHasEnabledSource);
+  const unread = enabledArticles.filter((article) => !state.read.has(article.id)).length;
   const brief = briefArticles();
   const filterCount = activeFilterCount();
   syncControlValues();
   renderCategories();
   renderSourceButtons();
+  renderSourceManager();
   updateLaneCounts();
-  elements.storyTotal.textContent = state.articles.length;
+  elements.storyTotal.textContent = enabledArticles.length;
   elements.repeatTotal.textContent = state.payload.duplicates_collapsed || 0;
   elements.briefTotal.textContent = brief.length;
   elements.unreadTotal.textContent = unread;
@@ -425,6 +484,12 @@ function render() {
   elements.storyList.innerHTML = articles.map(storyMarkup).join("");
   elements.storyList.hidden = articles.length === 0;
   elements.empty.hidden = articles.length > 0;
+  const allSourcesDisabled = Boolean(state.payload.sources?.length)
+    && state.payload.sources.every((source) => state.disabledSources.has(source.id));
+  elements.empty.querySelector("h2").textContent = allSourcesDisabled ? "All mobile sources are disabled" : "No matching signal";
+  elements.empty.querySelector("p").textContent = allSourcesDisabled ? "Enable at least one source to rebuild this phone’s feed." : "Try a broader search or clear your filters.";
+  elements.clearFilters.textContent = allSourcesDisabled ? "Enable all sources" : "Clear filters";
+  elements.clearFilters.dataset.action = allSourcesDisabled ? "enable-sources" : "reset-filters";
   elements.storyList.setAttribute("aria-busy", "false");
   elements.clearSearchButtons.forEach((button) => { button.hidden = !state.search.trim(); });
   document.querySelectorAll("[data-view]").forEach((button) => {
@@ -436,7 +501,8 @@ function render() {
 }
 
 function renderSources() {
-  const markup = `<option value="All">All sources</option>${(state.payload.sources || []).map((source) => `<option value="${escapeHtml(source.id)}">${escapeHtml(source.name)} · ${source.count || 0}</option>`).join("")}`;
+  const enabledSources = (state.payload.sources || []).filter((source) => !state.disabledSources.has(source.id));
+  const markup = `<option value="All">All sources</option>${enabledSources.map((source) => `<option value="${escapeHtml(source.id)}">${escapeHtml(source.name)} · ${source.count || 0}</option>`).join("")}`;
   elements.sourceSelects.forEach((select) => {
     select.innerHTML = markup;
     select.value = state.source;
@@ -461,6 +527,8 @@ async function loadFeed() {
     state.articles = payload.articles;
     localStorage.setItem(storageKeys.feed, JSON.stringify(payload));
     persistRead();
+    persistDisabledSources();
+    if (state.disabledSources.has(state.source)) state.source = "All";
     renderSources();
     render();
     updateConnection(true);
@@ -476,6 +544,8 @@ async function loadFeed() {
       if (!cached?.articles?.length) throw error;
       state.payload = cached;
       state.articles = cached.articles;
+      persistDisabledSources();
+      if (state.disabledSources.has(state.source)) state.source = "All";
       renderSources();
       render();
       updateConnection(false, true);
@@ -514,6 +584,7 @@ function openExplore() {
 }
 
 function closeExplore(showResults = false) {
+  if (!elements.sourceManagerPanel.hidden) closeSourceManager();
   elements.explorePanel.hidden = true;
   elements.exploreButton.classList.remove("is-active");
   elements.exploreButton.setAttribute("aria-expanded", "false");
@@ -526,7 +597,23 @@ function closeExplore(showResults = false) {
   exploreReturnFocus = null;
 }
 
+function openSourceManager() {
+  sourceManagerReturnFocus = document.activeElement;
+  renderSourceManager();
+  elements.sourceManagerPanel.hidden = false;
+  document.body.classList.add("source-manager-open");
+  window.requestAnimationFrame(() => elements.sourceManagerPanel.querySelector(".source-manager-drawer > header button").focus());
+}
+
+function closeSourceManager() {
+  elements.sourceManagerPanel.hidden = true;
+  document.body.classList.remove("source-manager-open");
+  if (sourceManagerReturnFocus instanceof HTMLElement) sourceManagerReturnFocus.focus();
+  sourceManagerReturnFocus = null;
+}
+
 function openBrief() {
+  if (!elements.sourceManagerPanel.hidden) closeSourceManager();
   if (!elements.explorePanel.hidden) closeExplore();
   renderBrief();
   elements.briefPanel.hidden = false;
@@ -540,6 +627,28 @@ function closeBrief() {
 }
 
 document.addEventListener("click", (event) => {
+  if (event.target.closest("[data-open-source-manager]")) {
+    openSourceManager();
+    return;
+  }
+
+  if (event.target.closest("[data-close-source-manager]")) {
+    closeSourceManager();
+    return;
+  }
+
+  const sourceToggle = event.target.closest("[data-toggle-source]");
+  if (sourceToggle) {
+    const sourceId = sourceToggle.dataset.toggleSource;
+    if (state.disabledSources.has(sourceId)) state.disabledSources.delete(sourceId);
+    else state.disabledSources.add(sourceId);
+    if (state.disabledSources.has(state.source)) state.source = "All";
+    persistDisabledSources();
+    renderSources();
+    render();
+    return;
+  }
+
   if (event.target.closest("[data-open-explore]")) {
     openExplore();
     return;
@@ -615,8 +724,21 @@ elements.sourceSelects.forEach((select) => select.addEventListener("change", () 
 
 document.querySelector("#drawer-reset").addEventListener("click", resetFilters);
 document.querySelector("#show-results").addEventListener("click", () => closeExplore(true));
+document.querySelector("#enable-all-sources").addEventListener("click", () => {
+  state.disabledSources.clear();
+  persistDisabledSources();
+  renderSources();
+  render();
+});
 
-document.querySelector("#clear-filters").addEventListener("click", resetFilters);
+elements.clearFilters.addEventListener("click", () => {
+  if (elements.clearFilters.dataset.action === "enable-sources") {
+    state.disabledSources.clear();
+    persistDisabledSources();
+    renderSources();
+  }
+  resetFilters();
+});
 document.querySelector("#brief-hero-button").addEventListener("click", openBrief);
 document.querySelectorAll("[data-close-brief]").forEach((button) => button.addEventListener("click", closeBrief));
 
@@ -660,7 +782,8 @@ document.addEventListener("visibilitychange", () => {
 
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
-  if (!elements.explorePanel.hidden) closeExplore();
+  if (!elements.sourceManagerPanel.hidden) closeSourceManager();
+  else if (!elements.explorePanel.hidden) closeExplore();
   else if (!elements.briefPanel.hidden) closeBrief();
 });
 
