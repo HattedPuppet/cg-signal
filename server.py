@@ -135,6 +135,14 @@ FEEDS = (
         "limit": 20,
     },
     {
+        "id": "automaton",
+        "name": "AUTOMATON",
+        "site": "https://automaton-media.com/",
+        "feed": "https://automaton-media.com/feed/",
+        "accent": "#e6504f",
+        "limit": 20,
+    },
+    {
         "id": "unreal-engine",
         "name": "Unreal Engine",
         "site": "https://www.unrealengine.com/",
@@ -689,6 +697,7 @@ TECH_SOURCE_PRIOR = {
     "game-developer": 1,
     "siggraph": 2,
     "automaton-interviews": 1,
+    "automaton": 2,
     "unreal-engine": 3,
     "blender-developers": 3,
 }

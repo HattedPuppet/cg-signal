@@ -47,6 +47,12 @@ class SourceConfigurationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "HTTP or HTTPS"):
             server.add_source_config({"name": "Unsafe", "feed": "file:///tmp/feed.xml"})
 
+    def test_automaton_is_a_builtin_source(self):
+        source = next(item for item in server.FEEDS if item["id"] == "automaton")
+        self.assertEqual(source["feed"], "https://automaton-media.com/feed/")
+        self.assertEqual(source["site"], "https://automaton-media.com/")
+        self.assertEqual(source["limit"], 20)
+
 
 if __name__ == "__main__":
     unittest.main()
