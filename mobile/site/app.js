@@ -732,6 +732,11 @@ elements.densityToggle.addEventListener("click", () => {
   render();
 });
 
+document.addEventListener("pointerdown", (event) => {
+  if (filterOpenScrollY === null || elements.filterDrawer.contains(event.target)) return;
+  setFilterDrawerExpanded(false);
+}, { passive: true });
+
 window.addEventListener("scroll", () => {
   if (filterOpenScrollY === null) return;
   if (Math.abs(window.scrollY - filterOpenScrollY) > 6) {

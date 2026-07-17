@@ -106,6 +106,8 @@ class MobileExportTests(unittest.TestCase):
         self.assertIn('window.addEventListener("scroll"', javascript)
         self.assertIn('filterOpenScrollY', javascript)
         self.assertIn('Math.abs(window.scrollY - filterOpenScrollY) > 6', javascript)
+        self.assertIn('document.addEventListener("pointerdown"', javascript)
+        self.assertIn('elements.filterDrawer.contains(event.target)', javascript)
         self.assertIn("pointerdown", javascript)
         self.assertIn('class="app-header-row"', html)
         self.assertIn("position: sticky", styles)
