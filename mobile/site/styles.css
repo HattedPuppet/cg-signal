@@ -313,6 +313,8 @@ button { color: inherit; }
   padding: 0;
 }
 
+.filter-drawer { padding: 5px 0; }
+
 .filter-drawer-handle {
   display: flex;
   width: 100%;
