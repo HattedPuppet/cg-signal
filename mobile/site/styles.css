@@ -767,8 +767,71 @@ button { color: inherit; }
 
 .explore-controls { padding: 16px 16px 6px; }
 .explore-controls .category-list { margin-inline: -16px; padding-inline: 16px; }
-.explore-controls .source-row { margin-top: 10px; padding-inline: 4px; }
 .search-hint { margin: 7px 4px 0; color: var(--muted); font-size: 7px; line-height: 1.45; }
+
+.source-section { margin-top: 16px; }
+
+.source-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.source-button {
+  display: flex;
+  min-width: 0;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 750;
+  text-align: left;
+}
+
+.source-button.is-all { grid-column: 1 / -1; }
+
+.source-button span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.source-button span::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--source-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--source-accent) 12%, transparent);
+}
+
+.source-button strong { flex: 0 0 auto; color: inherit; font-size: 8px; opacity: .6; }
+
+.source-button.is-active {
+  border-color: color-mix(in srgb, var(--source-accent) 58%, var(--line));
+  background: color-mix(in srgb, var(--source-accent) 14%, var(--card));
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--source-accent) 18%, transparent);
+}
+
+.source-result-row {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 2px 0;
+  color: var(--muted);
+  font-size: 8px;
+}
 
 .explore-footer {
   position: sticky;

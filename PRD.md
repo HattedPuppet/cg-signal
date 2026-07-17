@@ -206,7 +206,8 @@ And is actively interested in:
 - Provide Latest Signal, information-type and category filtering, source
   selection, text and hashtag search, unread filtering, and a short Daily Brief.
 - Keep search, information type, category, and source controls reachable from
-  any scroll position through a compact mobile discovery surface.
+  any scroll position through a compact mobile discovery surface, with
+  touch-sized one-tap source choices and clear active-state feedback.
 - Support Android home-screen installation and retain the most recently opened
   feed for temporary offline access.
 - Store read markers only in the phone's local browser storage.

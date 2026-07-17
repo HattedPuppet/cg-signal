@@ -83,11 +83,15 @@ class MobileExportTests(unittest.TestCase):
         self.assertIn('aria-controls="explore-panel"', html)
         self.assertIn('id="explore-panel"', html)
         self.assertEqual(html.count("data-search-input"), 2)
-        self.assertEqual(html.count("data-source-select"), 2)
+        self.assertEqual(html.count("data-source-select"), 1)
         self.assertEqual(html.count("data-category-list"), 2)
+        self.assertIn('id="drawer-source-list"', html)
         self.assertIn("function syncControlValues()", javascript)
         self.assertIn("function activeFilterCount()", javascript)
+        self.assertIn("function renderSourceButtons()", javascript)
+        self.assertIn("data-source-option", javascript)
         self.assertIn(".explore-panel", styles)
+        self.assertIn(".source-button", styles)
         self.assertIn("grid-template-columns: repeat(4, 1fr)", styles)
 
 

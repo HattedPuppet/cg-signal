@@ -69,6 +69,7 @@ const elements = {
   connectionDot: document.querySelector("#connection-dot"),
   categoryLists: [...document.querySelectorAll("[data-category-list]")],
   sourceSelects: [...document.querySelectorAll("[data-source-select]")],
+  sourceButtonList: document.querySelector("#drawer-source-list"),
   searchInputs: [...document.querySelectorAll("[data-search-input]")],
   clearSearchButtons: [...document.querySelectorAll("[data-clear-search]")],
   notice: document.querySelector("#notice"),
@@ -292,6 +293,35 @@ function renderCategories() {
   elements.categoryLists.forEach((list) => { list.innerHTML = markup; });
 }
 
+function sourceContext() {
+  const articles = state.articles.filter((article) => {
+    if (state.lane !== "All" && article.lane !== state.lane) return false;
+    if (state.view === "unread" && state.read.has(article.id)) return false;
+    if (!matchesSearch(article)) return false;
+    return state.category === "All" || articleCategories(article).includes(state.category);
+  });
+  const counts = new Map();
+  articles.forEach((article) => {
+    const sourceIds = new Set((article.sources || []).map((source) => source.id).filter(Boolean));
+    if (article.source_id) sourceIds.add(article.source_id);
+    sourceIds.forEach((id) => counts.set(id, (counts.get(id) || 0) + 1));
+  });
+  return { articles, counts };
+}
+
+function renderSourceButtons() {
+  const { articles, counts } = sourceContext();
+  const sources = [
+    { id: "All", name: "All sources", accent: "#d7ff57", count: articles.length },
+    ...(state.payload?.sources || []).map((source) => ({ ...source, count: counts.get(source.id) || 0 })),
+  ];
+  elements.sourceButtonList.innerHTML = sources.map((source) => {
+    const active = source.id === state.source;
+    const countLabel = `${source.count} ${source.count === 1 ? "story" : "stories"}`;
+    return `<button class="source-button${source.id === "All" ? " is-all" : ""}${active ? " is-active" : ""}" type="button" data-source-option="${escapeHtml(source.id)}" aria-pressed="${active}" aria-label="${escapeHtml(`${source.name}, ${countLabel}`)}" style="--source-accent:${escapeHtml(source.accent || "#7fa9ff")}"><span>${escapeHtml(source.name)}</span><strong>${source.count}</strong></button>`;
+  }).join("");
+}
+
 function trimSummary(value) {
   const clean = String(value || "").replace(/\s+/g, " ").trim();
   return clean.length > 245 ? `${clean.slice(0, 242).trimEnd()}…` : clean;
@@ -377,6 +407,7 @@ function render() {
   const filterCount = activeFilterCount();
   syncControlValues();
   renderCategories();
+  renderSourceButtons();
   updateLaneCounts();
   elements.storyTotal.textContent = state.articles.length;
   elements.repeatTotal.textContent = state.payload.duplicates_collapsed || 0;
@@ -516,6 +547,15 @@ document.addEventListener("click", (event) => {
 
   if (event.target.closest("[data-close-explore]")) {
     closeExplore();
+    return;
+  }
+
+  const sourceButton = event.target.closest("[data-source-option]");
+  if (sourceButton) {
+    const source = sourceButton.dataset.sourceOption;
+    state.source = source === state.source && source !== "All" ? "All" : source;
+    syncControlValues();
+    render();
     return;
   }
 
