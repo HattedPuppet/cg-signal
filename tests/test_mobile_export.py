@@ -96,7 +96,7 @@ class MobileExportTests(unittest.TestCase):
         self.assertIn('id="scroll-top-button"', html)
         self.assertIn('id="filter-drawer-handle"', html)
         self.assertIn('id="filter-drawer-content"', html)
-        self.assertIn("scrollIntoView({ behavior: \"auto\", block: \"start\" })", javascript)
+        self.assertIn("scrollIntoView({ behavior: \"auto\", block: \"center\" })", javascript)
         self.assertIn("story-card:not(.skeleton)", javascript)
         self.assertNotIn('window.scrollTo({ top: 0, behavior: "smooth"', javascript)
         self.assertIn("setFilterDrawerExpanded", javascript)
@@ -104,6 +104,8 @@ class MobileExportTests(unittest.TestCase):
         self.assertIn('class="app-header-row"', html)
         self.assertIn("position: sticky", styles)
         self.assertIn(".filter-drawer.is-collapsed", styles)
+        self.assertIn(".app-header .filter-drawer-handle", styles)
+        self.assertIn("rgba(255,255,255,.1)", styles)
         self.assertIn(".scroll-top-button", styles)
         self.assertIn("grid-template-columns: repeat(3, 1fr)", styles)
 

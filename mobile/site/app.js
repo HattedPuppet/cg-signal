@@ -710,7 +710,7 @@ elements.scrollTop.addEventListener("click", () => {
   }
   elements.filterDrawer.classList.add("is-jumping");
   setFilterDrawerExpanded(false);
-  firstArticle.scrollIntoView({ behavior: "auto", block: "start" });
+  firstArticle.scrollIntoView({ behavior: "auto", block: "center" });
   window.requestAnimationFrame(() => elements.filterDrawer.classList.remove("is-jumping"));
 });
 

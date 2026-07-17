@@ -328,6 +328,13 @@ button { color: inherit; }
   touch-action: pan-y;
 }
 
+.app-header .filter-drawer-handle {
+  border-color: rgba(255,255,255,.18);
+  background: rgba(255,255,255,.09);
+  color: #fff;
+  box-shadow: 0 5px 14px rgba(0,0,0,.16);
+}
+
 .filter-handle-grip {
   width: 21px;
   height: 3px;
@@ -336,13 +343,17 @@ button { color: inherit; }
   background: var(--line-strong);
 }
 
+.app-header .filter-handle-grip { background: rgba(255,255,255,.56); }
+
 .filter-handle-copy { display: grid; min-width: 0; flex: 1; gap: 1px; }
 .filter-handle-copy strong { font-size: 7px; font-weight: 850; letter-spacing: .08em; text-transform: uppercase; }
 .filter-handle-copy small { overflow: hidden; color: var(--muted); font-size: 6px; text-overflow: ellipsis; white-space: nowrap; }
+.app-header .filter-handle-copy small { color: rgba(255,255,255,.64); }
 .filter-handle-icon { color: var(--muted); font-size: 14px; line-height: 1; transition: transform .18s ease; }
+.app-header .filter-handle-icon { color: rgba(255,255,255,.72); }
 .filter-drawer-content { max-height: 500px; overflow: hidden; opacity: 1; transition: max-height .2s ease, opacity .16s ease; }
 .filter-drawer.is-collapsed { padding-top: 5px; padding-bottom: 5px; }
-.filter-drawer.is-collapsed .filter-drawer-handle { border-color: transparent; background: transparent; }
+.filter-drawer.is-collapsed .filter-drawer-handle { border-color: rgba(255,255,255,.2); background: rgba(255,255,255,.1); }
 .filter-drawer.is-collapsed .filter-drawer-content { max-height: 0; opacity: 0; pointer-events: none; }
 .filter-drawer.is-collapsed .filter-handle-icon { transform: rotate(180deg); }
 .filter-drawer.is-jumping .filter-drawer-content { transition: none; }

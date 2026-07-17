@@ -1729,7 +1729,7 @@ elements.scrollTop.addEventListener("click", () => {
     window.scrollTo({ top: 0 });
     return;
   }
-  firstArticle.scrollIntoView({ behavior: "auto", block: "start" });
+  firstArticle.scrollIntoView({ behavior: "auto", block: "center" });
 });
 
 document.querySelector("#reset-sources").addEventListener("click", () => {

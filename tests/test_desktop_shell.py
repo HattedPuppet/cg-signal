@@ -17,7 +17,7 @@ class DesktopShellTests(unittest.TestCase):
         javascript = (SITE / "app.js").read_text(encoding="utf-8")
         styles = (SITE / "styles.css").read_text(encoding="utf-8")
         self.assertIn('story-card:not(.skeleton-card)', javascript)
-        self.assertIn('scrollIntoView({ behavior: "auto", block: "start" })', javascript)
+        self.assertIn('scrollIntoView({ behavior: "auto", block: "center" })', javascript)
         self.assertIn(".scroll-top-button", styles)
         self.assertIn("position: fixed", styles)
 
