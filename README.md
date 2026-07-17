@@ -88,6 +88,8 @@ Git.
   clear primary card label.
 - Desktop search lives in the sticky topbar, and the persistent Top button
   jumps directly to the first visible article for quick reading recovery.
+- Desktop **View** switches between grid and list layouts, while **Density** toggles
+  a locally saved compact card mode with smaller thumbnails and tighter metadata.
 - A divider identifies stories published since the previous visit. Keyboard
   triage uses `J`/`K` to move, `Enter` to open, `S` to save, `A` to archive,
   and `M` to toggle read state.
