@@ -153,6 +153,8 @@ And is actively interested in:
 
 ### Search and triage
 
+- Keep desktop search in the sticky topbar and provide a persistent fast jump
+  to the first visible article.
 - Search article titles, summaries, sources, classifications, related coverage,
   relevance reasons, and personal research notes.
 - Support AND-combined hashtags for common software plus structured

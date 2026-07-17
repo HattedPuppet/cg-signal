@@ -86,6 +86,8 @@ Git.
   category counts. Multi-tool stories can be found from every relevant software
   filter while appearing only once in the All Stories feed and retaining one
   clear primary card label.
+- Desktop search lives in the sticky topbar, and the persistent Top button
+  jumps directly to the first visible article for quick reading recovery.
 - A divider identifies stories published since the previous visit. Keyboard
   triage uses `J`/`K` to move, `Enter` to open, `S` to save, `A` to archive,
   and `M` to toggle read state.

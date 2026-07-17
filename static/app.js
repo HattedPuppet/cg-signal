@@ -127,6 +127,7 @@ const elements = {
   lastUpdated: document.querySelector("#last-updated"),
   search: document.querySelector("#search-input"),
   searchHelp: document.querySelector("#search-help"),
+  scrollTop: document.querySelector("#scroll-top-button"),
   refresh: document.querySelector("#refresh-button"),
   layout: document.querySelector("#layout-toggle"),
   notice: document.querySelector("#notice"),
@@ -1720,6 +1721,15 @@ elements.layout.addEventListener("click", () => {
   state.layout = state.layout === "grid" ? "list" : "grid";
   localStorage.setItem(storageKeys.layout, state.layout);
   render();
+});
+
+elements.scrollTop.addEventListener("click", () => {
+  const firstArticle = elements.grid.querySelector(".story-card:not(.skeleton-card)");
+  if (!firstArticle) {
+    window.scrollTo({ top: 0 });
+    return;
+  }
+  firstArticle.scrollIntoView({ behavior: "auto", block: "start" });
 });
 
 document.querySelector("#reset-sources").addEventListener("click", () => {
