@@ -123,14 +123,18 @@ class MobileExportTests(unittest.TestCase):
         javascript = (site / "app.js").read_text(encoding="utf-8")
         styles = (site / "styles.css").read_text(encoding="utf-8")
         self.assertIn('id="source-manager-panel"', html)
+        self.assertIn('class="source-manage-button"', html)
+        self.assertNotIn('id="result-count"', html)
         self.assertIn('id="enable-all-sources"', html)
         self.assertNotIn("Add RSS", html)
         self.assertIn('disabledSources: "cg-signal-mobile:disabled-sources"', javascript)
         self.assertIn("function persistDisabledSources()", javascript)
         self.assertIn("function articleHasEnabledSource(article)", javascript)
         self.assertIn("function renderSourceManager()", javascript)
+        self.assertNotIn("resultCount", javascript)
         self.assertIn("localStorage.removeItem(storageKeys.disabledSources)", javascript)
         self.assertIn(".source-manager-panel", styles)
+        self.assertIn(".source-manage-button", styles)
         self.assertIn(".source-manager-item.is-enabled", styles)
 
 

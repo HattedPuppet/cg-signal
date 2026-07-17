@@ -67,7 +67,6 @@ const elements = {
   repeatTotal: document.querySelector("#repeat-total"),
   briefTotal: document.querySelector("#brief-total"),
   unreadTotal: document.querySelector("#unread-total"),
-  resultCount: document.querySelector("#result-count"),
   updateStatus: document.querySelector("#update-status"),
   connectionDot: document.querySelector("#connection-dot"),
   categoryLists: [...document.querySelectorAll("[data-category-list]")],
@@ -455,7 +454,6 @@ function render() {
   elements.repeatTotal.textContent = state.payload.duplicates_collapsed || 0;
   elements.briefTotal.textContent = brief.length;
   elements.unreadTotal.textContent = unread;
-  elements.resultCount.textContent = `${articles.length} ${articles.length === 1 ? "result" : "results"}`;
   elements.feedKicker.textContent = state.view === "unread" ? "Unread signal" : "Latest signal";
   elements.feedTitle.textContent = state.view === "unread" ? "Still waiting for you" : "What’s worth a look";
   elements.storyList.innerHTML = articles.map(storyMarkup).join("");

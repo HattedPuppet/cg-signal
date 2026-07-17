@@ -845,21 +845,22 @@ button { color: inherit; }
 
 .source-section { margin-top: 8px; padding-top: 7px; border-top: 1px solid var(--line); }
 
-.source-heading button {
+.source-heading .source-manage-button {
   display: inline-flex;
   min-height: 22px;
   align-items: center;
   gap: 6px;
-  padding: 0 7px;
+  padding: 0 6px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--card);
   color: var(--ink);
-  font-size: 6px;
+  font-size: 11px;
   font-weight: 800;
 }
 
-.source-heading button strong { color: var(--muted); font-size: 7px; }
+.source-heading .source-manage-button > span { line-height: 1; }
+.source-heading .source-manage-button strong { color: var(--muted); font-size: 6px; }
 
 .source-list {
   display: flex;
@@ -917,18 +918,6 @@ button { color: inherit; }
   color: var(--ink);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--source-accent) 18%, transparent);
 }
-
-.source-result-row {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 2px 2px 0;
-  color: var(--muted);
-  font-size: 7px;
-}
-
-.source-result-row small { display: none; font-size: 6px; }
 
 .source-manager-panel {
   position: fixed;
