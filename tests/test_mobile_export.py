@@ -74,6 +74,22 @@ class MobileExportTests(unittest.TestCase):
             self.assertFalse((output / "user-state.json").exists())
             self.assertFalse((output / "cg-signal.db").exists())
 
+    def test_mobile_shell_keeps_explore_controls_globally_reachable(self):
+        site = MODULE_PATH.parent / "site"
+        html = (site / "index.html").read_text(encoding="utf-8")
+        javascript = (site / "app.js").read_text(encoding="utf-8")
+        styles = (site / "styles.css").read_text(encoding="utf-8")
+        self.assertIn('id="explore-button"', html)
+        self.assertIn('aria-controls="explore-panel"', html)
+        self.assertIn('id="explore-panel"', html)
+        self.assertEqual(html.count("data-search-input"), 2)
+        self.assertEqual(html.count("data-source-select"), 2)
+        self.assertEqual(html.count("data-category-list"), 2)
+        self.assertIn("function syncControlValues()", javascript)
+        self.assertIn("function activeFilterCount()", javascript)
+        self.assertIn(".explore-panel", styles)
+        self.assertIn("grid-template-columns: repeat(4, 1fr)", styles)
+
 
 if __name__ == "__main__":
     unittest.main()

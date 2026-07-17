@@ -46,8 +46,8 @@
       <section class="controls" aria-label="Article filters">
         <label class="search-box" for="search-input">
           <span aria-hidden="true">⌕</span>
-          <input id="search-input" type="search" autocomplete="off" placeholder="Search or try #unreal…" />
-          <button id="clear-search" type="button" aria-label="Clear search" hidden>×</button>
+          <input id="search-input" data-search-input type="search" autocomplete="off" placeholder="Search or try #unreal…" />
+          <button id="clear-search" data-clear-search type="button" aria-label="Clear search" hidden>×</button>
         </label>
 
         <div class="lane-row" role="group" aria-label="Information type">
@@ -58,12 +58,12 @@
 
         <div class="category-section">
           <div class="filter-heading"><span>Categories</span><small>Tap the selected category to reset</small></div>
-          <div id="category-list" class="category-list" role="group" aria-label="Software and context categories"></div>
+          <div id="category-list" class="category-list" data-category-list role="group" aria-label="Software and context categories"></div>
         </div>
 
         <div class="source-row">
           <label for="source-select">Source</label>
-          <select id="source-select"><option value="All">All sources</option></select>
+          <select id="source-select" data-source-select><option value="All">All sources</option></select>
           <span id="result-count">— results</span>
         </div>
       </section>
@@ -104,9 +104,55 @@
 
     <nav class="bottom-nav" aria-label="Mobile views">
       <button class="is-active" type="button" data-view="latest"><span aria-hidden="true">⌁</span><small>Latest</small></button>
+      <button id="explore-button" type="button" data-open-explore aria-controls="explore-panel" aria-expanded="false"><span aria-hidden="true">⌕</span><small>Explore</small><strong id="filter-total" hidden>0</strong></button>
       <button type="button" data-view="unread"><span class="unread-dot" aria-hidden="true"></span><small>Unread</small><strong id="unread-total">—</strong></button>
       <button type="button" data-view="brief"><span aria-hidden="true">✦</span><small>Brief</small></button>
     </nav>
+
+    <section id="explore-panel" class="explore-panel" role="dialog" aria-modal="true" aria-labelledby="explore-title" hidden>
+      <button class="explore-backdrop" type="button" data-close-explore aria-label="Close Explore filters"></button>
+      <div class="explore-drawer">
+        <header>
+          <div>
+            <p class="eyebrow"><span></span> Search and filter</p>
+            <h2 id="explore-title">Explore the signal</h2>
+            <p id="explore-summary">All stories</p>
+          </div>
+          <button type="button" data-close-explore aria-label="Close Explore filters">×</button>
+        </header>
+
+        <div class="explore-controls">
+          <label class="search-box" for="drawer-search-input">
+            <span aria-hidden="true">⌕</span>
+            <input id="drawer-search-input" data-search-input type="search" autocomplete="off" placeholder="Search titles, summaries, or #unreal…" />
+            <button id="drawer-clear-search" data-clear-search type="button" aria-label="Clear search" hidden>×</button>
+          </label>
+          <p class="search-hint">Use hashtags such as #blender, #source:80lv, or #is:unread.</p>
+
+          <div class="lane-row" role="group" aria-label="Information type">
+            <button class="lane-button is-active" type="button" data-lane="All">All <strong>—</strong></button>
+            <button class="lane-button" type="button" data-lane="Tech &amp; Development">Tech <strong>—</strong></button>
+            <button class="lane-button" type="button" data-lane="Industry &amp; Business">Industry <strong>—</strong></button>
+          </div>
+
+          <div class="category-section">
+            <div class="filter-heading"><span>Categories</span><small>Tap the selected category to reset</small></div>
+            <div id="drawer-category-list" class="category-list" data-category-list role="group" aria-label="Software and context categories"></div>
+          </div>
+
+          <div class="source-row">
+            <label for="drawer-source-select">Source</label>
+            <select id="drawer-source-select" data-source-select><option value="All">All sources</option></select>
+            <span id="drawer-result-count">— results</span>
+          </div>
+        </div>
+
+        <footer class="explore-footer">
+          <button id="drawer-reset" class="explore-reset" type="button">Reset</button>
+          <button id="show-results" class="explore-show" type="button">Show <span id="drawer-show-count">—</span> stories</button>
+        </footer>
+      </div>
+    </section>
 
     <section id="brief-panel" class="brief-panel" role="dialog" aria-modal="true" aria-labelledby="brief-title" hidden>
       <div class="brief-drawer">

@@ -63,12 +63,14 @@ const elements = {
   briefTotal: document.querySelector("#brief-total"),
   unreadTotal: document.querySelector("#unread-total"),
   resultCount: document.querySelector("#result-count"),
+  drawerResultCount: document.querySelector("#drawer-result-count"),
+  drawerShowCount: document.querySelector("#drawer-show-count"),
   updateStatus: document.querySelector("#update-status"),
   connectionDot: document.querySelector("#connection-dot"),
-  categoryList: document.querySelector("#category-list"),
-  sourceSelect: document.querySelector("#source-select"),
-  search: document.querySelector("#search-input"),
-  clearSearch: document.querySelector("#clear-search"),
+  categoryLists: [...document.querySelectorAll("[data-category-list]")],
+  sourceSelects: [...document.querySelectorAll("[data-source-select]")],
+  searchInputs: [...document.querySelectorAll("[data-search-input]")],
+  clearSearchButtons: [...document.querySelectorAll("[data-clear-search]")],
   notice: document.querySelector("#notice"),
   feedKicker: document.querySelector("#feed-kicker"),
   feedTitle: document.querySelector("#feed-title"),
@@ -77,7 +79,13 @@ const elements = {
   briefList: document.querySelector("#brief-list"),
   briefIntro: document.querySelector("#brief-intro"),
   briefMarkRead: document.querySelector("#brief-mark-read"),
+  explorePanel: document.querySelector("#explore-panel"),
+  exploreButton: document.querySelector("#explore-button"),
+  exploreSummary: document.querySelector("#explore-summary"),
+  filterTotal: document.querySelector("#filter-total"),
 };
+
+let exploreReturnFocus = null;
 
 function readSet() {
   try {
@@ -237,17 +245,51 @@ function categoryCounts() {
   return counts;
 }
 
+function syncControlValues() {
+  elements.searchInputs.forEach((input) => {
+    if (input.value !== state.search) input.value = state.search;
+  });
+  elements.sourceSelects.forEach((select) => {
+    if (select.value !== state.source) select.value = state.source;
+  });
+}
+
+function activeFilterCount() {
+  return [
+    state.lane !== "All",
+    state.category !== "All",
+    state.source !== "All",
+    Boolean(state.search.trim()),
+  ].filter(Boolean).length;
+}
+
+function activeFilterSummary() {
+  const parts = [];
+  if (state.lane !== "All") parts.push(state.lane === "Tech & Development" ? "Tech" : "Industry");
+  if (state.category !== "All") parts.push(state.category);
+  if (state.source !== "All") {
+    const source = (state.payload?.sources || []).find((item) => item.id === state.source);
+    parts.push(source?.name || state.source);
+  }
+  if (state.search.trim()) {
+    const query = state.search.trim();
+    parts.push(`“${query.length > 28 ? `${query.slice(0, 27)}…` : query}”`);
+  }
+  return parts.length ? parts.join(" · ") : "All stories";
+}
+
 function renderCategories() {
   const counts = categoryCounts();
   const categories = CATEGORY_ORDER.filter((category) => counts.has(category) || category === state.category);
   const allCount = state.articles.filter(matchesBaseFilters).length;
-  elements.categoryList.innerHTML = ["All", ...categories].map((category) => {
+  const markup = ["All", ...categories].map((category) => {
     const active = category === state.category;
     const label = category === "All" ? "All categories" : category;
     const count = category === "All" ? allCount : (counts.get(category) || 0);
     const color = category === "All" ? "#d7ff57" : (CATEGORY_COLORS[category] || "#7fa9ff");
     return `<button class="category-button${active ? " is-active" : ""}" type="button" data-category="${escapeHtml(category)}" aria-pressed="${active}" style="--category-accent:${escapeHtml(color)}"><span>${escapeHtml(label)}</span><strong>${count}</strong></button>`;
   }).join("");
+  elements.categoryLists.forEach((list) => { list.innerHTML = markup; });
 }
 
 function trimSummary(value) {
@@ -332,6 +374,8 @@ function render() {
   const articles = visibleArticles();
   const unread = state.articles.filter((article) => !state.read.has(article.id)).length;
   const brief = briefArticles();
+  const filterCount = activeFilterCount();
+  syncControlValues();
   renderCategories();
   updateLaneCounts();
   elements.storyTotal.textContent = state.articles.length;
@@ -339,13 +383,19 @@ function render() {
   elements.briefTotal.textContent = brief.length;
   elements.unreadTotal.textContent = unread;
   elements.resultCount.textContent = `${articles.length} ${articles.length === 1 ? "result" : "results"}`;
+  elements.drawerResultCount.textContent = `${articles.length} ${articles.length === 1 ? "result" : "results"}`;
+  elements.drawerShowCount.textContent = articles.length;
+  elements.exploreSummary.textContent = activeFilterSummary();
+  elements.filterTotal.textContent = filterCount;
+  elements.filterTotal.hidden = filterCount === 0;
+  elements.exploreButton.classList.toggle("has-filters", filterCount > 0);
   elements.feedKicker.textContent = state.view === "unread" ? "Unread signal" : "Latest signal";
   elements.feedTitle.textContent = state.view === "unread" ? "Still waiting for you" : "What’s worth a look";
   elements.storyList.innerHTML = articles.map(storyMarkup).join("");
   elements.storyList.hidden = articles.length === 0;
   elements.empty.hidden = articles.length > 0;
   elements.storyList.setAttribute("aria-busy", "false");
-  elements.clearSearch.hidden = !state.search;
+  elements.clearSearchButtons.forEach((button) => { button.hidden = !state.search.trim(); });
   document.querySelectorAll("[data-view]").forEach((button) => {
     const active = button.dataset.view === state.view || (button.dataset.view === "latest" && state.view === "latest");
     button.classList.toggle("is-active", active);
@@ -355,8 +405,11 @@ function render() {
 }
 
 function renderSources() {
-  elements.sourceSelect.innerHTML = `<option value="All">All sources</option>${(state.payload.sources || []).map((source) => `<option value="${escapeHtml(source.id)}">${escapeHtml(source.name)} · ${source.count || 0}</option>`).join("")}`;
-  elements.sourceSelect.value = state.source;
+  const markup = `<option value="All">All sources</option>${(state.payload.sources || []).map((source) => `<option value="${escapeHtml(source.id)}">${escapeHtml(source.name)} · ${source.count || 0}</option>`).join("")}`;
+  elements.sourceSelects.forEach((select) => {
+    select.innerHTML = markup;
+    select.value = state.source;
+  });
 }
 
 function updateConnection(online, cached = false) {
@@ -414,12 +467,36 @@ function resetFilters() {
   state.source = "All";
   state.search = "";
   state.view = "latest";
-  elements.search.value = "";
-  elements.sourceSelect.value = "All";
+  syncControlValues();
   render();
 }
 
+function openExplore() {
+  if (!elements.briefPanel.hidden) closeBrief();
+  exploreReturnFocus = document.activeElement;
+  render();
+  elements.explorePanel.hidden = false;
+  elements.exploreButton.classList.add("is-active");
+  elements.exploreButton.setAttribute("aria-expanded", "true");
+  document.body.classList.add("explore-open");
+  window.requestAnimationFrame(() => elements.explorePanel.querySelector(".explore-drawer > header button").focus());
+}
+
+function closeExplore(showResults = false) {
+  elements.explorePanel.hidden = true;
+  elements.exploreButton.classList.remove("is-active");
+  elements.exploreButton.setAttribute("aria-expanded", "false");
+  document.body.classList.remove("explore-open");
+  if (showResults) {
+    document.querySelector(".feed-section").scrollIntoView({ behavior: "smooth", block: "start" });
+  } else if (exploreReturnFocus instanceof HTMLElement) {
+    exploreReturnFocus.focus();
+  }
+  exploreReturnFocus = null;
+}
+
 function openBrief() {
+  if (!elements.explorePanel.hidden) closeExplore();
   renderBrief();
   elements.briefPanel.hidden = false;
   document.body.classList.add("brief-open");
@@ -432,6 +509,16 @@ function closeBrief() {
 }
 
 document.addEventListener("click", (event) => {
+  if (event.target.closest("[data-open-explore]")) {
+    openExplore();
+    return;
+  }
+
+  if (event.target.closest("[data-close-explore]")) {
+    closeExplore();
+    return;
+  }
+
   const categoryButton = event.target.closest("[data-category]");
   if (categoryButton) {
     const category = categoryButton.dataset.category;
@@ -454,7 +541,7 @@ document.addEventListener("click", (event) => {
     else {
       state.view = viewButton.dataset.view;
       render();
-      window.scrollTo({ top: document.querySelector(".controls").offsetTop - 8, behavior: "smooth" });
+      document.querySelector(".feed-section").scrollIntoView({ behavior: "smooth", block: "start" });
     }
     return;
   }
@@ -467,22 +554,27 @@ document.addEventListener("click", (event) => {
   }
 });
 
-elements.search.addEventListener("input", () => {
-  state.search = elements.search.value.trim();
+elements.searchInputs.forEach((input) => input.addEventListener("input", () => {
+  state.search = input.value;
+  syncControlValues();
   render();
-});
+}));
 
-elements.clearSearch.addEventListener("click", () => {
-  elements.search.value = "";
+elements.clearSearchButtons.forEach((button) => button.addEventListener("click", () => {
   state.search = "";
-  elements.search.focus();
+  syncControlValues();
+  button.closest(".search-box").querySelector("input").focus();
   render();
-});
+}));
 
-elements.sourceSelect.addEventListener("change", () => {
-  state.source = elements.sourceSelect.value;
+elements.sourceSelects.forEach((select) => select.addEventListener("change", () => {
+  state.source = select.value;
+  syncControlValues();
   render();
-});
+}));
+
+document.querySelector("#drawer-reset").addEventListener("click", resetFilters);
+document.querySelector("#show-results").addEventListener("click", () => closeExplore(true));
 
 document.querySelector("#clear-filters").addEventListener("click", resetFilters);
 document.querySelector("#brief-hero-button").addEventListener("click", openBrief);
@@ -527,7 +619,9 @@ document.addEventListener("visibilitychange", () => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && !elements.briefPanel.hidden) closeBrief();
+  if (event.key !== "Escape") return;
+  if (!elements.explorePanel.hidden) closeExplore();
+  else if (!elements.briefPanel.hidden) closeBrief();
 });
 
 if ("serviceWorker" in navigator) {
