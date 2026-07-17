@@ -95,6 +95,7 @@ const elements = {
 let sourceManagerReturnFocus = null;
 let filterPointerStartY = null;
 let ignoreNextFilterClick = false;
+let filterOpenScrollY = null;
 
 function readSet() {
   try {
@@ -437,6 +438,7 @@ function renderFilterDrawerSummary() {
 function setFilterDrawerExpanded(expanded) {
   elements.filterDrawer.classList.toggle("is-collapsed", !expanded);
   elements.filterDrawerHandle.setAttribute("aria-expanded", String(expanded));
+  filterOpenScrollY = expanded ? window.scrollY : null;
 }
 
 function render() {
@@ -730,12 +732,9 @@ elements.densityToggle.addEventListener("click", () => {
   render();
 });
 
-let lastScrollY = window.scrollY;
 window.addEventListener("scroll", () => {
-  const currentScrollY = window.scrollY;
-  const startedScrolling = currentScrollY > lastScrollY + 2;
-  lastScrollY = currentScrollY;
-  if (startedScrolling && currentScrollY > 12 && !elements.filterDrawer.classList.contains("is-collapsed")) {
+  if (filterOpenScrollY === null) return;
+  if (Math.abs(window.scrollY - filterOpenScrollY) > 6) {
     setFilterDrawerExpanded(false);
   }
 }, { passive: true });

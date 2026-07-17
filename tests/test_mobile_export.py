@@ -104,6 +104,8 @@ class MobileExportTests(unittest.TestCase):
         self.assertIn('cg-signal-mobile:density', javascript)
         self.assertIn('storyList.classList.toggle("is-compact"', javascript)
         self.assertIn('window.addEventListener("scroll"', javascript)
+        self.assertIn('filterOpenScrollY', javascript)
+        self.assertIn('Math.abs(window.scrollY - filterOpenScrollY) > 6', javascript)
         self.assertIn("pointerdown", javascript)
         self.assertIn('class="app-header-row"', html)
         self.assertIn("position: sticky", styles)
