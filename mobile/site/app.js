@@ -66,15 +66,10 @@ const elements = {
   briefTotal: document.querySelector("#brief-total"),
   unreadTotal: document.querySelector("#unread-total"),
   resultCount: document.querySelector("#result-count"),
-  drawerResultCount: document.querySelector("#drawer-result-count"),
-  drawerShowCount: document.querySelector("#drawer-show-count"),
   updateStatus: document.querySelector("#update-status"),
   connectionDot: document.querySelector("#connection-dot"),
   categoryLists: [...document.querySelectorAll("[data-category-list]")],
-  sourceShortcut: document.querySelector("#source-shortcut"),
-  sourceCurrentLabel: document.querySelector("#source-current-label"),
-  sourceCurrentMeta: document.querySelector("#source-current-meta"),
-  sourceButtonList: document.querySelector("#drawer-source-list"),
+  sourceButtonList: document.querySelector("#source-list"),
   sourceManagerPanel: document.querySelector("#source-manager-panel"),
   sourceManagerList: document.querySelector("#source-manager-list"),
   sourceEnabledTotal: document.querySelector("#source-enabled-total"),
@@ -88,13 +83,8 @@ const elements = {
   briefList: document.querySelector("#brief-list"),
   briefIntro: document.querySelector("#brief-intro"),
   briefMarkRead: document.querySelector("#brief-mark-read"),
-  explorePanel: document.querySelector("#explore-panel"),
-  exploreButton: document.querySelector("#explore-button"),
-  exploreSummary: document.querySelector("#explore-summary"),
-  filterTotal: document.querySelector("#filter-total"),
 };
 
-let exploreReturnFocus = null;
 let sourceManagerReturnFocus = null;
 
 function readSet() {
@@ -291,35 +281,6 @@ function syncControlValues() {
   });
 }
 
-function activeFilterCount() {
-  return [
-    state.lane !== "All",
-    state.category !== "All",
-    state.source !== "All",
-    Boolean(state.search.trim()),
-    state.disabledSources.size > 0,
-  ].filter(Boolean).length;
-}
-
-function activeFilterSummary() {
-  const parts = [];
-  if (state.lane !== "All") parts.push(state.lane === "Tech & Development" ? "Tech" : "Industry");
-  if (state.category !== "All") parts.push(state.category);
-  if (state.source !== "All") {
-    const source = (state.payload?.sources || []).find((item) => item.id === state.source);
-    parts.push(source?.name || state.source);
-  }
-  if (state.search.trim()) {
-    const query = state.search.trim();
-    parts.push(`“${query.length > 28 ? `${query.slice(0, 27)}…` : query}”`);
-  }
-  if (state.disabledSources.size) {
-    const total = state.payload?.sources?.length || 0;
-    parts.push(`${Math.max(0, total - state.disabledSources.size)}/${total} sources`);
-  }
-  return parts.length ? parts.join(" · ") : "All stories";
-}
-
 function renderCategories() {
   const counts = categoryCounts();
   const categories = CATEGORY_ORDER.filter((category) => counts.has(category) || category === state.category);
@@ -461,24 +422,16 @@ function render() {
   const enabledArticles = state.articles.filter(articleHasEnabledSource);
   const unread = enabledArticles.filter((article) => !state.read.has(article.id)).length;
   const brief = briefArticles();
-  const filterCount = activeFilterCount();
   syncControlValues();
   renderCategories();
   renderSourceButtons();
   renderSourceManager();
-  renderSources();
   updateLaneCounts();
   elements.storyTotal.textContent = enabledArticles.length;
   elements.repeatTotal.textContent = state.payload.duplicates_collapsed || 0;
   elements.briefTotal.textContent = brief.length;
   elements.unreadTotal.textContent = unread;
   elements.resultCount.textContent = `${articles.length} ${articles.length === 1 ? "result" : "results"}`;
-  elements.drawerResultCount.textContent = `${articles.length} ${articles.length === 1 ? "result" : "results"}`;
-  elements.drawerShowCount.textContent = articles.length;
-  elements.exploreSummary.textContent = activeFilterSummary();
-  elements.filterTotal.textContent = filterCount;
-  elements.filterTotal.hidden = filterCount === 0;
-  elements.exploreButton.classList.toggle("has-filters", filterCount > 0);
   elements.feedKicker.textContent = state.view === "unread" ? "Unread signal" : "Latest signal";
   elements.feedTitle.textContent = state.view === "unread" ? "Still waiting for you" : "What’s worth a look";
   elements.storyList.innerHTML = articles.map(storyMarkup).join("");
@@ -498,21 +451,6 @@ function render() {
     button.setAttribute("aria-current", active ? "page" : "false");
   });
   renderBrief();
-}
-
-function renderSources() {
-  const sources = state.payload.sources || [];
-  const enabledCount = sources.filter((source) => !state.disabledSources.has(source.id)).length;
-  const selected = state.source === "All" ? null : sources.find((source) => source.id === state.source);
-  const label = selected?.name || "All sources";
-  const count = Number(selected?.count || 0);
-  const meta = selected
-    ? `${count} current ${count === 1 ? "story" : "stories"}`
-    : `${enabledCount} of ${sources.length} enabled`;
-  elements.sourceCurrentLabel.textContent = label;
-  elements.sourceCurrentMeta.textContent = meta;
-  elements.sourceShortcut.style.setProperty("--source-accent", selected?.accent || "#d7ff57");
-  elements.sourceShortcut.setAttribute("aria-label", `Source: ${label}. ${meta}. Open source picker.`);
 }
 
 function updateConnection(online, cached = false) {
@@ -576,39 +514,6 @@ function resetFilters() {
   render();
 }
 
-function openExplore(target = "") {
-  if (!elements.briefPanel.hidden) closeBrief();
-  exploreReturnFocus = document.activeElement;
-  render();
-  elements.explorePanel.hidden = false;
-  elements.exploreButton.classList.add("is-active");
-  elements.exploreButton.setAttribute("aria-expanded", "true");
-  document.body.classList.add("explore-open");
-  window.requestAnimationFrame(() => {
-    if (target === "sources") {
-      const sourceSection = elements.explorePanel.querySelector(".source-section");
-      sourceSection.scrollIntoView({ block: "center" });
-      sourceSection.querySelector("[data-source-option]")?.focus();
-    } else {
-      elements.explorePanel.querySelector(".explore-drawer > header button").focus();
-    }
-  });
-}
-
-function closeExplore(showResults = false) {
-  if (!elements.sourceManagerPanel.hidden) closeSourceManager();
-  elements.explorePanel.hidden = true;
-  elements.exploreButton.classList.remove("is-active");
-  elements.exploreButton.setAttribute("aria-expanded", "false");
-  document.body.classList.remove("explore-open");
-  if (showResults) {
-    document.querySelector(".feed-section").scrollIntoView({ behavior: "smooth", block: "start" });
-  } else if (exploreReturnFocus instanceof HTMLElement) {
-    exploreReturnFocus.focus();
-  }
-  exploreReturnFocus = null;
-}
-
 function openSourceManager() {
   sourceManagerReturnFocus = document.activeElement;
   renderSourceManager();
@@ -626,7 +531,6 @@ function closeSourceManager() {
 
 function openBrief() {
   if (!elements.sourceManagerPanel.hidden) closeSourceManager();
-  if (!elements.explorePanel.hidden) closeExplore();
   renderBrief();
   elements.briefPanel.hidden = false;
   document.body.classList.add("brief-open");
@@ -657,17 +561,6 @@ document.addEventListener("click", (event) => {
     if (state.disabledSources.has(state.source)) state.source = "All";
     persistDisabledSources();
     render();
-    return;
-  }
-
-  const exploreTrigger = event.target.closest("[data-open-explore]");
-  if (exploreTrigger) {
-    openExplore(exploreTrigger.dataset.exploreTarget || "");
-    return;
-  }
-
-  if (event.target.closest("[data-close-explore]")) {
-    closeExplore();
     return;
   }
 
@@ -728,8 +621,6 @@ elements.clearSearchButtons.forEach((button) => button.addEventListener("click",
   render();
 }));
 
-document.querySelector("#drawer-reset").addEventListener("click", resetFilters);
-document.querySelector("#show-results").addEventListener("click", () => closeExplore(true));
 document.querySelector("#enable-all-sources").addEventListener("click", () => {
   state.disabledSources.clear();
   persistDisabledSources();
@@ -787,7 +678,6 @@ document.addEventListener("visibilitychange", () => {
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (!elements.sourceManagerPanel.hidden) closeSourceManager();
-  else if (!elements.explorePanel.hidden) closeExplore();
   else if (!elements.briefPanel.hidden) closeBrief();
 });
 

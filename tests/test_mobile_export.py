@@ -74,30 +74,26 @@ class MobileExportTests(unittest.TestCase):
             self.assertFalse((output / "user-state.json").exists())
             self.assertFalse((output / "cg-signal.db").exists())
 
-    def test_mobile_shell_keeps_explore_controls_globally_reachable(self):
+    def test_mobile_shell_keeps_inline_controls_reachable(self):
         site = MODULE_PATH.parent / "site"
         html = (site / "index.html").read_text(encoding="utf-8")
         javascript = (site / "app.js").read_text(encoding="utf-8")
         styles = (site / "styles.css").read_text(encoding="utf-8")
-        self.assertIn('id="explore-button"', html)
-        self.assertIn('aria-controls="explore-panel"', html)
-        self.assertIn('id="explore-panel"', html)
-        self.assertEqual(html.count("data-search-input"), 2)
+        self.assertNotIn('id="explore-button"', html)
+        self.assertNotIn('id="explore-panel"', html)
+        self.assertEqual(html.count("data-search-input"), 1)
         self.assertEqual(html.count("data-source-select"), 0)
-        self.assertEqual(html.count("data-category-list"), 2)
-        self.assertIn('id="source-shortcut"', html)
-        self.assertIn('data-explore-target="sources"', html)
+        self.assertEqual(html.count("data-category-list"), 1)
+        self.assertIn('id="source-list"', html)
+        self.assertIn('class="search-box header-search"', html)
         self.assertNotIn('<select id="source-select"', html)
-        self.assertIn('id="drawer-source-list"', html)
+        self.assertIn('data-source-option', javascript)
         self.assertIn("function syncControlValues()", javascript)
-        self.assertIn("function activeFilterCount()", javascript)
-        self.assertIn('function openExplore(target = "")', javascript)
+        self.assertNotIn("function openExplore", javascript)
         self.assertIn("function renderSourceButtons()", javascript)
-        self.assertIn("data-source-option", javascript)
-        self.assertIn(".explore-panel", styles)
         self.assertIn(".source-button", styles)
-        self.assertIn(".source-shortcut", styles)
-        self.assertIn("grid-template-columns: repeat(4, 1fr)", styles)
+        self.assertIn(".header-search", styles)
+        self.assertIn("grid-template-columns: repeat(3, 1fr)", styles)
 
     def test_mobile_source_management_is_device_local(self):
         site = MODULE_PATH.parent / "site"

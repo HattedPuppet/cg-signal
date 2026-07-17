@@ -38,11 +38,13 @@ hosted static feed every 30 minutes. The Windows PC does not need to be on.
 Open [CG Signal Mobile](https://hattedpuppet.github.io/cg-signal/) on Android,
 then use the browser menu to install it or add it to the home screen.
 
-The mobile edition includes Latest Signal, a persistent Explore drawer with a
-one-tap source grid and category filters, a compact source summary that opens
-that grid directly, text and hashtag search, an unread view, a short Daily
-Brief, offline fallback, and Android home-screen installation. Read markers are
-stored only in that phone's browser.
+The mobile edition includes Latest Signal, one-tap category and source chips
+directly in the feed controls, a header search field with text and hashtag
+support, an unread view, a short Daily Brief, offline fallback, and Android
+home-screen installation. Read markers are stored only in that phone's browser.
+
+Source selection never requires opening a separate discovery panel. The optional
+**Manage sources** sheet is only for hiding or restoring sources on this device.
 
 Mobile source enablement is also device-local: **Manage sources** can hide or
 restore any source present in the hosted feed without changing the desktop or

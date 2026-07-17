@@ -205,10 +205,11 @@ And is actively interested in:
   so availability does not depend on the user's PC.
 - Provide Latest Signal, information-type and category filtering, source
   selection, text and hashtag search, unread filtering, and a short Daily Brief.
-- Keep search, information type, category, and source controls reachable from
-  any scroll position through a compact mobile discovery surface, with
-  touch-sized one-tap source choices, a compact active-source summary in place
-  of a native combo box, and clear active-state feedback.
+- Keep search in the mobile header and expose information type, category, and
+  source controls as touch-sized inline choices in the feed, with clear
+  active-state feedback and no required discovery drawer.
+- Keep source management optional: selecting a source is always one tap in the
+  feed, while the local manager is reserved for hiding or restoring sources.
 - Let each phone enable or disable hosted sources independently, storing the
   disposable preference only in that browser and providing an Enable all reset.
 - Automatically expose every source present in the hosted feed to mobile source
