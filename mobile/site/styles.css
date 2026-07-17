@@ -302,10 +302,15 @@ button { color: inherit; }
 .connection-dot.is-offline { background: var(--orange); box-shadow: 0 0 0 4px rgba(255,120,87,.09); }
 
 .controls {
-  position: relative;
+  position: sticky;
+  top: calc(64px + env(safe-area-inset-top));
   z-index: 5;
   margin: -1px 12px 0;
-  padding: 16px 0 4px;
+  padding: 12px 0 7px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper) 94%, transparent);
+  box-shadow: 0 9px 22px rgba(26,31,27,.09);
+  backdrop-filter: blur(13px);
 }
 
 .search-box {
@@ -692,6 +697,28 @@ button { color: inherit; }
 .bottom-nav button.is-active { background: rgba(255,255,255,.05); color: var(--acid); }
 .bottom-nav button strong { position: absolute; top: 6px; left: calc(50% + 12px); min-width: 17px; padding: 1px 4px; border-radius: 999px; background: var(--orange); color: #151915; font-size: 7px; }
 .unread-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--orange); }
+
+.scroll-top-button {
+  position: fixed;
+  z-index: 60;
+  right: 16px;
+  bottom: calc(78px + env(safe-area-inset-bottom));
+  display: grid;
+  width: 43px;
+  height: 43px;
+  place-items: center;
+  align-content: center;
+  gap: 0;
+  border: 1px solid rgba(215,255,87,.42);
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--dark) 92%, transparent);
+  color: var(--acid);
+  box-shadow: 0 8px 22px rgba(0,0,0,.2);
+  backdrop-filter: blur(12px);
+}
+
+.scroll-top-button span { font-size: 18px; line-height: 1; }
+.scroll-top-button small { font-size: 7px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
 
 .source-section { margin-top: 17px; padding-top: 14px; border-top: 1px solid var(--line); }
 

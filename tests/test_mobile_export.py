@@ -93,6 +93,10 @@ class MobileExportTests(unittest.TestCase):
         self.assertIn("function renderSourceButtons()", javascript)
         self.assertIn(".source-button", styles)
         self.assertIn(".header-search", styles)
+        self.assertIn('id="scroll-top-button"', html)
+        self.assertIn("window.scrollTo({ top: 0", javascript)
+        self.assertIn("position: sticky", styles)
+        self.assertIn(".scroll-top-button", styles)
         self.assertIn("grid-template-columns: repeat(3, 1fr)", styles)
 
     def test_mobile_source_management_is_device_local(self):

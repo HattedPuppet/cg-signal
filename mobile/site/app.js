@@ -79,6 +79,7 @@ const elements = {
   feedKicker: document.querySelector("#feed-kicker"),
   feedTitle: document.querySelector("#feed-title"),
   install: document.querySelector("#install-button"),
+  scrollTop: document.querySelector("#scroll-top-button"),
   briefPanel: document.querySelector("#brief-panel"),
   briefList: document.querySelector("#brief-list"),
   briefIntro: document.querySelector("#brief-intro"),
@@ -679,6 +680,10 @@ document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (!elements.sourceManagerPanel.hidden) closeSourceManager();
   else if (!elements.briefPanel.hidden) closeBrief();
+});
+
+elements.scrollTop.addEventListener("click", () => {
+  window.scrollTo({ top: 0, behavior: "smooth" });
 });
 
 if ("serviceWorker" in navigator) {
