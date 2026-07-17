@@ -1,4 +1,4 @@
-const CACHE_NAME = "cg-signal-mobile-v8";
+const CACHE_NAME = "cg-signal-mobile-v9";
 const SHELL = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (event) => {

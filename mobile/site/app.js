@@ -90,7 +90,6 @@ const elements = {
 };
 
 let sourceManagerReturnFocus = null;
-let filterDrawerManualOpen = false;
 let filterPointerStartY = null;
 let ignoreNextFilterClick = false;
 
@@ -432,10 +431,9 @@ function renderFilterDrawerSummary() {
   elements.filterDrawerSummary.textContent = `${lane} · ${category} · ${source}`;
 }
 
-function setFilterDrawerExpanded(expanded, remember = false) {
+function setFilterDrawerExpanded(expanded) {
   elements.filterDrawer.classList.toggle("is-collapsed", !expanded);
   elements.filterDrawerHandle.setAttribute("aria-expanded", String(expanded));
-  if (remember) filterDrawerManualOpen = expanded;
 }
 
 function render() {
@@ -705,7 +703,15 @@ document.addEventListener("keydown", (event) => {
 });
 
 elements.scrollTop.addEventListener("click", () => {
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  const firstArticle = elements.storyList.querySelector(".story-card:not(.skeleton)");
+  if (!firstArticle) {
+    window.scrollTo({ top: 0 });
+    return;
+  }
+  elements.filterDrawer.classList.add("is-jumping");
+  setFilterDrawerExpanded(false);
+  firstArticle.scrollIntoView({ behavior: "auto", block: "start" });
+  window.requestAnimationFrame(() => elements.filterDrawer.classList.remove("is-jumping"));
 });
 
 elements.filterDrawerHandle.addEventListener("click", () => {
@@ -714,7 +720,7 @@ elements.filterDrawerHandle.addEventListener("click", () => {
     return;
   }
   const expanded = elements.filterDrawer.classList.contains("is-collapsed");
-  setFilterDrawerExpanded(expanded, expanded);
+  setFilterDrawerExpanded(expanded);
 });
 
 elements.filterDrawerHandle.addEventListener("pointerdown", (event) => {
@@ -729,21 +735,12 @@ elements.filterDrawerHandle.addEventListener("pointerup", (event) => {
   if (Math.abs(delta) < 18) return;
   ignoreNextFilterClick = true;
   window.setTimeout(() => { ignoreNextFilterClick = false; }, 0);
-  setFilterDrawerExpanded(delta > 0, delta > 0);
+  setFilterDrawerExpanded(delta > 0);
 });
 
 elements.filterDrawerHandle.addEventListener("pointercancel", () => {
   filterPointerStartY = null;
 });
-
-window.addEventListener("scroll", () => {
-  if (window.scrollY <= 140) {
-    filterDrawerManualOpen = false;
-    setFilterDrawerExpanded(true);
-  } else if (!filterDrawerManualOpen) {
-    setFilterDrawerExpanded(false);
-  }
-}, { passive: true });
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));

@@ -16,21 +16,53 @@
     <a class="skip-link" href="#story-list">Skip to stories</a>
 
     <header class="app-header">
-      <a class="brand" href="./" aria-label="CG Signal Mobile home">
-        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span>CG<span>//</span>SIGNAL</span>
-        <small>Mobile</small>
-      </a>
-      <div class="header-actions">
-        <label class="search-box header-search" for="search-input">
-          <span aria-hidden="true">⌕</span>
-          <input id="search-input" data-search-input type="search" autocomplete="off" placeholder="Search or #unreal…" />
-          <button id="clear-search" data-clear-search type="button" aria-label="Clear search" hidden>×</button>
-        </label>
-        <button id="install-button" class="install-button" type="button" hidden>
-          <span aria-hidden="true">↓</span> Install
-        </button>
+      <div class="app-header-row">
+        <a class="brand" href="./" aria-label="CG Signal Mobile home">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>CG<span>//</span>SIGNAL</span>
+          <small>Mobile</small>
+        </a>
+        <div class="header-actions">
+          <label class="search-box header-search" for="search-input">
+            <span aria-hidden="true">⌕</span>
+            <input id="search-input" data-search-input type="search" autocomplete="off" placeholder="Search or #unreal…" />
+            <button id="clear-search" data-clear-search type="button" aria-label="Clear search" hidden>×</button>
+          </label>
+          <button id="install-button" class="install-button" type="button" hidden>
+            <span aria-hidden="true">↓</span> Install
+          </button>
+        </div>
       </div>
+
+      <section class="controls filter-drawer is-collapsed" aria-label="Article filters">
+        <button id="filter-drawer-handle" class="filter-drawer-handle" type="button" aria-expanded="false" aria-controls="filter-drawer-content">
+          <span class="filter-handle-grip" aria-hidden="true"></span>
+          <span class="filter-handle-copy"><strong>Filters</strong><small id="filter-drawer-summary">All types · All categories · All sources</small></span>
+          <span class="filter-handle-icon" aria-hidden="true">⌄</span>
+        </button>
+
+        <div id="filter-drawer-content" class="filter-drawer-content">
+          <div class="lane-row" role="group" aria-label="Information type">
+            <button class="lane-button is-active" type="button" data-lane="All">All <strong>—</strong></button>
+            <button class="lane-button" type="button" data-lane="Tech &amp; Development">Tech <strong>—</strong></button>
+            <button class="lane-button" type="button" data-lane="Industry &amp; Business">Industry <strong>—</strong></button>
+          </div>
+
+          <div class="category-section">
+            <div class="filter-heading"><span>Categories</span><small>Tap the selected category to reset</small></div>
+            <div id="category-list" class="category-list" data-category-list role="group" aria-label="Software and context categories"></div>
+          </div>
+
+          <div class="source-section">
+            <div class="filter-heading source-heading">
+              <span>Sources</span>
+              <button id="source-manage-button" type="button" data-open-source-manager aria-controls="source-manager-panel">Manage <strong id="source-enabled-total">—</strong></button>
+            </div>
+            <div id="source-list" class="source-list" role="group" aria-label="Article sources"></div>
+            <div class="source-result-row"><small>Tap the selected source to reset</small><span id="result-count">— results</span></div>
+          </div>
+        </div>
+      </section>
     </header>
 
     <main>
@@ -47,36 +79,6 @@
         <div class="update-row">
           <span id="connection-dot" class="connection-dot"></span>
           <span id="update-status">Gathering the latest signal…</span>
-        </div>
-      </section>
-
-      <section class="controls filter-drawer" aria-label="Article filters">
-        <button id="filter-drawer-handle" class="filter-drawer-handle" type="button" aria-expanded="true" aria-controls="filter-drawer-content">
-          <span class="filter-handle-grip" aria-hidden="true"></span>
-          <span class="filter-handle-copy"><strong>Filters</strong><small id="filter-drawer-summary">All signal</small></span>
-          <span class="filter-handle-icon" aria-hidden="true">⌄</span>
-        </button>
-
-        <div id="filter-drawer-content" class="filter-drawer-content">
-        <div class="lane-row" role="group" aria-label="Information type">
-          <button class="lane-button is-active" type="button" data-lane="All">All <strong>—</strong></button>
-          <button class="lane-button" type="button" data-lane="Tech &amp; Development">Tech <strong>—</strong></button>
-          <button class="lane-button" type="button" data-lane="Industry &amp; Business">Industry <strong>—</strong></button>
-        </div>
-
-        <div class="category-section">
-          <div class="filter-heading"><span>Categories</span><small>Tap the selected category to reset</small></div>
-          <div id="category-list" class="category-list" data-category-list role="group" aria-label="Software and context categories"></div>
-        </div>
-
-        <div class="source-section">
-          <div class="filter-heading source-heading">
-            <span>Sources</span>
-            <button id="source-manage-button" type="button" data-open-source-manager aria-controls="source-manager-panel">Manage <strong id="source-enabled-total">—</strong></button>
-          </div>
-          <div id="source-list" class="source-list" role="group" aria-label="Article sources"></div>
-          <div class="source-result-row"><small>Tap the selected source to reset</small><span id="result-count">— results</span></div>
-        </div>
         </div>
       </section>
 
@@ -120,7 +122,7 @@
       <button type="button" data-view="brief"><span aria-hidden="true">✦</span><small>Brief</small></button>
     </nav>
 
-    <button id="scroll-top-button" class="scroll-top-button" type="button" aria-label="Scroll to top">
+    <button id="scroll-top-button" class="scroll-top-button" type="button" aria-label="Jump to first article">
       <span aria-hidden="true">↑</span><small>Top</small>
     </button>
 

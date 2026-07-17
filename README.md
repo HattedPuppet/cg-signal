@@ -41,10 +41,10 @@ then use the browser menu to install it or add it to the home screen.
 The mobile edition includes Latest Signal, one-tap category and source chips
 directly in the feed controls, a header search field with text and hashtag
 support, an unread view, a short Daily Brief, offline fallback, and Android
-home-screen installation. The filter controls stay pinned below the header while
-you read as a compact drawer: tap or swipe its handle to pull the full controls
-out. A persistent Top button returns to the beginning. Read markers are stored
-only in that phone's browser.
+home-screen installation. The header and filter drawer now share one compact
+sticky surface: tap or swipe its handle to pull the full controls out. A
+persistent Top button jumps directly to the first visible article without a
+smooth-scroll delay. Read markers are stored only in that phone's browser.
 
 Source selection never requires opening a separate discovery panel. The optional
 **Manage sources** sheet is only for hiding or restoring sources on this device.
