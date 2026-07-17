@@ -80,6 +80,9 @@ const elements = {
   feedTitle: document.querySelector("#feed-title"),
   install: document.querySelector("#install-button"),
   scrollTop: document.querySelector("#scroll-top-button"),
+  filterDrawer: document.querySelector(".filter-drawer"),
+  filterDrawerHandle: document.querySelector("#filter-drawer-handle"),
+  filterDrawerSummary: document.querySelector("#filter-drawer-summary"),
   briefPanel: document.querySelector("#brief-panel"),
   briefList: document.querySelector("#brief-list"),
   briefIntro: document.querySelector("#brief-intro"),
@@ -87,6 +90,9 @@ const elements = {
 };
 
 let sourceManagerReturnFocus = null;
+let filterDrawerManualOpen = false;
+let filterPointerStartY = null;
+let ignoreNextFilterClick = false;
 
 function readSet() {
   try {
@@ -417,6 +423,21 @@ function updateLaneCounts() {
   });
 }
 
+function renderFilterDrawerSummary() {
+  const source = state.source === "All"
+    ? "All sources"
+    : (state.payload?.sources || []).find((item) => item.id === state.source)?.name || state.source;
+  const lane = state.lane === "All" ? "All types" : (state.lane === "Tech & Development" ? "Tech" : "Industry");
+  const category = state.category === "All" ? "All categories" : state.category;
+  elements.filterDrawerSummary.textContent = `${lane} · ${category} · ${source}`;
+}
+
+function setFilterDrawerExpanded(expanded, remember = false) {
+  elements.filterDrawer.classList.toggle("is-collapsed", !expanded);
+  elements.filterDrawerHandle.setAttribute("aria-expanded", String(expanded));
+  if (remember) filterDrawerManualOpen = expanded;
+}
+
 function render() {
   if (!state.payload) return;
   const articles = visibleArticles();
@@ -427,6 +448,7 @@ function render() {
   renderCategories();
   renderSourceButtons();
   renderSourceManager();
+  renderFilterDrawerSummary();
   updateLaneCounts();
   elements.storyTotal.textContent = enabledArticles.length;
   elements.repeatTotal.textContent = state.payload.duplicates_collapsed || 0;
@@ -685,6 +707,43 @@ document.addEventListener("keydown", (event) => {
 elements.scrollTop.addEventListener("click", () => {
   window.scrollTo({ top: 0, behavior: "smooth" });
 });
+
+elements.filterDrawerHandle.addEventListener("click", () => {
+  if (ignoreNextFilterClick) {
+    ignoreNextFilterClick = false;
+    return;
+  }
+  const expanded = elements.filterDrawer.classList.contains("is-collapsed");
+  setFilterDrawerExpanded(expanded, expanded);
+});
+
+elements.filterDrawerHandle.addEventListener("pointerdown", (event) => {
+  filterPointerStartY = event.clientY;
+  elements.filterDrawerHandle.setPointerCapture?.(event.pointerId);
+});
+
+elements.filterDrawerHandle.addEventListener("pointerup", (event) => {
+  if (filterPointerStartY === null) return;
+  const delta = event.clientY - filterPointerStartY;
+  filterPointerStartY = null;
+  if (Math.abs(delta) < 18) return;
+  ignoreNextFilterClick = true;
+  window.setTimeout(() => { ignoreNextFilterClick = false; }, 0);
+  setFilterDrawerExpanded(delta > 0, delta > 0);
+});
+
+elements.filterDrawerHandle.addEventListener("pointercancel", () => {
+  filterPointerStartY = null;
+});
+
+window.addEventListener("scroll", () => {
+  if (window.scrollY <= 140) {
+    filterDrawerManualOpen = false;
+    setFilterDrawerExpanded(true);
+  } else if (!filterDrawerManualOpen) {
+    setFilterDrawerExpanded(false);
+  }
+}, { passive: true });
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));

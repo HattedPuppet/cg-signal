@@ -94,8 +94,13 @@ class MobileExportTests(unittest.TestCase):
         self.assertIn(".source-button", styles)
         self.assertIn(".header-search", styles)
         self.assertIn('id="scroll-top-button"', html)
+        self.assertIn('id="filter-drawer-handle"', html)
+        self.assertIn('id="filter-drawer-content"', html)
         self.assertIn("window.scrollTo({ top: 0", javascript)
+        self.assertIn("setFilterDrawerExpanded", javascript)
+        self.assertIn("pointerdown", javascript)
         self.assertIn("position: sticky", styles)
+        self.assertIn(".filter-drawer.is-collapsed", styles)
         self.assertIn(".scroll-top-button", styles)
         self.assertIn("grid-template-columns: repeat(3, 1fr)", styles)
 

@@ -211,7 +211,8 @@ And is actively interested in:
 - Keep source management optional: selecting a source is always one tap in the
   feed, while the local manager is reserved for hiding or restoring sources.
 - Keep the lane, category, and source controls sticky below the mobile header
-  while reading, and provide a persistent scroll-to-top action.
+  while reading in a compact drawer that can be tapped or pulled open with a
+  swipe, and provide a persistent scroll-to-top action.
 - Let each phone enable or disable hosted sources independently, storing the
   disposable preference only in that browser and providing an Enable all reset.
 - Automatically expose every source present in the hosted feed to mobile source

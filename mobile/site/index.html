@@ -50,7 +50,14 @@
         </div>
       </section>
 
-      <section class="controls" aria-label="Article filters">
+      <section class="controls filter-drawer" aria-label="Article filters">
+        <button id="filter-drawer-handle" class="filter-drawer-handle" type="button" aria-expanded="true" aria-controls="filter-drawer-content">
+          <span class="filter-handle-grip" aria-hidden="true"></span>
+          <span class="filter-handle-copy"><strong>Filters</strong><small id="filter-drawer-summary">All signal</small></span>
+          <span class="filter-handle-icon" aria-hidden="true">⌄</span>
+        </button>
+
+        <div id="filter-drawer-content" class="filter-drawer-content">
         <div class="lane-row" role="group" aria-label="Information type">
           <button class="lane-button is-active" type="button" data-lane="All">All <strong>—</strong></button>
           <button class="lane-button" type="button" data-lane="Tech &amp; Development">Tech <strong>—</strong></button>
@@ -69,6 +76,7 @@
           </div>
           <div id="source-list" class="source-list" role="group" aria-label="Article sources"></div>
           <div class="source-result-row"><small>Tap the selected source to reset</small><span id="result-count">— results</span></div>
+        </div>
         </div>
       </section>
 
