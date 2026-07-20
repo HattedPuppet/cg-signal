@@ -1,7 +1,7 @@
 {
   "name": "CG Signal Mobile",
   "short_name": "CG Signal",
-  "description": "A lightweight mobile briefing for CG, animation, and game-development news.",
+  "description": "A lightweight mobile feed for CG, animation, and game-development news.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

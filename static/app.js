@@ -1,5 +1,4 @@
 const storageKeys = {
-  read: "cg-signal:read",
   saved: "cg-signal:saved",
   archived: "cg-signal:archived",
   theme: "cg-signal:theme",
@@ -14,7 +13,14 @@ const storageKeys = {
   lastVisit: "cg-signal:last-visit",
   stateDirty: "cg-signal:state-dirty",
   stateMigrated: "cg-signal:state-migrated",
-  density: "cg-signal:density",
+  timeWindow: "cg-signal:time-window",
+  sidebar: "cg-signal:sidebar",
+};
+
+const TIME_WINDOW_LABELS = {
+  month: "This month",
+  quarter: "Last 3 months",
+  all: "All current",
 };
 
 const state = {
@@ -32,7 +38,6 @@ const state = {
   topics: readFilterSet(storageKeys.topics),
   view: "all",
   search: "",
-  read: readSet(storageKeys.read),
   saved: readSet(storageKeys.saved),
   archived: readSet(storageKeys.archived),
   notes: readObject(storageKeys.notes),
@@ -40,9 +45,10 @@ const state = {
   mutedSources: readSet(storageKeys.mutedSources),
   reducedSources: readSet(storageKeys.reducedSources),
   layout: localStorage.getItem(storageKeys.layout) || "grid",
-  density: localStorage.getItem(storageKeys.density) || "comfortable",
-  briefOpen: false,
-  briefArticleIds: [],
+  timeWindow: Object.prototype.hasOwnProperty.call(TIME_WINDOW_LABELS, localStorage.getItem(storageKeys.timeWindow))
+    ? localStorage.getItem(storageKeys.timeWindow)
+    : "month",
+  sidebarOpen: localStorage.getItem(storageKeys.sidebar) !== "0",
   visibleArticleIds: [],
   keyboardArticleId: null,
   knownArticleIds: new Set(),
@@ -108,6 +114,8 @@ let backgroundRefreshTimer = null;
 let archiveSearchTimer = null;
 
 const elements = {
+  appShell: document.querySelector(".app-shell"),
+  sidebarToggle: document.querySelector("#sidebar-toggle"),
   grid: document.querySelector("#story-grid"),
   stories: document.querySelector("#stories"),
   empty: document.querySelector("#empty-state"),
@@ -121,7 +129,6 @@ const elements = {
   newSince: document.querySelector("#new-since"),
   allCount: document.querySelector("#all-count"),
   savedCount: document.querySelector("#saved-count"),
-  unreadCount: document.querySelector("#unread-count"),
   archivedCount: document.querySelector("#archived-count"),
   historyCount: document.querySelector("#history-count"),
   heroUnique: document.querySelector("#hero-unique"),
@@ -132,15 +139,7 @@ const elements = {
   scrollTop: document.querySelector("#scroll-top-button"),
   refresh: document.querySelector("#refresh-button"),
   layout: document.querySelector("#layout-toggle"),
-  density: document.querySelector("#density-toggle"),
   notice: document.querySelector("#notice"),
-  briefButton: document.querySelector("#brief-button"),
-  briefCount: document.querySelector("#brief-count"),
-  briefingPanel: document.querySelector("#briefing-panel"),
-  briefingContent: document.querySelector("#briefing-content"),
-  briefingClose: document.querySelector("#briefing-close"),
-  briefingMarkRead: document.querySelector("#briefing-mark-read"),
-  briefingDate: document.querySelector("#briefing-date"),
   sortLabel: document.querySelector("#sort-label"),
   manageSources: document.querySelector("#manage-sources"),
   sourceManagerPanel: document.querySelector("#source-manager-panel"),
@@ -275,7 +274,6 @@ function saveSet(key, value) {
 }
 
 function cacheUserState() {
-  saveSet(storageKeys.read, state.read);
   saveSet(storageKeys.saved, state.saved);
   saveSet(storageKeys.archived, state.archived);
   localStorage.setItem(storageKeys.notes, JSON.stringify(state.notes));
@@ -291,7 +289,6 @@ async function persistUserState() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        read: [...state.read],
         saved: [...state.saved],
         archived: [...state.archived],
         notes: state.notes,
@@ -322,7 +319,6 @@ async function loadUserState() {
     const stored = await response.json();
     const mergeLocal = localStorage.getItem(storageKeys.stateMigrated) !== "1"
       || localStorage.getItem(storageKeys.stateDirty) === "1";
-    state.read = new Set(mergeLocal ? [...state.read, ...(stored.read || [])] : (stored.read || []));
     state.saved = new Set(mergeLocal ? [...state.saved, ...(stored.saved || [])] : (stored.saved || []));
     state.archived = new Set(mergeLocal ? [...state.archived, ...(stored.archived || [])] : (stored.archived || []));
     state.notes = mergeLocal ? { ...(stored.notes || {}), ...state.notes } : (stored.notes || {});
@@ -388,12 +384,6 @@ function trimSummary(value = "") {
   return clean.length > 230 ? `${clean.slice(0, 227).trim()}…` : clean;
 }
 
-function briefExcerpt(value = "") {
-  const clean = trimSummary(value);
-  const sentence = clean.split(/(?<=[.!?。！？])\s*/u)[0] || clean;
-  return sentence.length > 180 ? `${sentence.slice(0, 177).trim()}…` : sentence;
-}
-
 function priorityScore(article) {
   return Number(article.priority_score || 0);
 }
@@ -403,220 +393,30 @@ function prioritySort(left, right) {
     || new Date(right.published_at).getTime() - new Date(left.published_at).getTime();
 }
 
-function sharesAny(left = [], right = []) {
-  const rightValues = new Set(right);
-  return left.some((value) => rightValues.has(value));
+function timeWindowStart() {
+  if (state.timeWindow === "all") return null;
+  const monthOffset = state.timeWindow === "quarter" ? 2 : 0;
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth() - monthOffset, 1);
 }
 
-function personalizedScore(article) {
-  let score = priorityScore(article);
-  const sourceIds = (article.sources || []).map((source) => source.id);
-  if (sourceIds.some((id) => state.reducedSources.has(id))) score -= 20;
-  state.feedback.forEach((feedback) => {
-    let weight = 0;
-    if (feedback.source_id && sourceIds.includes(feedback.source_id)) weight += 2;
-    if (sharesAny(feedback.software_tags, articleSoftwareCategories(article))) weight += 8;
-    if (sharesAny(feedback.topic_tags, articleTopics(article))) weight += 5;
-    score += feedback.value * weight;
-  });
-  return score;
+function articleWithinTimeWindow(article) {
+  const start = timeWindowStart();
+  if (!start) return true;
+  const published = new Date(article.published_at);
+  return Number.isNaN(published.getTime()) || published >= start;
 }
 
-function signedScore(value) {
-  if (!value) return "0";
-  return value > 0 ? `+${value}` : `−${Math.abs(value)}`;
+function articleMonthKey(article) {
+  const published = new Date(article.published_at);
+  if (Number.isNaN(published.getTime())) return "";
+  return `${published.getFullYear()}-${published.getMonth()}`;
 }
 
-function personalizationAdjustment(article) {
-  return personalizedScore(article) - priorityScore(article);
-}
-
-function preferenceSignals() {
-  const signals = new Map();
-  const sourceNames = new Map((state.payload?.sources || []).map((source) => [source.id, source.name]));
-  const add = (kind, label, value) => {
-    if (!label) return;
-    const key = `${kind}:${label}`;
-    const current = signals.get(key) || { kind, label, value: 0 };
-    current.value += value;
-    signals.set(key, current);
-  };
-  state.feedback.forEach((feedback) => {
-    (feedback.software_tags || []).forEach((label) => add("Category", label, feedback.value * 8));
-    (feedback.topic_tags || []).forEach((label) => add("Technique", label, feedback.value * 5));
-    add("Source", sourceNames.get(feedback.source_id) || feedback.source_id, feedback.value * 2);
-  });
-  return [...signals.values()]
-    .filter((signal) => signal.value)
-    .sort((left, right) => Math.abs(right.value) - Math.abs(left.value) || left.label.localeCompare(right.label));
-}
-
-function preferenceTuningMarkup() {
-  const feedback = [...state.feedback.values()];
-  const moreCount = feedback.filter((item) => item.value === 1).length;
-  const lessCount = feedback.filter((item) => item.value === -1).length;
-  const signals = preferenceSignals().slice(0, 8);
-  const status = feedback.length ? `${moreCount} more · ${lessCount} less` : "No signals yet";
-  const signalMarkup = signals.length
-    ? `<div class="tuning-signals">${signals.map((signal) => `
-        <span class="tuning-signal${signal.value < 0 ? " is-negative" : ""}" title="${escapeHtml(signal.kind)} preference">
-          <b>${signal.value > 0 ? "↑" : "↓"}</b>${escapeHtml(signal.label)} <em>${signedScore(signal.value)}</em>
-        </span>`).join("")}</div>`
-    : "";
-  const copy = feedback.length
-    ? "Matching categories change a story by ±8 per signal, techniques by ±5, and sources by ±2. A reduced source applies −20. These adjustments affect only Daily Brief ranking."
-    : "Use the up or down arrows on story cards. CG Signal will learn from the story’s categories, techniques, and source; Latest Signal always stays chronological.";
-  return `
-    <details class="preference-tuning"${feedback.length ? " open" : ""}>
-      <summary>Preference tuning <span>${escapeHtml(status)}</span></summary>
-      <div class="preference-tuning-body">
-        ${signalMarkup}
-        <p>${escapeHtml(copy)}</p>
-        ${feedback.length ? '<button class="reset-tuning-button" type="button" data-reset-feedback>Reset More/Less tuning</button>' : ""}
-      </div>
-    </details>`;
-}
-
-function personalizedSort(left, right) {
-  return personalizedScore(right) - personalizedScore(left)
-    || prioritySort(left, right);
-}
-
-function balancedPriorityArticles(articles, limit = 30, perSource = 3) {
-  const ranked = [...articles].sort(personalizedSort);
-  const selected = [];
-  const selectedIds = new Set();
-  const sourceCounts = new Map();
-  ranked.forEach((article) => {
-    const sourceId = article.source_id || article.source;
-    const count = sourceCounts.get(sourceId) || 0;
-    if (selected.length >= limit || count >= perSource) return;
-    selected.push(article);
-    selectedIds.add(article.id);
-    sourceCounts.set(sourceId, count + 1);
-  });
-  if (selected.length < limit) {
-    ranked.forEach((article) => {
-      if (selected.length < limit && !selectedIds.has(article.id)) selected.push(article);
-    });
-  }
-  return selected;
-}
-
-function unreadArticles() {
-  return state.articles.filter((article) => (
-    !state.read.has(article.id)
-    && !state.archived.has(article.id)
-    && (article.sources || []).some((source) => !state.mutedSources.has(source.id))
-  ));
-}
-
-function dailyBriefArticles() {
-  const unread = unreadArticles();
-  const technical = balancedPriorityArticles(
-    unread.filter((article) => (article.lane || "Tech & Development") === "Tech & Development"),
-    6,
-    2,
-  );
-  const industry = balancedPriorityArticles(
-    unread.filter((article) => article.lane === "Industry & Business"),
-    3,
-    2,
-  );
-  return [...technical, ...industry].sort(personalizedSort);
-}
-
-function briefingItem(article) {
-  const reasons = (article.priority_reasons || []).slice(0, 2).join(" · ") || softwareGroup(article);
-  const adjustment = personalizationAdjustment(article);
-  const tuning = adjustment ? ` · tuning ${signedScore(adjustment)}` : "";
-  return `
-    <a class="briefing-item${article.lane === "Industry & Business" ? " is-industry" : ""}" href="${escapeHtml(safeUrl(article.url))}" target="_blank" rel="noopener noreferrer" data-read-id="${escapeHtml(article.id)}" style="--story-accent:${escapeHtml(article.accent)}">
-      <span class="briefing-item-dot"></span>
-      <span class="briefing-item-copy">
-        <span class="briefing-item-meta">${escapeHtml(article.source)} · ${escapeHtml(relativeTime(article.published_at))} · Brief score ${personalizedScore(article)}${escapeHtml(tuning)}</span>
-        <h3>${escapeHtml(article.title)}</h3>
-        <p>${escapeHtml(briefExcerpt(article.summary))}</p>
-        <span class="briefing-reason">${escapeHtml(reasons)}</span>
-      </span>
-      <span class="briefing-item-arrow" aria-hidden="true">↗</span>
-    </a>`;
-}
-
-function briefingSection(label, articles) {
-  if (!articles.length) return "";
-  return `
-    <p class="briefing-section-label">${escapeHtml(label)}</p>
-    <div class="briefing-highlights">${articles.map(briefingItem).join("")}</div>`;
-}
-
-function buildBriefing() {
-  const unread = unreadArticles();
-  const brief = dailyBriefArticles();
-  state.briefArticleIds = brief.map((article) => article.id);
-  elements.briefCount.textContent = brief.length;
-  elements.briefingMarkRead.disabled = brief.length === 0;
-  elements.briefingDate.textContent = new Intl.DateTimeFormat(undefined, {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-  }).format(new Date());
-
-  if (!unread.length) {
-    elements.briefingContent.innerHTML = `
-      <div class="briefing-empty">
-        <div>
-          <span aria-hidden="true">✓</span>
-          <h3>You’re all caught up</h3>
-          <p>New stories will appear here the next time the feeds refresh.</p>
-        </div>
-      </div>`;
-    return;
-  }
-
-  const categories = new Map();
-  unread.forEach((article) => {
-    const category = softwareGroup(article);
-    categories.set(category, (categories.get(category) || 0) + 1);
-  });
-  const rankedCategories = [...categories.entries()].sort(([left], [right]) => {
-    const leftIndex = SOFTWARE_GROUP_ORDER.indexOf(left);
-    const rightIndex = SOFTWARE_GROUP_ORDER.indexOf(right);
-    if (leftIndex === -1 && rightIndex === -1) return left.localeCompare(right);
-    if (leftIndex === -1) return 1;
-    if (rightIndex === -1) return -1;
-    return leftIndex - rightIndex;
-  });
-  const categoryPills = rankedCategories
-    .slice(0, 5)
-    .map(([category, count]) => `<span class="briefing-category">${escapeHtml(category)} <strong>${count}</strong></span>`)
-    .join("");
-  const technical = brief.filter((article) => article.lane !== "Industry & Business");
-  const industry = brief.filter((article) => article.lane === "Industry & Business");
-
-  elements.briefingContent.innerHTML = `
-    <p class="briefing-lead"><strong>${unread.length} unread ${unread.length === 1 ? "story is" : "stories are"} waiting.</strong> These ${brief.length} stories are the strongest match for your tools and production interests today.</p>
-    ${preferenceTuningMarkup()}
-    <div class="briefing-categories">${categoryPills}</div>
-    ${briefingSection("Technical priorities", technical)}
-    ${briefingSection("Industry pulse", industry)}`;
-}
-
-function openBriefing() {
-  buildBriefing();
-  state.briefOpen = true;
-  elements.briefingPanel.hidden = false;
-  elements.briefButton.setAttribute("aria-expanded", "true");
-  document.body.classList.add("briefing-open");
-  elements.briefingClose.focus();
-}
-
-function closeBriefing() {
-  state.briefOpen = false;
-  elements.briefingPanel.hidden = true;
-  elements.briefButton.setAttribute("aria-expanded", "false");
-  document.body.classList.remove("briefing-open");
-  elements.briefButton.focus();
+function articleMonthLabel(article) {
+  const published = new Date(article.published_at);
+  if (Number.isNaN(published.getTime())) return "Publication date unavailable";
+  return new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(published);
 }
 
 function matchesSource(article) {
@@ -695,8 +495,6 @@ function matchesSearchToken(article, token) {
   }
   if (token.field === "is") {
     const statusMatches = {
-      unread: !state.read.has(article.id),
-      read: state.read.has(article.id),
       saved: state.saved.has(article.id),
       library: state.saved.has(article.id),
       archived: state.archived.has(article.id),
@@ -719,6 +517,7 @@ function matchesSearch(article, query) {
 function latestPool() {
   const query = state.search;
   return state.articles.filter((article) => {
+    if (!articleWithinTimeWindow(article)) return false;
     if (!matchesSource(article)) return false;
     if (state.lane !== "All" && (article.lane || "Tech & Development") !== state.lane) return false;
     if (state.archived.has(article.id)) return false;
@@ -844,7 +643,6 @@ function filteredArticles() {
       if (!state.saved.has(article.id)) return false;
     } else {
       if (state.archived.has(article.id)) return false;
-      if (state.view === "unread" && state.read.has(article.id)) return false;
     }
     return matchesSearch(article, query);
   });
@@ -865,7 +663,7 @@ function relatedCoverage(article) {
   const rows = article.related
     .map(
       (item) => `
-        <a class="related-row" href="${escapeHtml(safeUrl(item.url))}" target="_blank" rel="noopener noreferrer" data-read-id="${escapeHtml(article.id)}">
+        <a class="related-row" href="${escapeHtml(safeUrl(item.url))}" target="_blank" rel="noopener noreferrer">
           <strong>${escapeHtml(item.source)}</strong>
           <span>${escapeHtml(item.title)}</span>
           <time datetime="${escapeHtml(item.published_at)}">${escapeHtml(relativeTime(item.published_at))}</time>
@@ -915,7 +713,6 @@ function libraryNote(article) {
 }
 
 function storyCard(article) {
-  const read = state.read.has(article.id);
   const saved = state.saved.has(article.id);
   const archived = state.archived.has(article.id);
   const imageUrl = safeUrl(article.image);
@@ -935,7 +732,7 @@ function storyCard(article) {
     ? `<div class="story-reasons">${reasons.map((reason) => `<span>${escapeHtml(reason)}</span>`).join("")}</div>`
     : "";
   return `
-    <article class="story-card${read ? " is-read" : ""}${archived ? " is-archived" : ""}${state.keyboardArticleId === article.id ? " is-keyboard-active" : ""}" data-id="${escapeHtml(article.id)}" tabindex="-1" style="--story-accent:${escapeHtml(article.accent)}">
+    <article class="story-card${archived ? " is-archived" : ""}${state.keyboardArticleId === article.id ? " is-keyboard-active" : ""}" data-id="${escapeHtml(article.id)}" tabindex="-1" style="--story-accent:${escapeHtml(article.accent)}">
       <div class="story-visual${image ? "" : " image-failed"}" data-category="${escapeHtml(category)}">
         ${image}
         <div class="visual-overlay"></div>
@@ -950,7 +747,7 @@ function storyCard(article) {
           <time class="story-time" datetime="${escapeHtml(article.published_at)}" title="${escapeHtml(new Date(article.published_at).toLocaleString())}">${escapeHtml(relativeTime(article.published_at))}</time>
         </div>
         <h2 class="story-title">
-          <a href="${escapeHtml(safeUrl(article.url))}" target="_blank" rel="noopener noreferrer" data-read-id="${escapeHtml(article.id)}">${escapeHtml(article.title)}</a>
+          <a href="${escapeHtml(safeUrl(article.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(article.title)}</a>
         </h2>
         <p class="story-summary">${escapeHtml(trimSummary(article.summary))}</p>
         ${reasonMarkup}
@@ -974,14 +771,20 @@ function newSinceDivider(count) {
 }
 
 function latestStoryMarkup(visible) {
-  if (!state.sessionCutoff || state.view !== "all") return visible.map(storyCard).join("");
   const newCount = visible.filter(articleIsNew).length;
-  if (!newCount || newCount === visible.length) {
-    return `${newCount ? newSinceDivider(newCount) : ""}${visible.map(storyCard).join("")}`;
-  }
+  let previousMonth = "";
+  const groupByMonth = state.timeWindow === "quarter" && state.view === "all";
   return visible.map((article, index) => {
-    const divider = index === newCount ? newSinceDivider(newCount) : "";
-    return `${divider}${storyCard(article)}`;
+    const monthKey = groupByMonth ? articleMonthKey(article) : "";
+    const monthDivider = monthKey && monthKey !== previousMonth
+      ? `<div class="month-divider" role="separator"><span>${escapeHtml(articleMonthLabel(article))}</span></div>`
+      : "";
+    if (monthKey) previousMonth = monthKey;
+    const newDivider = state.sessionCutoff && state.view === "all" && newCount
+      && (newCount === visible.length ? index === 0 : index === newCount)
+      ? newSinceDivider(newCount)
+      : "";
+    return `${monthDivider}${newDivider}${storyCard(article)}`;
   }).join("");
 }
 
@@ -1117,13 +920,13 @@ function renderFacetFilters(pool) {
 
 function render() {
   if (!state.payload) return;
+  elements.heroUnique.textContent = state.articles.filter(articleWithinTimeWindow).length;
   const pool = state.view === "all" ? latestPool() : [];
   renderFacetFilters(pool);
   const visible = state.view === "all"
     ? applyFacetFilters(pool)
     : filteredArticles();
   elements.grid.classList.toggle("is-list", state.layout === "list");
-  elements.grid.classList.toggle("is-compact", state.density === "compact");
   elements.grid.classList.toggle("is-library", state.view === "saved");
   elements.grid.classList.remove("loading-grid");
   state.visibleArticleIds = visible.map((article) => article.id);
@@ -1139,7 +942,6 @@ function render() {
   elements.grid.hidden = visible.length === 0 && !initialArchiveLoad;
   const emptyCopy = {
     saved: ["Your learning library is empty", "Save a story, then add a note so useful techniques remain easy to find."],
-    unread: ["You’re all caught up", "New unread stories will appear after the next feed refresh."],
     archived: ["The archive is empty", "Archived stories stay out of your active feed and can be restored here."],
     history: ["No articles match", "Try a broader search or restore your source filters."],
   }[state.view] || ["No signal here yet", "Try another category, clear your source filters, or refresh the feeds."];
@@ -1150,20 +952,16 @@ function render() {
   const newCount = usesArchiveView() ? 0 : visible.filter(articleIsNew).length;
   elements.newSince.textContent = state.sessionCutoff && newCount ? `${newCount} new` : "";
   elements.newSince.hidden = !(state.sessionCutoff && newCount);
-  elements.allCount.textContent = state.articles.filter((article) => !state.archived.has(article.id)).length;
+  elements.allCount.textContent = state.articles.filter((article) => !state.archived.has(article.id) && articleWithinTimeWindow(article)).length;
   elements.savedCount.textContent = state.saved.size;
-  elements.unreadCount.textContent = unreadArticles().length;
   elements.archivedCount.textContent = state.archived.size;
   elements.historyCount.textContent = state.payload.archive_count ?? state.archiveTotal ?? "—";
-  elements.briefCount.textContent = dailyBriefArticles().length;
   elements.sortLabel.textContent = {
     saved: "Learning library",
-    unread: "Newest unread",
     archived: "Recently archived",
     history: "Full history",
-    all: "Newest first",
+    all: `${TIME_WINDOW_LABELS[state.timeWindow]} · newest first`,
   }[state.view] || "Newest first";
-  if (state.briefOpen) buildBriefing();
 
   document.querySelectorAll("[data-view]").forEach((button) => {
     const active = button.dataset.view === state.view;
@@ -1174,22 +972,22 @@ function render() {
     const lane = button.dataset.lane;
     const active = lane === state.lane;
     const count = lane === "All"
-      ? state.articles.length
-      : state.articles.filter((article) => (article.lane || "Tech & Development") === lane).length;
+      ? state.articles.filter(articleWithinTimeWindow).length
+      : state.articles.filter((article) => articleWithinTimeWindow(article) && (article.lane || "Tech & Development") === lane).length;
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-pressed", String(active));
     button.querySelector("strong").textContent = count;
   });
   elements.layout.querySelector("span:first-child").textContent = state.layout === "grid" ? "▦" : "☷";
-  const compact = state.density === "compact";
-  elements.density.classList.toggle("is-active", compact);
-  elements.density.setAttribute("aria-pressed", String(compact));
-  elements.density.setAttribute("aria-label", compact ? "Use comfortable cards" : "Use compact cards");
-  elements.density.title = compact ? "Use comfortable cards" : "Use compact cards";
+  document.querySelectorAll(".time-window-button[data-time-window]").forEach((button) => {
+    const active = button.dataset.timeWindow === state.timeWindow;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
 }
 
 function sourceCount(sourceId) {
-  return state.articles.filter((article) => article.sources.some((source) => source.id === sourceId)).length;
+  return state.articles.filter((article) => articleWithinTimeWindow(article) && article.sources.some((source) => source.id === sourceId)).length;
 }
 
 function renderSources(sources) {
@@ -1198,7 +996,7 @@ function renderSources(sources) {
       const muted = state.mutedSources.has(source.id);
       const reduced = state.reducedSources.has(source.id);
       const active = state.activeSources.has(source.id) && !muted;
-      const status = muted ? "Muted — click to restore" : reduced ? "Reduced in Daily brief" : active ? "Included" : "Filtered out";
+      const status = muted ? "Muted — click to restore" : reduced ? "Reduced" : active ? "Included" : "Filtered out";
       return `
         <button class="source-button${active ? "" : " is-muted"}${muted ? " is-source-muted" : ""}${reduced ? " is-reduced" : ""}" type="button" data-source-id="${escapeHtml(source.id)}" style="--source-accent:${escapeHtml(source.accent)}" aria-pressed="${active}" title="${escapeHtml(status)}">
           <span class="source-dot"></span>
@@ -1363,6 +1161,32 @@ function closeSourceManager() {
   elements.manageSources.focus();
 }
 
+function setSidebarOpen(open, { focus = false } = {}) {
+  state.sidebarOpen = Boolean(open);
+  elements.appShell.classList.toggle("sidebar-closed", !state.sidebarOpen);
+  localStorage.setItem(storageKeys.sidebar, state.sidebarOpen ? "1" : "0");
+  elements.sidebarToggle.setAttribute("aria-expanded", String(state.sidebarOpen));
+  const label = state.sidebarOpen ? "Hide navigation panel" : "Show navigation panel";
+  elements.sidebarToggle.setAttribute("aria-label", label);
+  elements.sidebarToggle.title = label;
+  if (focus) elements.sidebarToggle.focus();
+}
+
+function sidebarInteractionIsInternal(target) {
+  return target instanceof Element
+    && (Boolean(target.closest(".sidebar")) || Boolean(target.closest("#sidebar-toggle")));
+}
+
+document.addEventListener("pointerdown", (event) => {
+  if (!state.sidebarOpen || !window.matchMedia("(min-width: 851px)").matches) return;
+  if (!sidebarInteractionIsInternal(event.target)) setSidebarOpen(false);
+});
+
+document.addEventListener("focusin", (event) => {
+  if (!state.sidebarOpen || !window.matchMedia("(min-width: 851px)").matches) return;
+  if (!sidebarInteractionIsInternal(event.target)) setSidebarOpen(false);
+});
+
 async function testConfiguredSource(sourceId, button) {
   const status = elements.managedSourceList.querySelector(`[data-source-test-status="${CSS.escape(sourceId)}"]`);
   button.disabled = true;
@@ -1444,12 +1268,6 @@ function setSourcePreference(sourceId, action) {
   else render();
 }
 
-function toggleRead(articleId) {
-  state.read.has(articleId) ? state.read.delete(articleId) : state.read.add(articleId);
-  queueUserStateSave();
-  render();
-}
-
 function moveKeyboardSelection(direction) {
   if (!state.visibleArticleIds.length) return;
   const current = state.visibleArticleIds.indexOf(state.keyboardArticleId);
@@ -1471,7 +1289,7 @@ function keyboardTargetIsEditable(target) {
 function scheduleBackgroundChecks() {
   window.clearInterval(backgroundRefreshTimer);
   backgroundRefreshTimer = window.setInterval(() => {
-    if (document.visibilityState === "visible") loadFeed(false, { background: true });
+    if (document.visibilityState !== "prerender") loadFeed(false, { background: true });
   }, 15 * 60 * 1000);
 }
 
@@ -1482,6 +1300,18 @@ document.addEventListener("visibilitychange", () => {
 });
 
 document.addEventListener("click", (event) => {
+  const timeWindowButton = event.target.closest(".time-window-button[data-time-window]");
+  if (timeWindowButton) {
+    state.timeWindow = Object.prototype.hasOwnProperty.call(TIME_WINDOW_LABELS, timeWindowButton.dataset.timeWindow)
+      ? timeWindowButton.dataset.timeWindow
+      : "month";
+    localStorage.setItem(storageKeys.timeWindow, state.timeWindow);
+    renderSources(state.payload?.sources || []);
+    if (usesArchiveView()) loadArchive();
+    else render();
+    return;
+  }
+
   const resetFeedback = event.target.closest("[data-reset-feedback]");
   if (resetFeedback) {
     state.feedback.clear();
@@ -1552,14 +1382,6 @@ document.addEventListener("click", (event) => {
     if (state.view === "archived" && wasArchived) state.archiveTotal = Math.max(0, state.archiveTotal - 1);
     queueUserStateSave();
     render();
-    return;
-  }
-
-  const storyLink = event.target.closest("[data-read-id]");
-  if (storyLink) {
-    state.read.add(storyLink.dataset.readId);
-    queueUserStateSave();
-    window.setTimeout(render, 120);
     return;
   }
 
@@ -1649,13 +1471,11 @@ document.addEventListener("input", (event) => {
 
 elements.refresh.addEventListener("click", () => loadFeed(true));
 
-elements.briefButton.addEventListener("click", openBriefing);
+elements.sidebarToggle.addEventListener("click", () => {
+  setSidebarOpen(!state.sidebarOpen, { focus: true });
+});
 
 elements.manageSources.addEventListener("click", openSourceManager);
-
-document.querySelectorAll("[data-close-briefing]").forEach((button) => {
-  button.addEventListener("click", closeBriefing);
-});
 
 document.querySelectorAll("[data-close-source-manager]").forEach((button) => {
   button.addEventListener("click", closeSourceManager);
@@ -1720,21 +1540,9 @@ elements.sourceForm.addEventListener("submit", async (event) => {
   }
 });
 
-elements.briefingMarkRead.addEventListener("click", () => {
-  state.briefArticleIds.forEach((id) => state.read.add(id));
-  queueUserStateSave();
-  render();
-});
-
 elements.layout.addEventListener("click", () => {
   state.layout = state.layout === "grid" ? "list" : "grid";
   localStorage.setItem(storageKeys.layout, state.layout);
-  render();
-});
-
-elements.density.addEventListener("click", () => {
-  state.density = state.density === "compact" ? "comfortable" : "compact";
-  localStorage.setItem(storageKeys.density, state.density);
   render();
 });
 
@@ -1766,15 +1574,11 @@ document.querySelector("#clear-filters").addEventListener("click", () => {
   persistFilterSet(storageKeys.software, state.software);
   persistFilterSet(storageKeys.topics, state.topics);
   state.view = "all";
+  state.timeWindow = "month";
+  localStorage.setItem(storageKeys.timeWindow, state.timeWindow);
   state.search = "";
   elements.search.value = "";
   renderSources(state.payload.sources || []);
-  render();
-});
-
-document.querySelector("#mark-all-read").addEventListener("click", () => {
-  filteredArticles().forEach((article) => state.read.add(article.id));
-  queueUserStateSave();
   render();
 });
 
@@ -1793,13 +1597,13 @@ document.addEventListener("keydown", (event) => {
     state.search = "";
     elements.search.blur();
     render();
-  } else if (event.key === "Escape" && state.briefOpen) {
-    closeBriefing();
   } else if (event.key === "Escape" && !elements.sourceManagerPanel.hidden) {
     closeSourceManager();
+  } else if (event.key === "Escape" && state.sidebarOpen && window.matchMedia("(min-width: 851px)").matches) {
+    setSidebarOpen(false, { focus: true });
   }
 
-  if (event.ctrlKey || event.metaKey || event.altKey || state.briefOpen || !elements.sourceManagerPanel.hidden || keyboardTargetIsEditable(event.target)) return;
+  if (event.ctrlKey || event.metaKey || event.altKey || !elements.sourceManagerPanel.hidden || keyboardTargetIsEditable(event.target)) return;
   const key = event.key.toLocaleLowerCase();
   if (key === "j" || key === "k") {
     event.preventDefault();
@@ -1824,9 +1628,6 @@ document.addEventListener("keydown", (event) => {
     if (state.view === "archived" && wasArchived) state.archiveTotal = Math.max(0, state.archiveTotal - 1);
     queueUserStateSave();
     render();
-  } else if (key === "m") {
-    event.preventDefault();
-    toggleRead(state.keyboardArticleId);
   }
 });
 
@@ -1843,6 +1644,8 @@ elements.grid.addEventListener(
 if (localStorage.getItem(storageKeys.theme) === "night") {
   document.body.classList.add("night");
 }
+
+setSidebarOpen(state.sidebarOpen);
 
 async function initialize() {
   await loadUserState();

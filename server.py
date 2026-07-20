@@ -1395,8 +1395,6 @@ def archive_token_sql(token: dict[str, Any], new_after: str) -> tuple[str, list[
         parameters = [pattern, pattern, pattern]
     elif field == "is":
         status_clauses = {
-            "read": "COALESCE(s.is_read, 0) = 1",
-            "unread": "COALESCE(s.is_read, 0) = 0",
             "saved": "COALESCE(s.is_saved, 0) = 1",
             "library": "COALESCE(s.is_saved, 0) = 1",
             "archived": "COALESCE(s.is_archived, 0) = 1",
@@ -1525,7 +1523,7 @@ def normalize_feedback(values: Any) -> list[dict[str, Any]]:
 def normalize_user_state(payload: Any) -> dict[str, Any]:
     source = payload if isinstance(payload, dict) else {}
     normalized: dict[str, Any] = {}
-    for key in ("read", "saved", "archived"):
+    for key in ("saved", "archived"):
         normalized[key] = normalize_string_list(source.get(key, []), MAX_STATE_IDS)
 
     notes = source.get("notes", {})
@@ -1556,17 +1554,16 @@ def normalize_user_state(payload: Any) -> dict[str, Any]:
 
 def sync_user_state_to_archive(state: dict[str, Any]) -> None:
     initialize_archive_db()
-    read_ids = set(state.get("read", []))
     saved_ids = set(state.get("saved", []))
     archived_ids = set(state.get("archived", []))
     notes = state.get("notes", {})
     feedback = {item["id"]: item["value"] for item in state.get("feedback", [])}
-    article_ids = read_ids | saved_ids | archived_ids | set(notes) | set(feedback)
+    article_ids = saved_ids | archived_ids | set(notes) | set(feedback)
     updated_at = state.get("updated_at") or datetime.now(timezone.utc).isoformat()
     rows = [
         (
             article_id,
-            int(article_id in read_ids),
+            0,
             int(article_id in saved_ids),
             int(article_id in archived_ids),
             notes.get(article_id, ""),

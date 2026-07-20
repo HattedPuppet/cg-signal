@@ -137,6 +137,46 @@ class MobileExportTests(unittest.TestCase):
         self.assertIn(".source-manage-button", styles)
         self.assertIn(".source-manager-item.is-enabled", styles)
 
+    def test_mobile_feed_has_pins_without_brief_or_read_state(self):
+        site = MODULE_PATH.parent / "site"
+        html = (site / "index.html").read_text(encoding="utf-8")
+        javascript = (site / "app.js").read_text(encoding="utf-8")
+        styles = (site / "styles.css").read_text(encoding="utf-8")
+        self.assertIn('data-view="pinned"', html)
+        self.assertIn('id="pinned-total"', html)
+        self.assertNotIn('id="brief-panel"', html)
+        self.assertNotIn('id="briefing-listen"', html)
+        self.assertNotIn('id="unread-count"', html)
+        self.assertIn('pinned: "cg-signal-mobile:pinned"', javascript)
+        self.assertNotIn("state.read", javascript)
+        self.assertNotIn("data-read-id", javascript)
+        self.assertNotIn("brief", javascript.lower())
+        self.assertNotIn("brief", styles.lower())
+        self.assertIn("data-pin-id", javascript)
+
+    def test_mobile_shell_has_a_recent_publication_window(self):
+        site = MODULE_PATH.parent / "site"
+        html = (site / "index.html").read_text(encoding="utf-8")
+        javascript = (site / "app.js").read_text(encoding="utf-8")
+        styles = (site / "styles.css").read_text(encoding="utf-8")
+        service_worker = (site / "sw.js").read_text(encoding="utf-8")
+        self.assertIn('data-time-window="month"', html)
+        self.assertIn('data-time-window="quarter"', html)
+        self.assertIn('data-time-window="all"', html)
+        self.assertIn('timeWindow: "cg-signal-mobile:time-window"', javascript)
+        self.assertIn("function articleWithinTimeWindow(article)", javascript)
+        self.assertIn("function storyListMarkup(articles)", javascript)
+        self.assertIn("cg-signal-mobile-v16", service_worker)
+        self.assertIn("styles.css?v=20260720", service_worker)
+        self.assertIn("app.js?v=20260720", service_worker)
+        self.assertIn("sw.js?v=20260720", javascript)
+        self.assertIn("sw.js?v=20260720", service_worker)
+        self.assertIn("fetch(event.request)", service_worker)
+        self.assertIn("function articleRecencyBucket(article)", javascript)
+        self.assertIn("Last 24 hours", javascript)
+        self.assertIn("Last 3 days", javascript)
+        self.assertIn(".recency-section", styles)
+
 
 if __name__ == "__main__":
     unittest.main()

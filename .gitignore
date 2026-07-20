@@ -2,4 +2,6 @@
 __pycache__/
 *.pyc
 .DS_Store
+.pnpm-store/
+node_modules/
 mobile/dist/

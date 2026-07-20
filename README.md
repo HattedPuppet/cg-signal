@@ -25,8 +25,9 @@ python server.py
 ```
 
 The launcher uses Codex's bundled Python when available and otherwise looks for
-Python 3 on the computer. There are no third-party packages, containers,
-accounts, API keys, or subscription fees.
+Python 3 on the computer. The Python server itself has no third-party runtime
+dependencies. No containers, accounts, API keys, or subscription fees are
+required.
 
 ## Mobile companion
 
@@ -40,11 +41,13 @@ then use the browser menu to install it or add it to the home screen.
 
 The mobile edition includes Latest Signal, one-tap category and source chips
 directly in the feed controls, a header search field with text and hashtag
-support, an unread view, a short Daily Brief, offline fallback, and Android
-home-screen installation. The header and filter drawer now share one compact
-sticky surface: tap or swipe its handle to pull the full controls out. A
-persistent Top button jumps directly to the first visible article without a
-smooth-scroll delay. Read markers are stored only in that phone's browser.
+support, pinned stories, offline fallback, and Android home-screen installation.
+Stories are grouped into **Last 24 hours**, **Last 3 days**, and **Earlier** so
+freshness is visible without maintaining read markers. The header and filter
+drawer share one compact sticky surface: tap or swipe its handle to pull the
+full controls out. A persistent Top button jumps directly to the first visible
+article without a smooth-scroll delay. Pins are stored only in that phone's
+browser.
 
 Source selection never requires opening a separate discovery panel. The optional
 **Manage sources** sheet is only for hiding or restoring sources on this device.
@@ -74,40 +77,40 @@ Git.
 - Feeds check quietly every 15 minutes while the dashboard is open and visible.
   **Check feeds** bypasses the cache and checks every source immediately.
 - A small cache is stored in `.cache/feed-cache.json` so the last successful
-  briefing remains available during a temporary feed failure.
+  feed remains available during a temporary feed failure.
 - Every gathered story is also retained in `.cache/cg-signal.db`, a local
   SQLite archive. **History** searches this complete collection with paging, so
   articles remain findable after they disappear from a publisher's feed.
-- Read, saved, archived, research-note, recommendation, and source-tuning states are persisted by the local server in
-  `.cache/user-state.json`. Browser storage acts as a fallback and migrates
-  existing saved/read state automatically. The database mirrors article state
-  so full-history searches can use `#is:` filters and research notes.
+- Saved, archived, research-note, recommendation, and source-tuning states are
+  persisted by the local server in `.cache/user-state.json`. Browser storage
+  acts as a fallback and migrates existing saved state automatically. The
+  database mirrors article state so full-history searches can use `#is:` filters
+  and research notes.
+- **Latest Signal** defaults to stories published **this month**. The publication
+  window can be widened to the **last three months** (with month separators for
+  scanning) or to all articles currently returned by the feeds. Older stories
+  are not deleted: desktop **History** searches the complete local archive.
 - **Latest Signal** keeps the primary feed chronological and offers live
   category counts. Multi-tool stories can be found from every relevant software
   filter while appearing only once in the All Stories feed and retaining one
   clear primary card label.
 - Desktop search lives in the sticky topbar, and the persistent Top button
   jumps directly to the first visible article for quick reading recovery.
-- Desktop **View** switches between grid and list layouts, while **Density** toggles
-  a locally saved compact card mode with smaller thumbnails and tighter metadata.
+- Desktop **View** switches between grid and list layouts. The left navigation
+  and source panel can be collapsed into a drawer when you want more room for
+  the feed.
 - A divider identifies stories published since the previous visit. Keyboard
   triage uses `J`/`K` to move, `Enter` to open, `S` to save, `A` to archive,
-  and `M` to toggle read state.
-- **Daily brief** selects up to nine high-value unread stories, prioritizing six
-  technical items and reserving room for three industry updates. **More like
-  this** and **Less like this** tune this brief locally. Its Preference tuning
-  panel shows the learned category, technique, and source weights and the
-  adjustment applied to each selected story. Its summaries are built from RSS
-  excerpts and do not call an external AI service.
+  and `A` to archive.
 - Saved stories form a durable Learning Library grouped by software/context.
   Each item accepts a searchable research note. Saved and archived items remain
   available even after the live RSS window moves on, and every archived item
   can be restored.
 - Search supports ordinary text plus combinable tags: `#unreal`, `#blender`,
   `#substance`, `#topic:animation`, `#source:"80 Level"`,
-  `#is:unread`, `#is:saved`, and `#is:new`. Prefix a term with `-` to exclude it,
+  `#is:saved`, and `#is:new`. Prefix a term with `-` to exclude it,
   such as `-#industry`.
-- Individual sources can be temporarily filtered, reduced in the Daily Brief,
+- Individual sources can be temporarily filtered, reduced in recommendations,
   or muted. Clicking a source isolates it; clicking it again restores all
   sources, and Ctrl/Cmd-click combines sources. **Reset** restores all source
   settings. **Manage** opens a local source manager where RSS/Atom URLs can be

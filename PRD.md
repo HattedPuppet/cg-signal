@@ -97,7 +97,11 @@ And is actively interested in:
 - Retain links to related reports beneath the lead story.
 - Separate **Tech & Development** from **Industry & Business**.
 - Support software/context, production-subcategory, information-type, source,
-  search, saved, unread, and archive filters.
+  search, saved, and archive filters.
+- Default the active feed to the current calendar month; offer a
+  three-calendar-month window and an all-current-feed escape hatch without
+  deleting older articles. Group the three-month view with month separators so
+  recent coverage is easy to scan.
 - Improve bilingual deduplication by requiring a shared event type and
   distinctive entities when English and Japanese titles have little literal
   overlap.
@@ -131,25 +135,10 @@ And is actively interested in:
   subcategory. Selecting another option replaces the current selection;
   selecting the active option resets that row to its **All** state. Clicking an
   already-active **All** option has no further effect.
-- Keep read stories in Latest Signal; remove only archived stories from the
-  active chronological feed.
+- Keep saved stories available in the Learning Library and remove only
+  archived stories from the active chronological feed.
 - Do not expose broad inferred subject filters such as Engines, 3D Art, Tools,
   Game Development, or Industry when their classification is unreliable.
-
-### Daily Brief
-
-- Select no more than nine unread, non-archived stories.
-- Prioritize up to six technical stories and include up to three industry
-  stories so important business context is not lost.
-- Order selections by relevance and freshness.
-- Provide short extractive summaries and relevance reasons.
-- Allow the selected brief—not the entire backlog—to be marked read at once.
-- Accept explicit More/Less feedback and use software, topic, and source overlap
-  to adjust only Daily Brief ranking. Keep Latest Signal chronological.
-- Expose the accumulated category, technique, and source weights, including the
-  numeric adjustment applied to each Daily Brief story, and allow feedback to
-  be reset.
-- Exclude muted sources and lower reduced sources without deleting their data.
 
 ### Search and triage
 
@@ -161,7 +150,7 @@ And is actively interested in:
   `#software:`, `#topic:`, `#source:`, and `#is:` operators.
 - Support quoted values and exclusions prefixed by `-`.
 - Mark stories published since the previous visit without reordering the feed.
-- Support keyboard triage with J/K, Enter, S, A, and M while ignoring shortcuts
+- Support keyboard triage with J/K, Enter, S, and A while ignoring shortcuts
   in text-entry controls.
 
 ### Learning Library and archive
@@ -169,7 +158,7 @@ And is actively interested in:
 - Save stories into a durable Learning Library grouped by primary software or
   context.
 - Attach searchable local research notes to saved stories.
-- Archive stories out of Latest Signal and Unread views.
+- Archive stories out of Latest Signal.
 - Provide a dedicated archive with restore controls.
 - Retain gathered article metadata in a durable local history after articles
   rotate out of their publishers' RSS feeds.
@@ -177,13 +166,13 @@ And is actively interested in:
   information-type, and source filters as the current feed.
 - Populate the Learning Library and archive views from durable history rather
   than limiting them to the current RSS window.
-- Persist read, saved, archived, note, feedback, and source-preference state in
+- Persist saved, archived, note, feedback, and source-preference state in
   the local server's data directory, with browser storage as a migration and
   failure fallback.
 
 ### Source and refresh controls
 
-- Allow a source to be temporarily filtered, reduced in personalized ranking,
+- Allow a source to be temporarily filtered, reduced in recommendations,
   muted, or restored.
 - Make a normal source click isolate that source, a repeated click restore all,
   and Ctrl/Cmd-click combine multiple sources.
@@ -197,7 +186,8 @@ And is actively interested in:
 
 - Start silently from the installed Windows shortcut.
 - Remain usable as a responsive browser application and installable PWA.
-- Require no containers, third-party Python packages, accounts, or API keys.
+- Require no containers, third-party Python packages, accounts, or API keys for
+  the core server.
 
 ### Hosted mobile companion
 
@@ -206,7 +196,10 @@ And is actively interested in:
 - Refresh the hosted feed every 30 minutes through a scheduled GitHub workflow
   so availability does not depend on the user's PC.
 - Provide Latest Signal, information-type and category filtering, source
-  selection, text and hashtag search, unread filtering, and a short Daily Brief.
+  selection, publication-window filtering, text and hashtag search, and pinned
+  stories.
+- Group mobile stories into Last 24 hours, Last 3 days, and Earlier sections so
+  freshness is clear without read-state tracking.
 - Keep search in the mobile header and expose information type, category, and
   source controls as touch-sized inline choices in the feed, with clear
   active-state feedback and no required discovery drawer.
@@ -224,30 +217,24 @@ And is actively interested in:
   to a future public feed configuration.
 - Support Android home-screen installation and retain the most recently opened
   feed for temporary offline access.
-- Store read markers only in the phone's local browser storage.
 - Keep History, Learning Library, saved and archived state, notes, preference
   feedback, and source management exclusive to the desktop application.
 - Export only explicitly allowlisted public RSS-derived fields. Never publish
   `.cache`, the SQLite database, user state, notes, or preference data.
 
-## Relevance model
+## Feedback model
 
-Daily Brief ranking is deterministic and rule-based:
-
-`priority = technical base + tool matches + depth signals + source confidence + corroboration - promotional noise + explicit preference matches - reduced-source penalty`
-
-Scores select and order the short Daily Brief; they do not reorder Latest
-Signal and are not a claim about objective article quality. Ranking rules must
-remain testable and easy to adjust as the user's interests change.
+More/Less feedback and source preferences are deterministic, local signals that
+help tune future recommendations. They never reorder Latest Signal, which stays
+chronological, and they are not a claim about objective article quality.
 
 ## Core user journey
 
 1. Open CG Signal from the Start menu.
-2. Review Latest Signal, narrow it by category, optionally refine Production
-   techniques, or open the Daily Brief.
+2. Review Latest Signal, narrow it by category, and optionally refine
+   Production techniques.
 3. Open valuable stories on the original site.
-4. Save evergreen learning material, archive low-priority items, and mark the
-   reviewed briefing read.
+4. Save evergreen learning material or archive low-priority items.
 5. Use text or hashtag search for deeper exploration and add notes to saved
    learning material.
 
@@ -267,13 +254,12 @@ remain testable and easy to adjust as the user's interests change.
 Success is evaluated through the user's experience rather than remote
 analytics:
 
-- The short Daily Brief can normally be reviewed in under ten minutes.
 - Duplicate announcements rarely require opening more than one card.
 - Latest Signal stays chronological while categories and contextual production
   subcategories reliably narrow it without duplicating cards.
 - Saved material and notes remain retrievable and searchable after browser restarts.
 - Historical articles remain searchable after the live RSS feed has rotated.
-- Feed failures do not prevent access to the last successful briefing.
+- Feed failures do not prevent access to the last successful feed.
 - The dashboard remains useful when all optional intelligence features are off.
 
 ## Quality requirements
@@ -298,11 +284,6 @@ analytics:
   summaries, semantic deduplication, flexible tagging, and personalized daily
   synthesis. It must remain optional because model downloads, RAM/VRAM use, and
   slower refreshes are meaningful costs even without a subscription.
-- **Local voice output — moderate situational usefulness:** make the short daily
-  brief accessible hands-free. It should target the briefing rather than full
-  articles and remain optional because pronunciation quality, especially for
-  Japanese names and CG product terminology, varies by installed voice.
-
 ## Open decisions
 
 - Whether archived items should be retained indefinitely or pruned after a

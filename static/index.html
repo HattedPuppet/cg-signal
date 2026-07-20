@@ -12,7 +12,7 @@
     <link rel="alternate icon" href="/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/icon-180.png" />
     <link rel="manifest" href="/manifest.json" />
-    <title>CG Signal — Your creative-tech briefing</title>
+    <title>CG Signal — Your creative-tech feed</title>
     <link rel="stylesheet" href="/styles.css" />
     <script src="/app.js" defer></script>
   </head>
@@ -20,16 +20,8 @@
     <a class="skip-link" href="#stories">Skip to stories</a>
 
     <div class="app-shell">
-      <aside class="sidebar" aria-label="Dashboard navigation">
-        <div class="brand-row">
-          <a class="brand" href="/" aria-label="CG Signal home">
-            <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-            <span>CG<span>//</span>SIGNAL</span>
-          </a>
-          <span class="local-pill"><span></span> Local</span>
-        </div>
-
-        <p class="sidebar-kicker">Your creative-tech briefing</p>
+      <aside id="desktop-sidebar" class="sidebar" aria-label="Dashboard navigation">
+        <p class="sidebar-kicker">Your creative-tech feed</p>
 
         <nav class="primary-nav" aria-label="Views">
           <button class="nav-item is-active" type="button" data-view="all">
@@ -41,11 +33,6 @@
             <span class="nav-symbol" aria-hidden="true">☆</span>
             <span>Learning library</span>
             <strong id="saved-count">0</strong>
-          </button>
-          <button class="nav-item" type="button" data-view="unread">
-            <span class="nav-symbol dot-symbol" aria-hidden="true"></span>
-            <span>Unread</span>
-            <strong id="unread-count">—</strong>
           </button>
           <button class="nav-item" type="button" data-view="history">
             <span class="nav-symbol" aria-hidden="true">◫</span>
@@ -79,7 +66,7 @@
           <span class="privacy-mark" aria-hidden="true">◎</span>
           <div>
             <strong>Private by design</strong>
-            <p>No account. No tracking. Reading, saving and archiving stay on this computer.</p>
+            <p>No account. No tracking. Saving and archiving stay on this computer.</p>
           </div>
         </div>
 
@@ -93,6 +80,9 @@
 
       <main class="main-panel">
         <header class="topbar">
+          <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-controls="desktop-sidebar" aria-expanded="true" aria-label="Hide navigation panel" title="Hide navigation panel">
+            <span class="sidebar-toggle-lines" aria-hidden="true"><i></i><i></i><i></i></span>
+          </button>
           <div class="search-wrap">
             <label class="search-box" for="search-input">
               <span aria-hidden="true">⌕</span>
@@ -111,7 +101,6 @@
                 <button type="button" data-search-token="#unreal">#unreal</button>
                 <button type="button" data-search-token="#blender">#blender</button>
                 <button type="button" data-search-token="#topic:animation">#topic:animation</button>
-                <button type="button" data-search-token="#is:unread">#is:unread</button>
                 <button type="button" data-search-token="#is:saved">#is:saved</button>
                 <button type="button" data-search-token="-#industry">-#industry</button>
               </div>
@@ -119,18 +108,9 @@
             </div>
           </div>
           <div class="topbar-actions">
-            <button id="brief-button" class="brief-button" type="button" aria-haspopup="dialog" aria-expanded="false">
-              <span class="brief-spark" aria-hidden="true">✦</span>
-              <span class="button-label">Daily brief</span>
-              <strong id="brief-count">—</strong>
-            </button>
             <button id="layout-toggle" class="icon-text-button" type="button" aria-label="Switch layout">
               <span aria-hidden="true">▦</span>
               <span class="button-label">View</span>
-            </button>
-            <button id="density-toggle" class="icon-text-button" type="button" aria-label="Use compact cards" aria-pressed="false" title="Use compact cards">
-              <span aria-hidden="true">↕</span>
-              <span class="button-label">Density</span>
             </button>
             <button id="refresh-button" class="refresh-button" type="button" aria-label="Check all feeds for new articles now" title="Bypass the 15-minute cache and check every source">
               <span class="refresh-icon" aria-hidden="true">↻</span>
@@ -154,7 +134,7 @@
             <div class="hero-stat-grid">
               <div class="hero-stat primary-stat">
                 <strong id="hero-unique">—</strong>
-                <span>unique stories</span>
+                <span>stories in focus</span>
               </div>
               <div class="hero-stat">
                 <strong id="hero-collapsed">—</strong>
@@ -182,6 +162,15 @@
                 <span id="new-since" class="new-since-count" hidden></span>
                 <span class="divider"></span>
                 <span id="sort-label">Newest first</span>
+              </div>
+            </div>
+
+            <div class="time-window-row">
+              <span class="software-filter-label">Publication window</span>
+              <div class="time-window-filters" role="group" aria-label="Filter by publication window">
+                <button class="time-window-button is-active" type="button" data-time-window="month" aria-pressed="true">This month</button>
+                <button class="time-window-button" type="button" data-time-window="quarter" aria-pressed="false">Last 3 months</button>
+                <button class="time-window-button" type="button" data-time-window="all" aria-pressed="false">All current</button>
               </div>
             </div>
 
@@ -223,8 +212,7 @@
         <footer class="main-footer">
           <p>Built for quiet research. Articles always open on the original publisher’s website.</p>
           <div class="footer-actions">
-            <span class="shortcut-legend"><kbd>J</kbd>/<kbd>K</kbd> move · <kbd>Enter</kbd> open · <kbd>S</kbd> save · <kbd>A</kbd> archive · <kbd>M</kbd> read</span>
-            <button id="mark-all-read" class="text-button" type="button">Mark visible as read</button>
+            <span class="shortcut-legend"><kbd>J</kbd>/<kbd>K</kbd> move · <kbd>Enter</kbd> open · <kbd>S</kbd> save · <kbd>A</kbd> archive</span>
           </div>
         </footer>
       </main>
@@ -233,26 +221,6 @@
     <button id="scroll-top-button" class="scroll-top-button" type="button" aria-label="Jump to first article">
       <span aria-hidden="true">↑</span><small>Top</small>
     </button>
-
-    <section id="briefing-panel" class="briefing-panel" aria-labelledby="briefing-title" aria-modal="true" role="dialog" hidden>
-      <button class="briefing-scrim" type="button" aria-label="Close unread briefing" data-close-briefing></button>
-      <div class="briefing-drawer">
-        <header class="briefing-header">
-          <div>
-            <p class="eyebrow"><span></span> <span id="briefing-date">Today</span></p>
-            <h2 id="briefing-title">Your daily briefing</h2>
-          </div>
-          <button id="briefing-close" class="briefing-close" type="button" aria-label="Close unread briefing" data-close-briefing>×</button>
-        </header>
-
-        <div id="briefing-content" class="briefing-content"></div>
-
-        <footer class="briefing-footer">
-          <p>Built from RSS excerpts on this device. Nothing is sent to an AI service.</p>
-          <button id="briefing-mark-read" type="button">Mark brief as read</button>
-        </footer>
-      </div>
-    </section>
 
     <section id="source-manager-panel" class="source-manager-panel" aria-labelledby="source-manager-title" aria-modal="true" role="dialog" hidden>
       <button class="source-manager-scrim" type="button" aria-label="Close source manager" data-close-source-manager></button>
@@ -263,7 +231,7 @@
             <h2 id="source-manager-title">Manage RSS sources</h2>
             <p>Add an RSS or Atom feed, verify it before saving, or temporarily disable noisy sources.</p>
           </div>
-          <button id="source-manager-close" class="briefing-close" type="button" aria-label="Close source manager" data-close-source-manager>×</button>
+          <button id="source-manager-close" class="sheet-close" type="button" aria-label="Close source manager" data-close-source-manager>×</button>
         </header>
 
         <div class="source-manager-content">

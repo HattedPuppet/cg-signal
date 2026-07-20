@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="description" content="CG Signal Mobile — a lightweight briefing for CG, animation, and game-development news." />
+    <meta name="description" content="CG Signal Mobile — a lightweight feed for CG, animation, and game-development news." />
     <meta name="theme-color" content="#161a16" />
     <link rel="icon" href="./favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="./icon-180.png" />
     <link rel="manifest" href="./manifest.json" />
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260720" />
     <title>CG Signal Mobile</title>
-    <script src="./app.js" defer></script>
+    <script src="./app.js?v=20260720" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#story-list">Skip to stories</a>
@@ -48,6 +48,15 @@
             <button class="lane-button" type="button" data-lane="Industry &amp; Business">Industry <strong>—</strong></button>
           </div>
 
+          <div class="time-window-section">
+            <div class="filter-heading"><span>Publication window</span><small>Older stories stay available on desktop</small></div>
+            <div class="time-window-list" role="group" aria-label="Filter by publication window">
+              <button class="time-window-button is-active" type="button" data-time-window="month" aria-pressed="true">This month</button>
+              <button class="time-window-button" type="button" data-time-window="quarter" aria-pressed="false">Last 3 months</button>
+              <button class="time-window-button" type="button" data-time-window="all" aria-pressed="false">All available</button>
+            </div>
+          </div>
+
           <div class="category-section">
             <div class="filter-heading"><span>Categories</span><small>Tap the selected category to reset</small></div>
             <div id="category-list" class="category-list" data-category-list role="group" aria-label="Software and context categories"></div>
@@ -69,11 +78,11 @@
         <div class="hero-grid" aria-hidden="true"></div>
         <p class="eyebrow"><span></span> Your creative-tech field signal</p>
         <h1 id="hero-title">Stay current.<br /><em>Keep moving.</em></h1>
-        <p class="hero-copy">A lightweight mobile briefing generated from the same trusted CG and game-development sources as your desktop dashboard.</p>
+        <p class="hero-copy">A lightweight mobile feed generated from the same trusted CG and game-development sources as your desktop dashboard.</p>
         <div class="hero-stats">
           <div><strong id="story-total">—</strong><span>current stories</span></div>
           <div><strong id="repeat-total">—</strong><span>repeats folded</span></div>
-          <button id="brief-hero-button" type="button"><strong id="brief-total">—</strong><span>in today’s brief</span><i aria-hidden="true">→</i></button>
+          <div><strong id="recent-total">—</strong><span>in last 24 hours</span></div>
         </div>
         <div class="update-row">
           <span id="connection-dot" class="connection-dot"></span>
@@ -91,7 +100,6 @@
           </div>
           <div class="feed-heading-actions">
             <button id="density-toggle" class="density-toggle" type="button" aria-label="Use compact cards" aria-pressed="false" title="Use compact cards"><span aria-hidden="true">↕</span><span>Compact</span></button>
-            <button id="mark-visible-read" type="button">Mark visible read</button>
           </div>
         </header>
 
@@ -113,15 +121,14 @@
         <span aria-hidden="true">◎</span>
         <div>
           <strong>Public feed, private research</strong>
-          <p>This mobile edition contains public RSS excerpts only. Saved articles, notes, history, and preference tuning remain exclusively on your PC. Read markers stay on this phone.</p>
+          <p>This mobile edition contains public RSS excerpts only. Pins stay on this phone; notes, desktop history, and preference tuning remain on your PC.</p>
         </div>
       </section>
     </main>
 
     <nav class="bottom-nav" aria-label="Mobile views">
       <button class="is-active" type="button" data-view="latest"><span aria-hidden="true">⌁</span><small>Latest</small></button>
-      <button type="button" data-view="unread"><span class="unread-dot" aria-hidden="true"></span><small>Unread</small><strong id="unread-total">—</strong></button>
-      <button type="button" data-view="brief"><span aria-hidden="true">✦</span><small>Brief</small></button>
+      <button type="button" data-view="pinned"><span aria-hidden="true">★</span><small>Pinned</small><strong id="pinned-total">0</strong></button>
     </nav>
 
     <button id="scroll-top-button" class="scroll-top-button" type="button" aria-label="Jump to first article">
@@ -143,24 +150,6 @@
         <footer>
           <button id="enable-all-sources" class="source-enable-all" type="button">Enable all</button>
           <button class="source-manager-done" type="button" data-close-source-manager>Done</button>
-        </footer>
-      </div>
-    </section>
-
-    <section id="brief-panel" class="brief-panel" role="dialog" aria-modal="true" aria-labelledby="brief-title" hidden>
-      <div class="brief-drawer">
-        <header>
-          <div>
-            <p class="eyebrow"><span></span> Mobile briefing</p>
-            <h2 id="brief-title">Nine useful signals</h2>
-          </div>
-          <button type="button" data-close-brief aria-label="Close briefing">×</button>
-        </header>
-        <p id="brief-intro" class="brief-intro"></p>
-        <div id="brief-list" class="brief-list"></div>
-        <footer>
-          <p>Extracted from RSS on GitHub. No article text or personal data is sent to an AI service.</p>
-          <button id="brief-mark-read" type="button">Mark brief read</button>
         </footer>
       </div>
     </section>

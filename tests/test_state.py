@@ -12,7 +12,7 @@ class UserStateTests(unittest.TestCase):
                 "archived": "not-a-list",
             }
         )
-        self.assertEqual(state["read"], ["a", "b"])
+        self.assertNotIn("read", state)
         self.assertEqual(state["saved"], ["saved-1"])
         self.assertEqual(state["archived"], [])
         self.assertEqual(state["notes"], {})
@@ -49,6 +49,7 @@ class UserStateTests(unittest.TestCase):
     def test_unknown_fields_are_not_persisted(self):
         state = normalize_user_state({"read": [], "admin": True})
         self.assertNotIn("admin", state)
+        self.assertNotIn("read", state)
 
 
 if __name__ == "__main__":

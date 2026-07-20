@@ -1,8 +1,9 @@
 const storageKeys = {
-  read: "cg-signal-mobile:read",
+  pinned: "cg-signal-mobile:pinned",
   feed: "cg-signal-mobile:last-feed",
   disabledSources: "cg-signal-mobile:disabled-sources",
   density: "cg-signal-mobile:density",
+  timeWindow: "cg-signal-mobile:time-window",
 };
 
 const CATEGORY_ORDER = [
@@ -27,6 +28,12 @@ const CATEGORY_COLORS = {
   "Industry context": "#f4a261",
 };
 
+const TIME_WINDOW_LABELS = {
+  month: "This month",
+  quarter: "Last 3 months",
+  all: "All available",
+};
+
 const SEARCH_ALIASES = new Map([
   ["unreal", ["software", "unreal engine"]],
   ["unreal-engine", ["software", "unreal engine"]],
@@ -47,13 +54,16 @@ const SEARCH_ALIASES = new Map([
 const state = {
   payload: null,
   articles: [],
-  read: readSet(),
+  pinned: readIdSet(storageKeys.pinned),
   disabledSources: disabledSourceSet(),
   lane: "All",
   category: "All",
   source: "All",
   search: "",
   view: "latest",
+  timeWindow: Object.prototype.hasOwnProperty.call(TIME_WINDOW_LABELS, localStorage.getItem(storageKeys.timeWindow))
+    ? localStorage.getItem(storageKeys.timeWindow)
+    : "month",
   density: localStorage.getItem(storageKeys.density) === "compact" ? "compact" : "comfortable",
   installPrompt: null,
   lastFetchAt: 0,
@@ -65,8 +75,7 @@ const elements = {
   clearFilters: document.querySelector("#clear-filters"),
   storyTotal: document.querySelector("#story-total"),
   repeatTotal: document.querySelector("#repeat-total"),
-  briefTotal: document.querySelector("#brief-total"),
-  unreadTotal: document.querySelector("#unread-total"),
+  recentTotal: document.querySelector("#recent-total"),
   updateStatus: document.querySelector("#update-status"),
   connectionDot: document.querySelector("#connection-dot"),
   categoryLists: [...document.querySelectorAll("[data-category-list]")],
@@ -85,19 +94,16 @@ const elements = {
   filterDrawerHandle: document.querySelector("#filter-drawer-handle"),
   filterDrawerSummary: document.querySelector("#filter-drawer-summary"),
   densityToggle: document.querySelector("#density-toggle"),
-  briefPanel: document.querySelector("#brief-panel"),
-  briefList: document.querySelector("#brief-list"),
-  briefIntro: document.querySelector("#brief-intro"),
-  briefMarkRead: document.querySelector("#brief-mark-read"),
+  pinnedTotal: document.querySelector("#pinned-total"),
 };
 
 let sourceManagerReturnFocus = null;
 let filterPointerStartY = null;
 let ignoreNextFilterClick = false;
 
-function readSet() {
+function readIdSet(key) {
   try {
-    const value = JSON.parse(localStorage.getItem(storageKeys.read) || "[]");
+    const value = JSON.parse(localStorage.getItem(key) || "[]");
     return new Set(Array.isArray(value) ? value : []);
   } catch {
     return new Set();
@@ -113,11 +119,11 @@ function disabledSourceSet() {
   }
 }
 
-function persistRead() {
+function persistPinned() {
   const currentIds = new Set(state.articles.map((article) => article.id));
-  const bounded = [...state.read].filter((id) => currentIds.has(id)).slice(-1500);
-  state.read = new Set(bounded);
-  localStorage.setItem(storageKeys.read, JSON.stringify(bounded));
+  const bounded = [...state.pinned].filter((id) => currentIds.has(id)).slice(-1500);
+  state.pinned = new Set(bounded);
+  localStorage.setItem(storageKeys.pinned, JSON.stringify(bounded));
 }
 
 function persistDisabledSources() {
@@ -174,6 +180,20 @@ function articleCategories(article) {
   return categories.length
     ? categories
     : [article.lane === "Industry & Business" ? "Industry context" : "Production techniques"];
+}
+
+function timeWindowStart() {
+  if (state.timeWindow === "all") return null;
+  const monthOffset = state.timeWindow === "quarter" ? 2 : 0;
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth() - monthOffset, 1);
+}
+
+function articleWithinTimeWindow(article) {
+  const start = timeWindowStart();
+  if (!start) return true;
+  const published = new Date(article.published_at);
+  return Number.isNaN(published.getTime()) || published >= start;
 }
 
 function primaryCategory(article) {
@@ -236,8 +256,6 @@ function tokenMatches(article, token) {
       || normalize(`${article.source_id} ${article.source}`).includes(token.value);
   }
   if (token.field === "is") {
-    if (token.value === "read") return state.read.has(article.id);
-    if (token.value === "unread") return !state.read.has(article.id);
     if (token.value === "new") return Date.now() - new Date(article.published_at).getTime() < 24 * 60 * 60 * 1000;
     return false;
   }
@@ -261,10 +279,11 @@ function articleHasEnabledSource(article) {
 }
 
 function matchesBaseFilters(article) {
+  if (state.view !== "pinned" && !articleWithinTimeWindow(article)) return false;
   if (!articleHasEnabledSource(article)) return false;
   if (state.lane !== "All" && article.lane !== state.lane) return false;
   if (state.source !== "All" && !articleSourceIds(article).has(state.source)) return false;
-  if (state.view === "unread" && state.read.has(article.id)) return false;
+  if (state.view === "pinned" && !state.pinned.has(article.id)) return false;
   return matchesSearch(article);
 }
 
@@ -305,9 +324,9 @@ function renderCategories() {
 
 function sourceContext() {
   const articles = state.articles.filter((article) => {
+    if (state.view !== "pinned" && !articleWithinTimeWindow(article)) return false;
     if (!articleHasEnabledSource(article)) return false;
     if (state.lane !== "All" && article.lane !== state.lane) return false;
-    if (state.view === "unread" && state.read.has(article.id)) return false;
     if (!matchesSearch(article)) return false;
     return state.category === "All" || articleCategories(article).includes(state.category);
   });
@@ -352,7 +371,7 @@ function trimSummary(value) {
 }
 
 function storyMarkup(article) {
-  const read = state.read.has(article.id);
+  const pinned = state.pinned.has(article.id);
   const category = primaryCategory(article);
   const imageUrl = safeUrl(article.image);
   const image = imageUrl === "#" ? "" : `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`;
@@ -361,7 +380,7 @@ function storyMarkup(article) {
     .slice(0, 2);
   const coverage = article.source_count > 1 ? `${article.source_count} sources` : "Single source";
   return `
-    <article class="story-card${read ? " is-read" : ""}" style="--story-accent:${escapeHtml(article.accent || CATEGORY_COLORS[category] || "#7fa9ff")}">
+    <article class="story-card" style="--story-accent:${escapeHtml(article.accent || CATEGORY_COLORS[category] || "#7fa9ff")}">
       <div class="story-image${image ? "" : " no-image"}">
         ${image}
         <span>${escapeHtml(category)}</span>
@@ -372,48 +391,45 @@ function storyMarkup(article) {
           <span class="lane-label${article.lane === "Industry & Business" ? " is-industry" : ""}">${article.lane === "Industry & Business" ? "Industry" : "Tech"}</span>
           <time datetime="${escapeHtml(article.published_at)}">${escapeHtml(relativeTime(article.published_at))}</time>
         </div>
-        <h3><a href="${escapeHtml(safeUrl(article.url))}" target="_blank" rel="noopener noreferrer" data-read-id="${escapeHtml(article.id)}">${escapeHtml(article.title)}</a></h3>
+        <h3><a href="${escapeHtml(safeUrl(article.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(article.title)}</a></h3>
         <p>${escapeHtml(trimSummary(article.summary))}</p>
         ${reasons.length ? `<div class="reason-list">${reasons.map((reason) => `<span>${escapeHtml(reason)}</span>`).join("")}</div>` : ""}
-        <footer><span>${escapeHtml(coverage)}</span><a href="${escapeHtml(safeUrl(article.url))}" target="_blank" rel="noopener noreferrer" data-read-id="${escapeHtml(article.id)}">Read original <i aria-hidden="true">↗</i></a></footer>
+        <footer><span>${escapeHtml(coverage)}</span><div class="story-footer-actions"><button class="pin-button${pinned ? " is-pinned" : ""}" type="button" data-pin-id="${escapeHtml(article.id)}" aria-label="${pinned ? "Unpin" : "Pin"} ${escapeHtml(article.title)}" aria-pressed="${pinned}">${pinned ? "★" : "☆"}</button><a href="${escapeHtml(safeUrl(article.url))}" target="_blank" rel="noopener noreferrer">Read original <i aria-hidden="true">↗</i></a></div></footer>
       </div>
     </article>`;
 }
 
-function briefArticles() {
-  const ranked = state.articles
-    .filter((article) => articleHasEnabledSource(article) && !state.read.has(article.id))
-    .sort((left, right) => (right.priority_score || 0) - (left.priority_score || 0));
-  const technical = ranked.filter((article) => article.lane !== "Industry & Business").slice(0, 6);
-  const industry = ranked.filter((article) => article.lane === "Industry & Business").slice(0, 3);
-  const chosen = [...technical, ...industry];
-  for (const article of ranked) {
-    if (chosen.length >= 9) break;
-    if (!chosen.some((item) => item.id === article.id)) chosen.push(article);
-  }
-  return chosen.sort((left, right) => (right.priority_score || 0) - (left.priority_score || 0));
+const RECENCY_SECTIONS = [
+  { key: "day", label: "Last 24 hours" },
+  { key: "three-days", label: "Last 3 days" },
+  { key: "older", label: "Earlier" },
+];
+
+function articleRecencyBucket(article) {
+  const published = new Date(article.published_at).getTime();
+  if (Number.isNaN(published)) return "older";
+  const age = Math.max(0, Date.now() - published);
+  if (age < 24 * 60 * 60 * 1000) return "day";
+  if (age < 3 * 24 * 60 * 60 * 1000) return "three-days";
+  return "older";
 }
 
-function renderBrief() {
-  const articles = briefArticles();
-  const technicalCount = articles.filter((article) => article.lane !== "Industry & Business").length;
-  const industryCount = articles.length - technicalCount;
-  elements.briefIntro.textContent = articles.length
-    ? `${articles.length} unread stories: ${technicalCount} technical ${technicalCount === 1 ? "signal" : "signals"}${industryCount ? ` and ${industryCount} industry ${industryCount === 1 ? "update" : "updates"}` : ""}.`
-    : "You have read every story in the current mobile feed.";
-  elements.briefList.innerHTML = articles.length
-    ? articles.map((article, index) => `
-      <a class="brief-item${article.lane === "Industry & Business" ? " is-industry" : ""}" href="${escapeHtml(safeUrl(article.url))}" target="_blank" rel="noopener noreferrer" data-read-id="${escapeHtml(article.id)}">
-        <span>${String(index + 1).padStart(2, "0")}</span>
-        <div><small>${escapeHtml(article.source)} · ${escapeHtml(primaryCategory(article))}</small><strong>${escapeHtml(article.title)}</strong><p>${escapeHtml(trimSummary(article.summary))}</p></div>
-        <i aria-hidden="true">↗</i>
-      </a>`).join("")
-    : `<div class="brief-empty"><span>✓</span><strong>Briefing complete</strong><p>Fresh stories will appear after the next scheduled update.</p></div>`;
-  elements.briefMarkRead.disabled = !articles.length;
+function storyListMarkup(articles) {
+  return RECENCY_SECTIONS.map(({ key, label }) => {
+    const sectionArticles = articles.filter((article) => articleRecencyBucket(article) === key);
+    if (!sectionArticles.length) return "";
+    const headingId = "recency-" + key;
+    return [
+      '<section class="recency-section" aria-labelledby="' + headingId + '">',
+      '<div class="recency-section-heading"><h2 id="' + headingId + '">' + escapeHtml(label) + '</h2><span>' + sectionArticles.length + '</span></div>',
+      '<div class="recency-stories">' + sectionArticles.map(storyMarkup).join("") + '</div>',
+      '</section>',
+    ].join("");
+  }).join("");
 }
 
 function updateLaneCounts() {
-  const enabledArticles = state.articles.filter(articleHasEnabledSource);
+  const enabledArticles = state.articles.filter((article) => articleHasEnabledSource(article) && (state.view === "pinned" ? state.pinned.has(article.id) : articleWithinTimeWindow(article)));
   document.querySelectorAll("[data-lane]").forEach((button) => {
     const lane = button.dataset.lane;
     const count = lane === "All" ? enabledArticles.length : enabledArticles.filter((article) => article.lane === lane).length;
@@ -430,7 +446,7 @@ function renderFilterDrawerSummary() {
     : (state.payload?.sources || []).find((item) => item.id === state.source)?.name || state.source;
   const lane = state.lane === "All" ? "All types" : (state.lane === "Tech & Development" ? "Tech" : "Industry");
   const category = state.category === "All" ? "All categories" : state.category;
-  elements.filterDrawerSummary.textContent = `${lane} · ${category} · ${source}`;
+  elements.filterDrawerSummary.textContent = `${TIME_WINDOW_LABELS[state.timeWindow]} · ${lane} · ${category} · ${source}`;
 }
 
 function setFilterDrawerExpanded(expanded) {
@@ -441,22 +457,21 @@ function setFilterDrawerExpanded(expanded) {
 function render() {
   if (!state.payload) return;
   const articles = visibleArticles();
-  const enabledArticles = state.articles.filter(articleHasEnabledSource);
-  const unread = enabledArticles.filter((article) => !state.read.has(article.id)).length;
-  const brief = briefArticles();
+  const enabledArticles = state.articles.filter((article) => articleHasEnabledSource(article) && articleWithinTimeWindow(article));
+  const pinned = state.articles.filter((article) => articleHasEnabledSource(article) && state.pinned.has(article.id)).length;
   syncControlValues();
   renderCategories();
   renderSourceButtons();
   renderSourceManager();
   renderFilterDrawerSummary();
   updateLaneCounts();
-  elements.storyTotal.textContent = enabledArticles.length;
+  elements.storyTotal.textContent = state.view === "pinned" ? pinned : enabledArticles.length;
   elements.repeatTotal.textContent = state.payload.duplicates_collapsed || 0;
-  elements.briefTotal.textContent = brief.length;
-  elements.unreadTotal.textContent = unread;
-  elements.feedKicker.textContent = state.view === "unread" ? "Unread signal" : "Latest signal";
-  elements.feedTitle.textContent = state.view === "unread" ? "Still waiting for you" : "What’s worth a look";
-  elements.storyList.innerHTML = articles.map(storyMarkup).join("");
+  elements.recentTotal.textContent = enabledArticles.filter((article) => articleRecencyBucket(article) === "day").length;
+  elements.pinnedTotal.textContent = pinned;
+  elements.feedKicker.textContent = state.view === "pinned" ? "Pinned signal" : "Latest signal";
+  elements.feedTitle.textContent = state.view === "pinned" ? "Keep these close" : "What is worth a look";
+  elements.storyList.innerHTML = storyListMarkup(articles);
   elements.storyList.classList.toggle("is-compact", state.density === "compact");
   elements.storyList.hidden = articles.length === 0;
   elements.empty.hidden = articles.length > 0;
@@ -479,7 +494,11 @@ function render() {
   elements.densityToggle.setAttribute("aria-label", compact ? "Use comfortable cards" : "Use compact cards");
   elements.densityToggle.title = compact ? "Use comfortable cards" : "Use compact cards";
   elements.densityToggle.querySelector("span:last-child").textContent = compact ? "Comfort" : "Compact";
-  renderBrief();
+  document.querySelectorAll(".time-window-button[data-time-window]").forEach((button) => {
+    const active = button.dataset.timeWindow === state.timeWindow;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
 }
 
 function updateConnection(online, cached = false) {
@@ -499,7 +518,7 @@ async function loadFeed() {
     state.payload = payload;
     state.articles = payload.articles;
     localStorage.setItem(storageKeys.feed, JSON.stringify(payload));
-    persistRead();
+    persistPinned();
     persistDisabledSources();
     if (state.disabledSources.has(state.source)) state.source = "All";
     render();
@@ -516,6 +535,7 @@ async function loadFeed() {
       if (!cached?.articles?.length) throw error;
       state.payload = cached;
       state.articles = cached.articles;
+      persistPinned();
       persistDisabledSources();
       if (state.disabledSources.has(state.source)) state.source = "All";
       render();
@@ -539,6 +559,8 @@ function resetFilters() {
   state.source = "All";
   state.search = "";
   state.view = "latest";
+  state.timeWindow = "month";
+  localStorage.setItem(storageKeys.timeWindow, state.timeWindow);
   syncControlValues();
   render();
 }
@@ -558,20 +580,18 @@ function closeSourceManager() {
   sourceManagerReturnFocus = null;
 }
 
-function openBrief() {
-  if (!elements.sourceManagerPanel.hidden) closeSourceManager();
-  renderBrief();
-  elements.briefPanel.hidden = false;
-  document.body.classList.add("brief-open");
-  elements.briefPanel.querySelector("[data-close-brief]").focus();
-}
-
-function closeBrief() {
-  elements.briefPanel.hidden = true;
-  document.body.classList.remove("brief-open");
-}
 
 document.addEventListener("click", (event) => {
+  const timeWindowButton = event.target.closest(".time-window-button[data-time-window]");
+  if (timeWindowButton) {
+    state.timeWindow = Object.prototype.hasOwnProperty.call(TIME_WINDOW_LABELS, timeWindowButton.dataset.timeWindow)
+      ? timeWindowButton.dataset.timeWindow
+      : "month";
+    localStorage.setItem(storageKeys.timeWindow, state.timeWindow);
+    render();
+    return;
+  }
+
   if (event.target.closest("[data-open-source-manager]")) {
     openSourceManager();
     return;
@@ -620,21 +640,21 @@ document.addEventListener("click", (event) => {
 
   const viewButton = event.target.closest("[data-view]");
   if (viewButton) {
-    if (viewButton.dataset.view === "brief") openBrief();
-    else {
-      state.view = viewButton.dataset.view;
-      render();
-      document.querySelector(".feed-section").scrollIntoView({ behavior: "smooth", block: "start" });
-    }
+    state.view = viewButton.dataset.view;
+    render();
+    document.querySelector(".feed-section").scrollIntoView({ behavior: "smooth", block: "start" });
     return;
   }
 
-  const readLink = event.target.closest("[data-read-id]");
-  if (readLink) {
-    state.read.add(readLink.dataset.readId);
-    persistRead();
-    window.setTimeout(render, 100);
+  const pinButton = event.target.closest("[data-pin-id]");
+  if (pinButton) {
+    const id = pinButton.dataset.pinId;
+    state.pinned.has(id) ? state.pinned.delete(id) : state.pinned.add(id);
+    persistPinned();
+    render();
+    return;
   }
+
 });
 
 elements.searchInputs.forEach((input) => input.addEventListener("input", () => {
@@ -662,21 +682,6 @@ elements.clearFilters.addEventListener("click", () => {
     persistDisabledSources();
   }
   resetFilters();
-});
-document.querySelector("#brief-hero-button").addEventListener("click", openBrief);
-document.querySelectorAll("[data-close-brief]").forEach((button) => button.addEventListener("click", closeBrief));
-
-document.querySelector("#mark-visible-read").addEventListener("click", () => {
-  visibleArticles().forEach((article) => state.read.add(article.id));
-  persistRead();
-  render();
-});
-
-elements.briefMarkRead.addEventListener("click", () => {
-  briefArticles().forEach((article) => state.read.add(article.id));
-  persistRead();
-  render();
-  closeBrief();
 });
 
 window.addEventListener("beforeinstallprompt", (event) => {
@@ -707,7 +712,6 @@ document.addEventListener("visibilitychange", () => {
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (!elements.sourceManagerPanel.hidden) closeSourceManager();
-  else if (!elements.briefPanel.hidden) closeBrief();
 });
 
 elements.scrollTop.addEventListener("click", () => {
@@ -762,7 +766,7 @@ elements.filterDrawerHandle.addEventListener("pointercancel", () => {
 });
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(() => {}));
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=20260720").catch(() => {}));
 }
 
 loadFeed();
