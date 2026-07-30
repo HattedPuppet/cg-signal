@@ -122,6 +122,7 @@ class ThumbnailPipelineTests(unittest.TestCase):
 
         fetch.assert_called_once_with(source, {"feed": source["feed"]})
         write_cache.assert_called_once()
+        self.assertTrue(write_cache.call_args.args[0]["thumbnails_refreshing"])
         schedule.assert_called_once()
         enrich.assert_not_called()
         self.assertEqual(payload["articles"], [article])
@@ -147,6 +148,53 @@ class ThumbnailPipelineTests(unittest.TestCase):
             written["articles"][0]["image"],
             "https://example.com/preview.jpg",
         )
+        self.assertFalse(written["thumbnails_refreshing"])
+
+    def test_completed_thumbnail_worker_clears_state_when_no_image_is_found(self):
+        article = cached_article()
+        cached = {
+            "generated_at": "2026-07-30T00:00:00+00:00",
+            "articles": [article],
+            "thumbnails_refreshing": True,
+        }
+        with (
+            mock.patch.object(server, "read_cache", return_value=cached),
+            mock.patch.object(server, "write_cache") as write_cache,
+        ):
+            server.update_cached_thumbnail_images(
+                [article], "2026-07-30T00:00:00+00:00"
+            )
+
+        written = write_cache.call_args.args[0]
+        self.assertEqual(written["articles"], [article])
+        self.assertFalse(written["thumbnails_refreshing"])
+
+    def test_thumbnail_worker_clears_state_after_enrichment_failure(self):
+        article = cached_article()
+        generated_at = "2026-07-30T00:00:00+00:00"
+        cached = {
+            "generated_at": generated_at,
+            "articles": [article],
+            "thumbnails_refreshing": True,
+        }
+        previous_task = server.THUMBNAIL_PENDING_TASK
+        previous_active = server.THUMBNAIL_WORKER_ACTIVE
+        server.THUMBNAIL_PENDING_TASK = ([article], generated_at)
+        server.THUMBNAIL_WORKER_ACTIVE = True
+        try:
+            with (
+                mock.patch.object(
+                    server, "enrich_missing_images", side_effect=RuntimeError("boom")
+                ),
+                mock.patch.object(server, "read_cache", return_value=cached),
+                mock.patch.object(server, "write_cache") as write_cache,
+            ):
+                server.thumbnail_worker()
+        finally:
+            server.THUMBNAIL_PENDING_TASK = previous_task
+            server.THUMBNAIL_WORKER_ACTIVE = previous_active
+
+        written = write_cache.call_args.args[0]
         self.assertFalse(written["thumbnails_refreshing"])
 
 

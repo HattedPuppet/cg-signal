@@ -113,7 +113,10 @@ let noteSaveTimer = null;
 let backgroundRefreshTimer = null;
 let feedRefreshWaitPending = false;
 let thumbnailRefreshWaitPending = false;
+let thumbnailRefreshRetryTimer = null;
+let thumbnailRefreshRetryDelay = 750;
 let archiveSearchTimer = null;
+const THUMBNAIL_REFRESH_RETRY_MAX_MS = 10_000;
 
 const elements = {
   appShell: document.querySelector(".app-shell"),
@@ -1061,12 +1064,31 @@ function syncAfterBackgroundRefresh(payload) {
 function syncAfterThumbnailRefresh(payload) {
   if (!payload.thumbnails_refreshing) {
     thumbnailRefreshWaitPending = false;
+    window.clearTimeout(thumbnailRefreshRetryTimer);
+    thumbnailRefreshRetryTimer = null;
+    thumbnailRefreshRetryDelay = 750;
     return;
   }
   if (thumbnailRefreshWaitPending) return;
+  window.clearTimeout(thumbnailRefreshRetryTimer);
+  thumbnailRefreshRetryTimer = null;
   thumbnailRefreshWaitPending = true;
   loadFeed(false, { background: true, waitForThumbnails: true })
-    .finally(() => { thumbnailRefreshWaitPending = false; });
+    .finally(() => {
+      thumbnailRefreshWaitPending = false;
+      if (!state.payload?.thumbnails_refreshing || thumbnailRefreshRetryTimer) return;
+      const retryDelay = thumbnailRefreshRetryDelay;
+      thumbnailRefreshRetryDelay = Math.min(
+        thumbnailRefreshRetryDelay * 2,
+        THUMBNAIL_REFRESH_RETRY_MAX_MS,
+      );
+      thumbnailRefreshRetryTimer = window.setTimeout(() => {
+        thumbnailRefreshRetryTimer = null;
+        if (state.payload?.thumbnails_refreshing) {
+          syncAfterThumbnailRefresh(state.payload);
+        }
+      }, retryDelay);
+    });
 }
 
 function showWarnings(payload) {

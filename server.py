@@ -1754,8 +1754,6 @@ def update_cached_thumbnail_images(
         for article in articles
         if article.get("url") and article.get("image")
     }
-    if not images_by_url:
-        return
 
     with FEED_REFRESH_LOCK:
         cached = read_cache()
@@ -1770,7 +1768,7 @@ def update_cached_thumbnail_images(
                 updated["image"] = image
                 changed = True
             updated_articles.append(updated)
-        if not changed:
+        if not changed and not cached.get("thumbnails_refreshing"):
             return
         updated_payload = {
             **cached,
@@ -1797,9 +1795,12 @@ def thumbnail_worker() -> None:
         articles, generated_at = task
         try:
             enrich_missing_images(articles)
-            update_cached_thumbnail_images(articles, generated_at)
         except Exception as exc:  # Thumbnail failures must never delay article delivery.
             print(f"[{datetime.now().strftime('%H:%M:%S')}] Thumbnail refresh failed: {exc}")
+        try:
+            update_cached_thumbnail_images(articles, generated_at)
+        except Exception as exc:  # A cache update failure must not stop later queued tasks.
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Thumbnail cache update failed: {exc}")
 
 
 def schedule_thumbnail_enrichment(
@@ -1859,6 +1860,12 @@ def cached_feed_payload(
     payload = dict(cached)
     payload["cached"] = True
     payload["refreshing"] = refreshing
+    if payload.get("thumbnails_refreshing"):
+        with THUMBNAIL_CONDITION:
+            thumbnail_worker_active = THUMBNAIL_WORKER_ACTIVE
+        payload["thumbnails_refreshing"] = (
+            thumbnail_worker_active or FEED_REFRESH_LOCK.locked()
+        )
     if "archive_count" not in payload:
         try:
             payload["archive_count"] = archive_article_count()
@@ -1929,14 +1936,14 @@ def refresh_feed(cached: dict[str, Any] | None = None) -> dict[str, Any]:
         payload["archive_count"] = archive_articles(clusters)
     except (OSError, sqlite3.Error):
         payload["archive_count"] = archive_article_count()
+    payload["thumbnails_refreshing"] = bool(missing_thumbnail_articles)
     if configured_sources:
         try:
             write_cache(payload)
         except OSError:
             pass
-    payload["thumbnails_refreshing"] = bool(missing_thumbnail_articles) and (
+    if payload["thumbnails_refreshing"]:
         schedule_thumbnail_enrichment(all_articles, payload["generated_at"])
-    )
     return payload
 
 
