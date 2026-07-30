@@ -1860,6 +1860,12 @@ def cached_feed_payload(
     payload = dict(cached)
     payload["cached"] = True
     payload["refreshing"] = refreshing
+    if payload.get("thumbnails_refreshing"):
+        with THUMBNAIL_CONDITION:
+            thumbnail_worker_active = THUMBNAIL_WORKER_ACTIVE
+        payload["thumbnails_refreshing"] = (
+            thumbnail_worker_active or FEED_REFRESH_LOCK.locked()
+        )
     if "archive_count" not in payload:
         try:
             payload["archive_count"] = archive_article_count()

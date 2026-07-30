@@ -83,6 +83,34 @@ class FeedCacheTests(unittest.TestCase):
         wait.assert_called_once_with()
         self.assertEqual(result["articles"], cached["articles"])
 
+    def test_orphaned_thumbnail_refresh_state_is_cleared_after_restart(self):
+        cached = {
+            **self.cached_feed(age_seconds=1),
+            "thumbnails_refreshing": True,
+        }
+        previous_active = server.THUMBNAIL_WORKER_ACTIVE
+        server.THUMBNAIL_WORKER_ACTIVE = False
+        try:
+            result = server.cached_feed_payload(cached)
+        finally:
+            server.THUMBNAIL_WORKER_ACTIVE = previous_active
+
+        self.assertFalse(result["thumbnails_refreshing"])
+
+    def test_active_thumbnail_refresh_state_is_preserved(self):
+        cached = {
+            **self.cached_feed(age_seconds=1),
+            "thumbnails_refreshing": True,
+        }
+        previous_active = server.THUMBNAIL_WORKER_ACTIVE
+        server.THUMBNAIL_WORKER_ACTIVE = True
+        try:
+            result = server.cached_feed_payload(cached)
+        finally:
+            server.THUMBNAIL_WORKER_ACTIVE = previous_active
+
+        self.assertTrue(result["thumbnails_refreshing"])
+
 
 if __name__ == "__main__":
     unittest.main()
