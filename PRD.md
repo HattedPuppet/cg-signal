@@ -88,7 +88,10 @@ And is actively interested in:
 - Gather supported RSS and Atom sources at most every 15 minutes unless a
   manual refresh is requested.
 - Continue serving the last successful cache when individual feeds fail.
-- Retrieve standard article preview images when feeds omit thumbnails.
+- Use publisher `ETag` and `Last-Modified` validators where available and reuse
+  the last per-source snapshot after a temporary failure.
+- Publish parsed articles before retrieving missing standard preview images;
+  thumbnail discovery must run as a non-critical background stage.
 - Support English and Japanese titles, summaries, dates, and classifications.
 
 ### Organization and deduplication

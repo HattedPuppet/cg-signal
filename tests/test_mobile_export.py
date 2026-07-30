@@ -1,6 +1,7 @@
 import importlib.util
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -47,6 +48,7 @@ class MobileExportTests(unittest.TestCase):
                     "accent": "#fff",
                     "ok": True,
                     "count": 1,
+                    "etag": '"private-request-validator"',
                 }
             ],
             "warnings": ["Example: connection detail that should stay private"],
@@ -62,6 +64,7 @@ class MobileExportTests(unittest.TestCase):
         self.assertNotIn("never publish this", serialized)
         self.assertNotIn("private_note", serialized)
         self.assertNotIn("feed.xml", serialized)
+        self.assertNotIn("private-request-validator", serialized)
         self.assertNotIn("connection detail", serialized)
         self.assertEqual(result["unavailable_sources"], ["Example"])
 
@@ -73,6 +76,66 @@ class MobileExportTests(unittest.TestCase):
             self.assertTrue((output / "feed.json").is_file())
             self.assertFalse((output / "user-state.json").exists())
             self.assertFalse((output / "cg-signal.db").exists())
+
+    def test_scheduled_build_restores_only_the_public_request_cache(self):
+        project_root = MODULE_PATH.parents[1]
+        workflow = (
+            project_root / ".github" / "workflows" / "mobile-pages.yml"
+        ).read_text(encoding="utf-8")
+        ignore = (project_root / ".gitignore").read_text(encoding="utf-8")
+
+        self.assertIn("uses: actions/cache@v5", workflow)
+        self.assertIn("path: .mobile-cache", workflow)
+        self.assertIn("--request-cache-dir .mobile-cache", workflow)
+        self.assertIn(".mobile-cache/", ignore)
+
+    def test_previous_public_feed_fills_transient_gaps_with_bounded_history(self):
+        current = self.fixture()
+        previous = {
+            "generated_at": "2026-07-15T10:00:00+00:00",
+            "articles": [
+                {
+                    "id": "article-2",
+                    "title": "A retained Houdini story",
+                    "url": "https://example.com/retained",
+                    "published_at": "2026-07-10T09:00:00+00:00",
+                    "source": "Example",
+                    "source_id": "example",
+                    "private_note": "must still be removed",
+                },
+                {
+                    "id": "duplicate-url",
+                    "title": "Duplicate of the current story",
+                    "url": "https://example.com/article",
+                    "published_at": "2026-07-15T09:00:00+00:00",
+                    "source": "Example",
+                    "source_id": "example",
+                },
+                {
+                    "id": "expired",
+                    "title": "Outside the rolling history",
+                    "url": "https://example.com/expired",
+                    "published_at": "2025-01-01T09:00:00+00:00",
+                    "source": "Example",
+                    "source_id": "example",
+                },
+            ],
+            "sources": current["sources"],
+        }
+
+        result = build_mobile.merge_feed_history(
+            current,
+            previous,
+            now=datetime(2026, 7, 16, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual(
+            [article["id"] for article in result["articles"]],
+            ["article-1", "article-2"],
+        )
+        self.assertEqual(result["carried_forward_count"], 1)
+        self.assertEqual(result["sources"][0]["count"], 2)
+        self.assertNotIn("private_note", str(result))
 
     def test_mobile_shell_keeps_inline_controls_reachable(self):
         site = MODULE_PATH.parent / "site"
@@ -130,6 +193,7 @@ class MobileExportTests(unittest.TestCase):
         self.assertIn('disabledSources: "cg-signal-mobile:disabled-sources"', javascript)
         self.assertIn("function persistDisabledSources()", javascript)
         self.assertIn("function articleHasEnabledSource(article)", javascript)
+        self.assertNotIn("if (article.source_id) return !state.disabledSources", javascript)
         self.assertIn("function renderSourceManager()", javascript)
         self.assertNotIn("resultCount", javascript)
         self.assertIn("localStorage.removeItem(storageKeys.disabledSources)", javascript)
@@ -148,6 +212,7 @@ class MobileExportTests(unittest.TestCase):
         self.assertNotIn('id="briefing-listen"', html)
         self.assertNotIn('id="unread-count"', html)
         self.assertIn('pinned: "cg-signal-mobile:pinned"', javascript)
+        self.assertNotIn("currentIds.has(id)", javascript)
         self.assertNotIn("state.read", javascript)
         self.assertNotIn("data-read-id", javascript)
         self.assertNotIn("brief", javascript.lower())
@@ -166,11 +231,13 @@ class MobileExportTests(unittest.TestCase):
         self.assertIn('timeWindow: "cg-signal-mobile:time-window"', javascript)
         self.assertIn("function articleWithinTimeWindow(article)", javascript)
         self.assertIn("function storyListMarkup(articles)", javascript)
-        self.assertIn("cg-signal-mobile-v16", service_worker)
-        self.assertIn("styles.css?v=20260720", service_worker)
-        self.assertIn("app.js?v=20260720", service_worker)
-        self.assertIn("sw.js?v=20260720", javascript)
-        self.assertIn("sw.js?v=20260720", service_worker)
+        self.assertIn("function readCachedFeed()", javascript)
+        self.assertIn("applyFeed(cached)", javascript)
+        self.assertIn("cg-signal-mobile-v17", service_worker)
+        self.assertIn("styles.css?v=20260730", service_worker)
+        self.assertIn("app.js?v=20260730", service_worker)
+        self.assertIn("sw.js?v=20260730", javascript)
+        self.assertIn("sw.js?v=20260730", service_worker)
         self.assertIn("fetch(event.request)", service_worker)
         self.assertIn("function articleRecencyBucket(article)", javascript)
         self.assertIn("Last 24 hours", javascript)

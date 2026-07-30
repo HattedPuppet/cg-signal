@@ -29,8 +29,24 @@ jobs:
           python-version: "3.13"
       - name: Run regression tests
         run: python -m unittest discover -s tests -v
+      - name: Restore publisher request cache
+        uses: actions/cache@v5
+        with:
+          path: .mobile-cache
+          key: cg-signal-mobile-http-${{ github.run_id }}
+          restore-keys: |
+            cg-signal-mobile-http-
+      - name: Recover previous public feed
+        env:
+          PAGES_FEED_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/feed.json
+        run: |
+          mkdir -p .cache
+          curl --fail --silent --show-error --location --retry 3 --output .cache/mobile-previous-feed.json "$PAGES_FEED_URL" || true
       - name: Gather and build mobile feed
-        run: python mobile/build_mobile.py
+        run: >-
+          python mobile/build_mobile.py
+          --previous-json .cache/mobile-previous-feed.json
+          --request-cache-dir .mobile-cache
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
       - name: Upload GitHub Pages artifact

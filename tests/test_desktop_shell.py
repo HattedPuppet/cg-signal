@@ -65,6 +65,13 @@ class DesktopShellTests(unittest.TestCase):
         self.assertIn("function articleMonthLabel(article)", javascript)
         self.assertIn(".month-divider", styles)
 
+    def test_startup_requests_state_and_feed_in_parallel(self):
+        javascript = (SITE / "app.js").read_text(encoding="utf-8")
+        self.assertIn("Promise.all([loadUserState(), loadFeed()])", javascript)
+        self.assertIn("syncAfterBackgroundRefresh(payload)", javascript)
+        self.assertIn("syncAfterThumbnailRefresh(payload)", javascript)
+        self.assertIn("?wait_thumbnails=1", javascript)
+
 
 if __name__ == "__main__":
     unittest.main()

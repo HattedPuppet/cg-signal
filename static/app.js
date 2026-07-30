@@ -111,6 +111,8 @@ const TOPIC_COLORS = {
 let stateSaveTimer = null;
 let noteSaveTimer = null;
 let backgroundRefreshTimer = null;
+let feedRefreshWaitPending = false;
+let thumbnailRefreshWaitPending = false;
 let archiveSearchTimer = null;
 
 const elements = {
@@ -1030,7 +1032,7 @@ function updateDashboard(payload, { background = false } = {}) {
   elements.heroUnique.textContent = payload.unique_count ?? state.articles.length;
   elements.heroCollapsed.textContent = payload.duplicates_collapsed ?? 0;
   elements.lastUpdated.textContent = payload.generated_at
-    ? `Updated ${relativeTime(payload.generated_at)}${payload.cached ? " · local cache" : ""}`
+    ? `Updated ${relativeTime(payload.generated_at)}${payload.cached ? " · local cache" : ""}${payload.refreshing ? " · refreshing" : ""}${payload.thumbnails_refreshing ? " · loading images" : ""}`
     : "Update time unavailable";
   renderSources(payload.sources || []);
   showWarnings(payload);
@@ -1043,6 +1045,28 @@ function updateDashboard(payload, { background = false } = {}) {
     }
   }
   state.firstFeedLoaded = true;
+}
+
+function syncAfterBackgroundRefresh(payload) {
+  if (!payload.refreshing) {
+    feedRefreshWaitPending = false;
+    return;
+  }
+  if (feedRefreshWaitPending) return;
+  feedRefreshWaitPending = true;
+  loadFeed(false, { background: true, waitForRefresh: true })
+    .finally(() => { feedRefreshWaitPending = false; });
+}
+
+function syncAfterThumbnailRefresh(payload) {
+  if (!payload.thumbnails_refreshing) {
+    thumbnailRefreshWaitPending = false;
+    return;
+  }
+  if (thumbnailRefreshWaitPending) return;
+  thumbnailRefreshWaitPending = true;
+  loadFeed(false, { background: true, waitForThumbnails: true })
+    .finally(() => { thumbnailRefreshWaitPending = false; });
 }
 
 function showWarnings(payload) {
@@ -1058,18 +1082,30 @@ function showWarnings(payload) {
   elements.notice.hidden = false;
 }
 
-async function loadFeed(force = false, { background = false } = {}) {
+async function loadFeed(
+  force = false,
+  { background = false, waitForRefresh = false, waitForThumbnails = false } = {},
+) {
   if (!background) {
     elements.refresh.classList.add("is-loading");
     elements.refresh.disabled = true;
     elements.stories.setAttribute("aria-busy", "true");
   }
   try {
-    const response = await fetch(`/api/feed${force ? "?refresh=1" : ""}`, { cache: "no-store" });
+    const query = force
+      ? "?refresh=1"
+      : waitForRefresh
+        ? "?wait=1"
+        : waitForThumbnails
+          ? "?wait_thumbnails=1"
+          : "";
+    const response = await fetch(`/api/feed${query}`, { cache: "no-store" });
     if (!response.ok) throw new Error(`Feed request failed (${response.status})`);
     const payload = await response.json();
     if (payload.error) throw new Error(payload.detail || payload.error);
     updateDashboard(payload, { background });
+    syncAfterBackgroundRefresh(payload);
+    syncAfterThumbnailRefresh(payload);
   } catch (error) {
     if (background && state.payload) {
       console.warn("Background feed check failed; keeping the current board.", error);
@@ -1648,8 +1684,8 @@ if (localStorage.getItem(storageKeys.theme) === "night") {
 setSidebarOpen(state.sidebarOpen);
 
 async function initialize() {
-  await loadUserState();
-  await loadFeed();
+  await Promise.all([loadUserState(), loadFeed()]);
+  render();
   localStorage.setItem(storageKeys.lastVisit, state.sessionStartedAt);
   scheduleBackgroundChecks();
 }
