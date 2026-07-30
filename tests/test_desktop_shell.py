@@ -72,6 +72,16 @@ class DesktopShellTests(unittest.TestCase):
         self.assertIn("syncAfterThumbnailRefresh(payload)", javascript)
         self.assertIn("?wait_thumbnails=1", javascript)
 
+    def test_thumbnail_wait_rearms_after_a_server_timeout(self):
+        javascript = (SITE / "app.js").read_text(encoding="utf-8")
+        self.assertIn("thumbnailRefreshRetryTimer", javascript)
+        self.assertIn("THUMBNAIL_REFRESH_RETRY_MAX_MS", javascript)
+        self.assertIn(
+            "if (state.payload?.thumbnails_refreshing) {\n"
+            "          syncAfterThumbnailRefresh(state.payload);",
+            javascript,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
