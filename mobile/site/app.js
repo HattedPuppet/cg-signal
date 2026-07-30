@@ -120,18 +120,26 @@ function disabledSourceSet() {
 }
 
 function persistPinned() {
-  const currentIds = new Set(state.articles.map((article) => article.id));
-  const bounded = [...state.pinned].filter((id) => currentIds.has(id)).slice(-1500);
+  const bounded = [...state.pinned].filter((id) => typeof id === "string").slice(-1500);
   state.pinned = new Set(bounded);
-  localStorage.setItem(storageKeys.pinned, JSON.stringify(bounded));
+  try {
+    localStorage.setItem(storageKeys.pinned, JSON.stringify(bounded));
+  } catch (error) {
+    console.warn("CG Signal could not persist pins on this device.", error);
+  }
 }
 
 function persistDisabledSources() {
-  const sourceIds = new Set((state.payload?.sources || []).map((source) => source.id));
-  const disabled = [...state.disabledSources].filter((id) => sourceIds.has(id));
+  const disabled = [...state.disabledSources]
+    .filter((id) => typeof id === "string")
+    .slice(-500);
   state.disabledSources = new Set(disabled);
-  if (disabled.length) localStorage.setItem(storageKeys.disabledSources, JSON.stringify(disabled));
-  else localStorage.removeItem(storageKeys.disabledSources);
+  try {
+    if (disabled.length) localStorage.setItem(storageKeys.disabledSources, JSON.stringify(disabled));
+    else localStorage.removeItem(storageKeys.disabledSources);
+  } catch (error) {
+    console.warn("CG Signal could not persist source settings on this device.", error);
+  }
 }
 
 function escapeHtml(value) {
@@ -273,7 +281,6 @@ function articleSourceIds(article) {
 }
 
 function articleHasEnabledSource(article) {
-  if (article.source_id) return !state.disabledSources.has(article.source_id);
   const sourceIds = articleSourceIds(article);
   return sourceIds.size === 0 || [...sourceIds].some((id) => !state.disabledSources.has(id));
 }
@@ -501,48 +508,75 @@ function render() {
   });
 }
 
-function updateConnection(online, cached = false) {
+function updateConnection(online, cached = false, checking = false) {
   elements.connectionDot.classList.toggle("is-offline", !online);
   if (!state.payload) return;
   const generated = state.payload.generated_at ? relativeTime(state.payload.generated_at) : "recently";
-  elements.updateStatus.textContent = cached ? `Offline copy · updated ${generated}` : `Updated ${generated} · refreshes every 30 minutes`;
+  const retained = Number(state.payload.carried_forward_count || 0);
+  const retainedLabel = retained ? ` · ${retained} retained` : "";
+  elements.updateStatus.textContent = checking
+    ? `Stored copy · checking for updates${retainedLabel}`
+    : cached
+      ? `Offline copy · updated ${generated}${retainedLabel}`
+      : `Updated ${generated}${retainedLabel} · refreshes every 30 minutes`;
+}
+
+function readCachedFeed() {
+  try {
+    const payload = JSON.parse(localStorage.getItem(storageKeys.feed) || "null");
+    return Array.isArray(payload?.articles) && payload.articles.length ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+function applyFeed(payload, { store = false } = {}) {
+  state.payload = payload;
+  state.articles = payload.articles;
+  if (store) {
+    try {
+      localStorage.setItem(storageKeys.feed, JSON.stringify(payload));
+    } catch (error) {
+      console.warn("CG Signal could not update its offline feed copy.", error);
+    }
+  }
+  persistPinned();
+  persistDisabledSources();
+  if (state.disabledSources.has(state.source)) state.source = "All";
+  render();
 }
 
 async function loadFeed() {
   state.lastFetchAt = Date.now();
+  const cached = readCachedFeed();
+  if (!state.payload && cached) {
+    applyFeed(cached);
+    updateConnection(navigator.onLine, true, navigator.onLine);
+  }
   try {
     const response = await fetch("./feed.json", { cache: "no-store" });
     if (!response.ok) throw new Error(`Feed request failed (${response.status})`);
     const payload = await response.json();
     if (!Array.isArray(payload.articles) || !payload.articles.length) throw new Error("The hosted feed is empty.");
-    state.payload = payload;
-    state.articles = payload.articles;
-    localStorage.setItem(storageKeys.feed, JSON.stringify(payload));
-    persistPinned();
-    persistDisabledSources();
-    if (state.disabledSources.has(state.source)) state.source = "All";
-    render();
+    applyFeed(payload, { store: true });
     updateConnection(true);
     if (payload.unavailable_sources?.length) {
-      elements.notice.textContent = `Some sources missed the latest update: ${payload.unavailable_sources.join(", ")}. The remaining feed is current.`;
+      const retentionMessage = payload.carried_forward_count
+        ? " Recent articles from earlier successful updates are retained."
+        : "";
+      elements.notice.textContent = `Some sources missed the latest update: ${payload.unavailable_sources.join(", ")}.${retentionMessage}`;
       elements.notice.hidden = false;
     } else {
       elements.notice.hidden = true;
     }
   } catch (error) {
-    try {
-      const cached = JSON.parse(localStorage.getItem(storageKeys.feed) || "null");
-      if (!cached?.articles?.length) throw error;
-      state.payload = cached;
-      state.articles = cached.articles;
-      persistPinned();
-      persistDisabledSources();
-      if (state.disabledSources.has(state.source)) state.source = "All";
-      render();
+    const fallback = state.payload || cached;
+    if (fallback?.articles?.length) {
+      if (!state.payload) applyFeed(fallback);
       updateConnection(false, true);
       elements.notice.textContent = "The network is unavailable, so the most recent copy stored on this phone is shown.";
       elements.notice.hidden = false;
-    } catch {
+    } else {
       elements.storyList.hidden = true;
       elements.empty.hidden = false;
       elements.empty.querySelector("h2").textContent = "The mobile signal is unavailable";
@@ -766,7 +800,7 @@ elements.filterDrawerHandle.addEventListener("pointercancel", () => {
 });
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=20260720").catch(() => {}));
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=20260730").catch(() => {}));
 }
 
 loadFeed();

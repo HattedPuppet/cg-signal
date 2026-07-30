@@ -31,11 +31,14 @@ BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
 CACHE_DIR = BASE_DIR / ".cache"
 CACHE_FILE = CACHE_DIR / "feed-cache.json"
+FEED_SOURCE_CACHE_FILE = CACHE_DIR / "feed-source-cache.json"
 IMAGE_INDEX_FILE = CACHE_DIR / "image-index.json"
 USER_STATE_FILE = CACHE_DIR / "user-state.json"
 ARCHIVE_DB_FILE = CACHE_DIR / "cg-signal.db"
 PID_FILE = CACHE_DIR / "server.pid"
 CACHE_TTL_SECONDS = 15 * 60
+FEED_REFRESH_RETRY_SECONDS = 60
+FEED_SOURCE_CACHE_VERSION = 1  # Bump after changes to feed parsing or classification.
 IMAGE_INDEX_TTL_SECONDS = 30 * 86400
 MAX_ITEMS_PER_SOURCE = 40
 MAX_STATE_IDS = 5000
@@ -44,6 +47,10 @@ MAX_NOTE_LENGTH = 4000
 MAX_FEEDBACK_ITEMS = 500
 MAX_STATE_SOURCES = 200
 USER_STATE_LOCK = threading.Lock()
+FEED_REFRESH_LOCK = threading.Lock()
+THUMBNAIL_CONDITION = threading.Condition()
+THUMBNAIL_WORKER_ACTIVE = False
+THUMBNAIL_PENDING_TASK: tuple[list[dict[str, Any]], str] | None = None
 ARCHIVE_INIT_LOCK = threading.Lock()
 ARCHIVE_INITIALIZED = False
 MAX_ARCHIVE_PAGE_SIZE = 200
@@ -591,20 +598,20 @@ def read_image_index() -> dict[str, dict[str, Any]]:
 
 
 def write_image_index(index: dict[str, dict[str, Any]]) -> None:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    IMAGE_INDEX_FILE.parent.mkdir(parents=True, exist_ok=True)
     temporary = IMAGE_INDEX_FILE.with_suffix(".tmp")
     temporary.write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
     temporary.replace(IMAGE_INDEX_FILE)
 
 
-def enrich_missing_images(articles: list[dict[str, Any]]) -> None:
+def apply_cached_images(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
     missing = [article for article in articles if not article.get("image")]
     if not missing:
-        return
+        return []
 
     now = time.time()
     index = read_image_index()
-    to_fetch: dict[str, list[dict[str, Any]]] = {}
+    unresolved: list[dict[str, Any]] = []
     for article in missing:
         url = article["url"]
         cached = index.get(url, {})
@@ -612,7 +619,20 @@ def enrich_missing_images(articles: list[dict[str, Any]]) -> None:
         if age < IMAGE_INDEX_TTL_SECONDS:
             article["image"] = cached.get("image", "")
         else:
-            to_fetch.setdefault(url, []).append(article)
+            unresolved.append(article)
+    return unresolved
+
+
+def enrich_missing_images(articles: list[dict[str, Any]]) -> None:
+    missing = apply_cached_images(articles)
+    if not missing:
+        return
+
+    now = time.time()
+    index = read_image_index()
+    to_fetch: dict[str, list[dict[str, Any]]] = {}
+    for article in missing:
+        to_fetch.setdefault(article["url"], []).append(article)
 
     if not to_fetch:
         return
@@ -984,18 +1004,78 @@ def parse_feed_document(xml_bytes: bytes) -> ET.Element:
         raise original_error
 
 
-def fetch_source(source: dict[str, Any]) -> dict[str, Any]:
+def read_feed_source_cache() -> dict[str, dict[str, Any]]:
+    try:
+        payload = json.loads(FEED_SOURCE_CACHE_FILE.read_text(encoding="utf-8"))
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") != FEED_SOURCE_CACHE_VERSION
+        ):
+            return {}
+        sources = payload.get("sources", {}) if isinstance(payload, dict) else {}
+        return sources if isinstance(sources, dict) else {}
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def write_feed_source_cache(sources: dict[str, dict[str, Any]]) -> None:
+    FEED_SOURCE_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = FEED_SOURCE_CACHE_FILE.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(
+            {"schema_version": FEED_SOURCE_CACHE_VERSION, "sources": sources},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    temporary.replace(FEED_SOURCE_CACHE_FILE)
+
+
+def cached_source_entry(
+    source: dict[str, Any], cached: dict[str, Any] | None
+) -> dict[str, Any]:
+    if not isinstance(cached, dict) or cached.get("feed") != source["feed"]:
+        return {}
+    articles = cached.get("articles", [])
+    if not isinstance(articles, list) or not all(
+        isinstance(article, dict) for article in articles
+    ):
+        return {}
+    return cached
+
+
+def fetch_source(
+    source: dict[str, Any], cached: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    cached = cached_source_entry(source, cached)
+    cached_articles = [
+        {
+            **article,
+            "source": source["name"],
+            "source_id": source["id"],
+            "source_site": source["site"],
+            "accent": source["accent"],
+        }
+        for article in cached.get("articles", [])
+    ]
+    headers = {
+        "User-Agent": "CGSignal/1.0 (local personal RSS reader)",
+        "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.5",
+    }
+    if cached_articles and cached.get("etag"):
+        headers["If-None-Match"] = str(cached["etag"])
+    if cached_articles and cached.get("last_modified"):
+        headers["If-Modified-Since"] = str(cached["last_modified"])
     request = urllib.request.Request(
         source["feed"],
-        headers={
-            "User-Agent": "CGSignal/1.0 (local personal RSS reader)",
-            "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.5",
-        },
+        headers=headers,
     )
     started = time.monotonic()
     try:
         with urllib.request.urlopen(request, timeout=22) as response:
             xml_bytes = response.read(6_000_000)
+            etag = response.headers.get("ETag", "")
+            last_modified = response.headers.get("Last-Modified", "")
         root = parse_feed_document(xml_bytes)
         entries = [node for node in root.iter() if local_name(node.tag) in {"item", "entry"}]
         articles: list[dict[str, Any]] = []
@@ -1034,15 +1114,41 @@ def fetch_source(source: dict[str, Any]) -> dict[str, Any]:
             "ok": True,
             "message": "",
             "duration_ms": round((time.monotonic() - started) * 1000),
+            "etag": etag,
+            "last_modified": last_modified,
+            "not_modified": False,
+            "used_stale_cache": False,
         }
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ET.ParseError, OSError) as exc:
-        return {
-            "source": source,
-            "articles": [],
-            "ok": False,
-            "message": str(exc),
-            "duration_ms": round((time.monotonic() - started) * 1000),
-        }
+    except urllib.error.HTTPError as exc:
+        if exc.code == 304 and cached_articles:
+            return {
+                "source": source,
+                "articles": cached_articles,
+                "ok": True,
+                "message": "",
+                "duration_ms": round((time.monotonic() - started) * 1000),
+                "etag": exc.headers.get("ETag", cached.get("etag", "")),
+                "last_modified": exc.headers.get(
+                    "Last-Modified", cached.get("last_modified", "")
+                ),
+                "not_modified": True,
+                "used_stale_cache": False,
+            }
+        error: Exception = exc
+    except (urllib.error.URLError, TimeoutError, ET.ParseError, OSError) as exc:
+        error = exc
+
+    return {
+        "source": source,
+        "articles": cached_articles,
+        "ok": False,
+        "message": str(error),
+        "duration_ms": round((time.monotonic() - started) * 1000),
+        "etag": cached.get("etag", ""),
+        "last_modified": cached.get("last_modified", ""),
+        "not_modified": False,
+        "used_stale_cache": bool(cached_articles),
+    }
 
 
 def test_source(payload: Any) -> dict[str, Any]:
@@ -1607,35 +1713,195 @@ def write_user_state(payload: Any) -> dict[str, Any]:
     return normalized
 
 
-def build_feed(force: bool = False) -> dict[str, Any]:
-    cached = read_cache()
-    if cached and not force:
-        generated = datetime.fromisoformat(cached["generated_at"])
-        if (datetime.now(timezone.utc) - generated).total_seconds() < CACHE_TTL_SECONDS:
-            try:
-                cached["archive_count"] = archive_articles(cached.get("articles", []))
-            except (OSError, sqlite3.Error):
-                cached["archive_count"] = 0
-            cached["cached"] = True
-            return cached
+def update_feed_source_cache(
+    existing: dict[str, dict[str, Any]], results: list[dict[str, Any]]
+) -> None:
+    checked_at = datetime.now(timezone.utc).isoformat()
+    updated: dict[str, dict[str, Any]] = {}
+    for result in results:
+        source = result["source"]
+        source_id = source["id"]
+        previous = existing.get(source_id, {})
+        if result["ok"] and not result["not_modified"]:
+            updated[source_id] = {
+                "feed": source["feed"],
+                "etag": result.get("etag", ""),
+                "last_modified": result.get("last_modified", ""),
+                "articles": result["articles"],
+                "checked_at": checked_at,
+                "last_error": "",
+            }
+        elif previous.get("feed") == source["feed"]:
+            updated[source_id] = {
+                **previous,
+                "etag": result.get("etag") or previous.get("etag", ""),
+                "last_modified": result.get("last_modified")
+                or previous.get("last_modified", ""),
+                "checked_at": checked_at,
+                "last_error": "" if result["ok"] else result["message"][:500],
+            }
+    try:
+        write_feed_source_cache(updated)
+    except OSError:
+        pass
 
+
+def update_cached_thumbnail_images(
+    articles: list[dict[str, Any]], generated_at: str
+) -> None:
+    images_by_url = {
+        article["url"]: article["image"]
+        for article in articles
+        if article.get("url") and article.get("image")
+    }
+    if not images_by_url:
+        return
+
+    with FEED_REFRESH_LOCK:
+        cached = read_cache()
+        if not cached or cached.get("generated_at") != generated_at:
+            return
+        changed = False
+        updated_articles = []
+        for article in cached.get("articles", []):
+            updated = dict(article)
+            image = images_by_url.get(updated.get("url", ""))
+            if image and not updated.get("image"):
+                updated["image"] = image
+                changed = True
+            updated_articles.append(updated)
+        if not changed:
+            return
+        updated_payload = {
+            **cached,
+            "articles": updated_articles,
+            "thumbnails_refreshing": False,
+            "thumbnails_updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            write_cache(updated_payload)
+        except OSError:
+            pass
+
+
+def thumbnail_worker() -> None:
+    global THUMBNAIL_PENDING_TASK, THUMBNAIL_WORKER_ACTIVE
+    while True:
+        with THUMBNAIL_CONDITION:
+            task = THUMBNAIL_PENDING_TASK
+            THUMBNAIL_PENDING_TASK = None
+            if task is None:
+                THUMBNAIL_WORKER_ACTIVE = False
+                THUMBNAIL_CONDITION.notify_all()
+                return
+        articles, generated_at = task
+        try:
+            enrich_missing_images(articles)
+            update_cached_thumbnail_images(articles, generated_at)
+        except Exception as exc:  # Thumbnail failures must never delay article delivery.
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Thumbnail refresh failed: {exc}")
+
+
+def schedule_thumbnail_enrichment(
+    articles: list[dict[str, Any]], generated_at: str
+) -> bool:
+    global THUMBNAIL_PENDING_TASK, THUMBNAIL_WORKER_ACTIVE
+    with THUMBNAIL_CONDITION:
+        THUMBNAIL_PENDING_TASK = (articles, generated_at)
+        if THUMBNAIL_WORKER_ACTIVE:
+            return True
+        THUMBNAIL_WORKER_ACTIVE = True
+        threading.Thread(
+            target=thumbnail_worker,
+            name="cg-signal-thumbnail-refresh",
+            daemon=True,
+        ).start()
+        return True
+
+
+def wait_for_thumbnail_refresh(timeout_seconds: float = 50) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    with THUMBNAIL_CONDITION:
+        while THUMBNAIL_WORKER_ACTIVE:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            THUMBNAIL_CONDITION.wait(remaining)
+        return True
+
+
+def cache_timestamp(payload: dict[str, Any], field: str) -> datetime | None:
+    try:
+        value = datetime.fromisoformat(str(payload[field]))
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def cached_feed_is_fresh(cached: dict[str, Any]) -> bool:
+    generated = cache_timestamp(cached, "generated_at")
+    return bool(
+        generated
+        and (datetime.now(timezone.utc) - generated).total_seconds() < CACHE_TTL_SECONDS
+    )
+
+
+def feed_refresh_is_due(cached: dict[str, Any]) -> bool:
+    attempted = cache_timestamp(cached, "last_refresh_attempt_at")
+    return not attempted or (
+        datetime.now(timezone.utc) - attempted
+    ).total_seconds() >= FEED_REFRESH_RETRY_SECONDS
+
+
+def cached_feed_payload(
+    cached: dict[str, Any], *, refreshing: bool = False
+) -> dict[str, Any]:
+    payload = dict(cached)
+    payload["cached"] = True
+    payload["refreshing"] = refreshing
+    if "archive_count" not in payload:
+        try:
+            payload["archive_count"] = archive_article_count()
+        except (OSError, sqlite3.Error):
+            payload["archive_count"] = 0
+    return payload
+
+
+def refresh_feed(cached: dict[str, Any] | None = None) -> dict[str, Any]:
     configured_sources = list_source_configs(enabled_only=True)
+    source_cache = read_feed_source_cache()
     if configured_sources:
         with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(configured_sources))) as executor:
-            results = list(executor.map(fetch_source, configured_sources))
+            results = list(
+                executor.map(
+                    lambda source: fetch_source(source, source_cache.get(source["id"])),
+                    configured_sources,
+                )
+            )
     else:
         results = []
+    update_feed_source_cache(source_cache, results)
 
     all_articles = [article for result in results for article in result["articles"]]
     failed = [result for result in results if not result["ok"]]
     if configured_sources and not all_articles and cached:
-        cached["cached"] = True
-        cached["stale"] = True
-        cached["warnings"] = [f"{item['source']['name']}: {item['message']}" for item in failed]
-        cached["archive_count"] = archive_article_count()
-        return cached
+        fallback = dict(cached)
+        fallback["cached"] = True
+        fallback["stale"] = True
+        fallback["refreshing"] = False
+        fallback["last_refresh_attempt_at"] = datetime.now(timezone.utc).isoformat()
+        fallback["warnings"] = [f"{item['source']['name']}: {item['message']}" for item in failed]
+        try:
+            fallback["archive_count"] = archive_article_count()
+        except (OSError, sqlite3.Error):
+            fallback["archive_count"] = int(fallback.get("archive_count", 0) or 0)
+        try:
+            write_cache(fallback)
+        except OSError:
+            pass
+        return fallback
 
-    enrich_missing_images(all_articles)
+    missing_thumbnail_articles = apply_cached_images(all_articles)
 
     clusters = cluster_articles(all_articles)
     payload = {
@@ -1652,6 +1918,8 @@ def build_feed(force: bool = False) -> dict[str, Any]:
                 "ok": result["ok"],
                 "count": len(result["articles"]),
                 "duration_ms": result["duration_ms"],
+                "not_modified": result["not_modified"],
+                "used_stale_cache": result["used_stale_cache"],
             }
             for result in results
         ],
@@ -1666,7 +1934,67 @@ def build_feed(force: bool = False) -> dict[str, Any]:
             write_cache(payload)
         except OSError:
             pass
+    payload["thumbnails_refreshing"] = bool(missing_thumbnail_articles) and (
+        schedule_thumbnail_enrichment(all_articles, payload["generated_at"])
+    )
     return payload
+
+
+def build_feed(force: bool = False) -> dict[str, Any]:
+    cached = read_cache()
+    if cached and not force and cached_feed_is_fresh(cached):
+        return cached_feed_payload(cached)
+
+    with FEED_REFRESH_LOCK:
+        if not force:
+            cached = read_cache()
+            if cached and cached_feed_is_fresh(cached):
+                return cached_feed_payload(cached)
+        return refresh_feed(cached)
+
+
+def refresh_feed_in_background() -> bool:
+    if not FEED_REFRESH_LOCK.acquire(blocking=False):
+        return False
+
+    def work() -> None:
+        try:
+            refresh_feed(read_cache())
+        except Exception as exc:  # A failed refresh must not take down the local UI.
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Background feed refresh failed: {exc}")
+        finally:
+            FEED_REFRESH_LOCK.release()
+
+    threading.Thread(target=work, name="cg-signal-feed-refresh", daemon=True).start()
+    return True
+
+
+def feed_for_request(
+    force: bool = False,
+    wait_for_refresh: bool = False,
+    wait_for_thumbnails: bool = False,
+) -> dict[str, Any]:
+    if force:
+        return build_feed(force=True)
+    if wait_for_thumbnails:
+        wait_for_thumbnail_refresh()
+        cached = read_cache()
+        return cached_feed_payload(cached) if cached else build_feed()
+    if wait_for_refresh:
+        with FEED_REFRESH_LOCK:
+            cached = read_cache()
+        return cached_feed_payload(cached) if cached else build_feed()
+
+    cached = read_cache()
+    if not cached:
+        return build_feed()
+    if cached_feed_is_fresh(cached):
+        return cached_feed_payload(cached)
+    if not feed_refresh_is_due(cached):
+        return cached_feed_payload(cached)
+
+    started = refresh_feed_in_background()
+    return cached_feed_payload(cached, refreshing=started or FEED_REFRESH_LOCK.locked())
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -1703,9 +2031,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_json({"ok": True, "service": "CG Signal"})
             return
         if parsed.path == "/api/feed":
-            force = urllib.parse.parse_qs(parsed.query).get("refresh", ["0"])[0] == "1"
+            parameters = urllib.parse.parse_qs(parsed.query)
+            force = parameters.get("refresh", ["0"])[0] == "1"
+            wait_for_refresh = parameters.get("wait", ["0"])[0] == "1"
+            wait_for_thumbnails = parameters.get("wait_thumbnails", ["0"])[0] == "1"
             try:
-                self.send_json(build_feed(force=force))
+                self.send_json(
+                    feed_for_request(
+                        force=force,
+                        wait_for_refresh=wait_for_refresh,
+                        wait_for_thumbnails=wait_for_thumbnails,
+                    )
+                )
             except Exception as exc:  # Keep the local UI useful even when one feed is malformed.
                 self.send_json({"error": "Unable to gather feeds", "detail": str(exc)}, status=500)
             return

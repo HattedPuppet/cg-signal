@@ -1,5 +1,5 @@
-const CACHE_NAME = "cg-signal-mobile-v16";
-const SHELL = ["./", "./index.html", "./styles.css?v=20260720", "./app.js?v=20260720", "./sw.js?v=20260720", "./manifest.json", "./icon-192.png", "./icon-512.png"];
+const CACHE_NAME = "cg-signal-mobile-v17";
+const SHELL = ["./", "./index.html", "./styles.css?v=20260730", "./app.js?v=20260730", "./sw.js?v=20260730", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL)));

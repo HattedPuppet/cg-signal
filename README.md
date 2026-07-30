@@ -34,7 +34,10 @@ required.
 The public-safe mobile edition is built from `mobile/` and deployed through the
 `Refresh mobile signal` GitHub Pages workflow. GitHub gathers the same feeds,
 runs the existing classification and deduplication rules, and refreshes the
-hosted static feed every 30 minutes. The Windows PC does not need to be on.
+hosted static feed every 30 minutes. Each build merges the previous public feed
+into a bounded 100-day rolling history (up to 1,500 stories), so a temporary
+publisher outage or a story rotating out of RSS does not make recent coverage
+disappear. The Windows PC does not need to be on.
 
 Open [CG Signal Mobile](https://hattedpuppet.github.io/cg-signal/) on Android,
 then use the browser menu to install it or add it to the home screen.
@@ -69,15 +72,24 @@ To build the same deployment locally from the current feed cache:
 python mobile/build_mobile.py --source-json .cache/feed-cache.json
 ```
 
+Pass `--previous-json path/to/feed.json` to exercise the same rolling-history
+merge used by the Pages workflow.
+
 The generated, disposable site is written to `mobile/dist/` and is ignored by
 Git.
 
 ## How it behaves
 
 - Feeds check quietly every 15 minutes while the dashboard is open and visible.
-  **Check feeds** bypasses the cache and checks every source immediately.
+  An existing local feed is shown immediately while an expired cache refreshes
+  in the background. **Check feeds** bypasses the cache and checks every source
+  immediately.
 - A small cache is stored in `.cache/feed-cache.json` so the last successful
   feed remains available during a temporary feed failure.
+- Per-source snapshots and HTTP validators are stored in
+  `.cache/feed-source-cache.json`. Refreshes send `If-None-Match` and
+  `If-Modified-Since` when publishers support them, avoiding downloads and XML
+  parsing for unchanged feeds. A failed source can reuse its last snapshot.
 - Every gathered story is also retained in `.cache/cg-signal.db`, a local
   SQLite archive. **History** searches this complete collection with paging, so
   articles remain findable after they disappear from a publisher's feed.
@@ -117,8 +129,9 @@ Git.
   tested, added, disabled, or re-enabled without editing code.
 - Articles remain on their publishers' websites; the dashboard only shows RSS
   metadata and short excerpts.
-- When a feed omits thumbnails, the dashboard reads the article's standard
-  Open Graph preview image and caches that lookup locally for 30 days.
+- When a feed omits thumbnails, articles are published to the dashboard first.
+  A separate background pass reads standard Open Graph preview images, updates
+  the visible cards when ready, and caches those lookups locally for 30 days.
 - Deduplication compares canonical links, shared outbound links, similar titles,
   and product/version signatures that often survive between Japanese and
   English headlines. Related coverage remains expandable beneath the lead card.
