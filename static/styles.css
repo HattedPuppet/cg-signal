@@ -19,6 +19,7 @@
   --acid: #d7ff57;
   --orange: #ff7857;
   --blue: #7fa9ff;
+  --violet: #c78cff;
   --shadow: 0 16px 34px rgba(26, 31, 27, 0.08);
   --radius-large: 26px;
   --radius-card: 18px;
@@ -840,7 +841,8 @@ kbd {
 .lane-button:hover { color: var(--ink); }
 .lane-button.is-active { background: var(--ink); color: #fff; }
 .lane-button[data-lane="Tech & Development"].is-active { background: var(--acid); color: var(--ink); }
-.lane-button[data-lane="Industry & Business"].is-active { background: var(--orange); color: var(--ink); }
+.lane-button[data-lane="Industry"].is-active { background: var(--orange); color: var(--ink); }
+.lane-button[data-lane="Business"].is-active { background: var(--violet); color: var(--ink); }
 
 .time-window-row {
   display: flex;
@@ -1183,6 +1185,10 @@ kbd {
 
 .lane-badge.is-industry {
   background: color-mix(in srgb, var(--orange) 70%, var(--card));
+}
+
+.lane-badge.is-business {
+  background: color-mix(in srgb, var(--violet) 70%, var(--card));
 }
 
 .story-visual {
@@ -2220,7 +2226,8 @@ body.night .archive-button.is-archived {
 body.night .lane-filters { background: #1d221d; }
 body.night .lane-button.is-active { background: #f0f2ec; color: #171b17; }
 body.night .lane-button[data-lane="Tech & Development"].is-active { background: var(--acid); }
-body.night .lane-button[data-lane="Industry & Business"].is-active { background: var(--orange); }
+body.night .lane-button[data-lane="Industry"].is-active { background: var(--orange); }
+body.night .lane-button[data-lane="Business"].is-active { background: var(--violet); }
 body.night .facet-button { background: rgba(0,0,0,.12); }
 body.night .facet-button.is-active {
   background: color-mix(in srgb, var(--category-accent) 24%, var(--card));

@@ -121,7 +121,8 @@ Git.
 - Search supports ordinary text plus combinable tags: `#unreal`, `#blender`,
   `#substance`, `#topic:animation`, `#source:"80 Level"`,
   `#is:saved`, and `#is:new`. Prefix a term with `-` to exclude it,
-  such as `-#industry`.
+  such as `-#industry`; `#industry` selects Industry context and `#business`
+  selects Business context.
 - Individual sources can be temporarily filtered, reduced in recommendations,
   or muted. Clicking a source isolates it; clicking it again restores all
   sources, and Ctrl/Cmd-click combines sources. **Reset** restores all source
@@ -135,10 +136,14 @@ Git.
 - Deduplication compares canonical links, shared outbound links, similar titles,
   and product/version signatures that often survive between Japanese and
   English headlines. Related coverage remains expandable beneath the lead card.
-- A separate information-type filter divides **Tech & Development** coverage
-  from **Industry & Business** reporting. The compact **Categories** row uses a
-  single selection; choosing another category replaces the current one, while
-  clicking the active category returns to **All categories**.
+- Separate information-type filters keep **Tech & Development**, **Industry**,
+  and **Business** exclusive. Player-facing game news and updates (including
+  DLC, gacha, battle passes, in-game pricing, releases, and roadmaps) use the
+  Industry lane; corporate matters such as M&A, earnings, stocks, workforce,
+  funding, closures, executives, and legal or company-policy reporting use
+  Business. The compact **Categories** row uses a single selection; choosing
+  another category replaces the current one, while clicking the active category
+  returns to **All categories**.
 - Selecting **Production techniques** alone reveals a contextual subcategory row
   for modeling, materials, animation, rendering, VFX, technical art, pipelines,
   game development, production breakdowns, research, product updates, and

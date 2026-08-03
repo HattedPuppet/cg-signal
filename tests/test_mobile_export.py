@@ -15,6 +15,7 @@ SPEC.loader.exec_module(build_mobile)
 class MobileExportTests(unittest.TestCase):
     def fixture(self):
         return {
+            "classification_version": 4,
             "generated_at": "2026-07-16T10:00:00+00:00",
             "duplicates_collapsed": 2,
             "archive_count": 999,
@@ -92,6 +93,7 @@ class MobileExportTests(unittest.TestCase):
     def test_previous_public_feed_fills_transient_gaps_with_bounded_history(self):
         current = self.fixture()
         previous = {
+            "classification_version": 4,
             "generated_at": "2026-07-15T10:00:00+00:00",
             "articles": [
                 {
@@ -137,6 +139,41 @@ class MobileExportTests(unittest.TestCase):
         self.assertEqual(result["sources"][0]["count"], 2)
         self.assertNotIn("private_note", str(result))
 
+    def test_previous_classification_version_is_not_carried_forward(self):
+        current = self.fixture()
+        previous = {
+            "classification_version": 1,
+            "generated_at": "2026-07-15T10:00:00+00:00",
+            "articles": [
+                {
+                    "id": "stale-label",
+                    "title": "Limited-time gacha event",
+                    "url": "https://example.com/stale",
+                    "published_at": "2026-07-15T09:00:00+00:00",
+                    "source": "Example",
+                    "source_id": "example",
+                    "lane": "Tech & Development",
+                }
+            ],
+            "sources": current["sources"],
+        }
+
+        result = build_mobile.merge_feed_history(
+            current,
+            previous,
+            now=datetime(2026, 7, 16, tzinfo=timezone.utc),
+        )
+
+        self.assertEqual([article["id"] for article in result["articles"]], ["article-1"])
+        self.assertEqual(result["classification_version"], 4)
+        self.assertEqual(result["carried_forward_count"], 0)
+
+    def test_mobile_offline_cache_requires_current_classification_version(self):
+        javascript = (MODULE_PATH.parent / "site" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("const CLASSIFICATION_VERSION = 4", javascript)
+        self.assertIn("payload?.classification_version === CLASSIFICATION_VERSION", javascript)
+        self.assertIn("payload.classification_version !== CLASSIFICATION_VERSION", javascript)
+
     def test_mobile_shell_keeps_inline_controls_reachable(self):
         site = MODULE_PATH.parent / "site"
         html = (site / "index.html").read_text(encoding="utf-8")
@@ -178,7 +215,7 @@ class MobileExportTests(unittest.TestCase):
         self.assertIn(".scroll-top-button", styles)
         self.assertIn(".story-list.is-compact", styles)
         self.assertIn("grid-template-columns: 102px minmax(0, 1fr)", styles)
-        self.assertIn("grid-template-columns: repeat(3, 1fr)", styles)
+        self.assertIn("grid-template-columns: repeat(4, 1fr)", styles)
 
     def test_mobile_source_management_is_device_local(self):
         site = MODULE_PATH.parent / "site"

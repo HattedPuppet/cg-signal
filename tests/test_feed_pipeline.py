@@ -1,6 +1,8 @@
 import unittest
 import urllib.error
 from email.message import Message
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import mock
 
 import server
@@ -81,6 +83,20 @@ class ConditionalFeedRequestTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(result["used_stale_cache"])
         self.assertEqual(result["articles"][0]["id"], "article-1")
+
+
+class FeedSourceCacheVersionTests(unittest.TestCase):
+    def test_previous_classification_cache_is_discarded(self):
+        with TemporaryDirectory() as directory:
+            cache_file = Path(directory) / "feed-source-cache.json"
+            cache_file.write_text(
+                '{"schema_version": 1, "sources": {"example": {"articles": []}}}',
+                encoding="utf-8",
+            )
+            with mock.patch.object(server, "FEED_SOURCE_CACHE_FILE", cache_file):
+                self.assertEqual(server.read_feed_source_cache(), {})
+
+        self.assertEqual(server.FEED_SOURCE_CACHE_VERSION, server.ARTICLE_CLASSIFICATION_VERSION)
 
 
 class ThumbnailPipelineTests(unittest.TestCase):

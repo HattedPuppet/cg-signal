@@ -9,6 +9,7 @@ class FeedCacheTests(unittest.TestCase):
     def cached_feed(self, *, age_seconds: int, retry_age_seconds: int | None = None):
         now = datetime.now(timezone.utc)
         payload = {
+            "classification_version": server.ARTICLE_CLASSIFICATION_VERSION,
             "generated_at": (now - timedelta(seconds=age_seconds)).isoformat(),
             "articles": [{"id": "cached-story"}],
             "sources": [],
@@ -31,6 +32,31 @@ class FeedCacheTests(unittest.TestCase):
         self.assertTrue(result["cached"])
         self.assertFalse(result["refreshing"])
         refresh.assert_not_called()
+
+    def test_previous_classifier_cache_is_not_fresh(self):
+        cached = self.cached_feed(age_seconds=30)
+        cached["classification_version"] = server.ARTICLE_CLASSIFICATION_VERSION - 1
+
+        self.assertFalse(server.cached_feed_is_fresh(cached))
+
+    def test_previous_classifier_cache_is_relabelled_while_refreshing(self):
+        cached = self.cached_feed(age_seconds=30)
+        cached["classification_version"] = server.ARTICLE_CLASSIFICATION_VERSION - 1
+        cached["articles"] = [
+            {
+                "id": "stale-gacha",
+                "title": "期間限定ガチャイベントを開催",
+                "summary": "新キャラを追加",
+                "source_id": "automaton",
+                "lane": "Tech & Development",
+            }
+        ]
+
+        result = server.cached_feed_payload(cached, refreshing=True)
+
+        self.assertEqual(result["classification_version"], server.ARTICLE_CLASSIFICATION_VERSION)
+        self.assertEqual(result["articles"][0]["lane"], "Industry")
+        self.assertTrue(result["refreshing"])
 
     def test_expired_cache_is_returned_while_refresh_starts(self):
         cached = self.cached_feed(age_seconds=server.CACHE_TTL_SECONDS + 1)

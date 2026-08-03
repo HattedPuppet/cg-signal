@@ -33,7 +33,7 @@ class TopicClassificationTests(unittest.TestCase):
             classify_topics(
                 "Animation studio announces acquisition and new funding",
                 "The founder discussed the deal",
-                "Industry & Business",
+                "Business",
             ),
             [],
         )
@@ -52,7 +52,7 @@ class TopicClassificationTests(unittest.TestCase):
             classify_topics(
                 "ゲーム会社が著作権侵害をめぐり訴訟",
                 "権利保護について発表",
-                "Industry & Business",
+                "Business",
             ),
             [],
         )

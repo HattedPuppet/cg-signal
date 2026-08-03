@@ -49,13 +49,14 @@ class ArchiveTests(unittest.TestCase):
         server.archive_articles(
             [
                 article("blender-light", "Blender lighting breakdown", "Blender"),
-                article("studio-deal", "Animation studio acquisition", "Industry context", "Industry & Business"),
+                article("studio-deal", "Animation studio acquisition", "Business context", "Business"),
             ]
         )
         result = server.query_archive("#blender lighting", limit=10)
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["articles"][0]["id"], "blender-light")
-        self.assertEqual(server.query_archive("-#industry", limit=1)["total"], 1)
+        self.assertEqual(server.query_archive("-#industry", limit=1)["total"], 2)
+        self.assertEqual(server.query_archive("#business")["total"], 1)
         self.assertTrue(server.query_archive("", limit=1)["has_more"])
 
         updated = article("blender-light", "Blender lighting workflow", "Blender")
@@ -75,6 +76,35 @@ class ArchiveTests(unittest.TestCase):
         server.sync_user_state_to_archive(state)
         self.assertEqual(server.query_archive("#is:saved reference")["total"], 1)
         self.assertEqual(server.query_archive("#is:liked")["total"], 1)
+
+    def test_classifier_upgrade_relabels_existing_history(self):
+        stale = article("stale-gacha", "期間限定ガチャイベントを開催")
+        stale["summary"] = "新キャラを入手できるキャンペーン"
+        server.archive_articles([stale])
+        with server.archive_connection() as connection:
+            connection.execute(
+                "UPDATE metadata SET value = '1' WHERE key = 'article_classification_version'"
+            )
+
+        server.ARCHIVE_INITIALIZED = False
+        server.initialize_archive_db(force=True)
+
+        with server.archive_connection() as connection:
+            row = connection.execute(
+                "SELECT lane, software_group, topic_tags, data_json FROM articles WHERE id = ?",
+                ("stale-gacha",),
+            ).fetchone()
+            version = connection.execute(
+                "SELECT value FROM metadata WHERE key = 'article_classification_version'"
+            ).fetchone()["value"]
+
+        self.assertEqual(row["lane"], "Industry")
+        self.assertEqual(row["software_group"], "Industry context")
+        self.assertEqual(row["topic_tags"], "[]")
+        self.assertIn('"lane": "Industry"', row["data_json"])
+        self.assertEqual(version, str(server.ARTICLE_CLASSIFICATION_VERSION))
+        self.assertEqual(server.query_archive("#industry")["total"], 1)
+        self.assertEqual(server.query_archive("#business")["total"], 0)
 
 
 if __name__ == "__main__":

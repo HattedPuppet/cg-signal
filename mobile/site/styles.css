@@ -12,6 +12,7 @@
   --acid: #d7ff57;
   --orange: #ff7857;
   --blue: #7fa9ff;
+  --violet: #c78cff;
   --font-ui: "Segoe UI Variable", "Segoe UI", "Yu Gothic UI", "Hiragino Sans", sans-serif;
   --font-display: Georgia, "Times New Roman", "Yu Mincho", serif;
 }
@@ -395,7 +396,7 @@ button { color: inherit; }
 
 .lane-row {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 4px;
   margin-top: 7px;
   padding: 2px;
@@ -427,7 +428,8 @@ button { color: inherit; }
 }
 
 .lane-button[data-lane="Tech & Development"].is-active { background: color-mix(in srgb, var(--acid) 50%, var(--card)); }
-.lane-button[data-lane="Industry & Business"].is-active { background: color-mix(in srgb, var(--orange) 42%, var(--card)); }
+.lane-button[data-lane="Industry"].is-active { background: color-mix(in srgb, var(--orange) 42%, var(--card)); }
+.lane-button[data-lane="Business"].is-active { background: color-mix(in srgb, var(--violet) 42%, var(--card)); }
 
 .time-window-section { margin-top: 8px; }
 
@@ -708,6 +710,7 @@ button { color: inherit; }
 }
 
 .lane-label.is-industry { background: color-mix(in srgb, var(--orange) 28%, var(--paper)); color: #8b4738; }
+.lane-label.is-business { background: color-mix(in srgb, var(--violet) 28%, var(--paper)); color: #69458b; }
 .story-meta time { margin-left: auto; white-space: nowrap; }
 
 .story-body h3 {
