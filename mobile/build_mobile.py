@@ -89,6 +89,7 @@ def sanitize_feed(payload: Any) -> dict[str, Any]:
             warning_sources.append(warning.split(":", 1)[0].strip()[:100])
     return {
         "schema_version": 1,
+        "classification_version": int(payload.get("classification_version", 1) or 1),
         "generated_at": payload.get("generated_at", ""),
         "unique_count": len(articles),
         "duplicates_collapsed": int(payload.get("duplicates_collapsed", 0) or 0),
@@ -128,6 +129,8 @@ def merge_feed_history(
     try:
         previous = sanitize_feed(previous_payload)
     except ValueError:
+        return current
+    if previous["classification_version"] != current["classification_version"]:
         return current
 
     reference_time = now or parsed_datetime(current.get("generated_at")) or datetime.now(timezone.utc)

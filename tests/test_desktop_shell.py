@@ -65,6 +65,14 @@ class DesktopShellTests(unittest.TestCase):
         self.assertIn("function articleMonthLabel(article)", javascript)
         self.assertIn(".month-divider", styles)
 
+    def test_obsolete_or_invalid_persisted_lane_defaults_to_all(self):
+        javascript = (SITE / "app.js").read_text(encoding="utf-8")
+        self.assertIn(
+            'new Set(["All", "Tech & Development", "Industry", "Business"])',
+            javascript,
+        )
+        self.assertIn('lane: LANE_VALUES.has(storedLane) ? storedLane : "All"', javascript)
+
     def test_startup_requests_state_and_feed_in_parallel(self):
         javascript = (SITE / "app.js").read_text(encoding="utf-8")
         self.assertIn("Promise.all([loadUserState(), loadFeed()])", javascript)

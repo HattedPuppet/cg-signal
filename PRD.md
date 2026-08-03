@@ -98,7 +98,11 @@ And is actively interested in:
 
 - Fold likely duplicate coverage into one lead card.
 - Retain links to related reports beneath the lead story.
-- Separate **Tech & Development** from **Industry & Business**.
+- Separate information type into exclusive **Tech & Development**, **Industry**,
+  and **Business** lanes. Player-facing game news (including DLC, gacha, battle
+  passes, in-game pricing, releases, and roadmaps) belongs in Industry; corporate
+  matters such as M&A, earnings, stocks, workforce, funding, closures,
+  executives, and legal or company-policy reporting belongs in Business.
 - Support software/context, production-subcategory, information-type, source,
   search, saved, and archive filters.
 - Default the active feed to the current calendar month; offer a
@@ -116,7 +120,8 @@ And is actively interested in:
 - Provide one visible **Categories** selector containing only non-empty groups,
   with live counts that respond to the other active filters.
 - Classify software/context under Unreal Engine, Unity, Blender, Substance 3D,
-  Houdini, AI, **Production techniques**, or **Industry context**. Substance
+  Houdini, AI, **Production techniques**, **Industry context**, or
+  **Business context**. Substance
   Painter, Substance Designer, and generic Substance coverage must share the
   Substance 3D category. Keep watchlist categories visible even when their
   current filtered count is zero.
@@ -125,7 +130,8 @@ And is actively interested in:
   releases, or assets/inspiration, with a clear fallback for unmatched
   production coverage.
 - Reveal production subcategories only when **Production techniques** is the
-  sole selected category. Hide and clear them for software and industry
+  sole selected category. Hide and clear them for software, industry, and
+  business
   categories to keep the filter area compact.
 - Keep every main category choice and its unrefined count visible while a
   Production techniques subcategory is active.

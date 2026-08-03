@@ -23,6 +23,9 @@ const TIME_WINDOW_LABELS = {
   all: "All current",
 };
 
+const LANE_VALUES = new Set(["All", "Tech & Development", "Industry", "Business"]);
+const storedLane = localStorage.getItem(storageKeys.lane);
+
 const state = {
   payload: null,
   articles: [],
@@ -33,7 +36,7 @@ const state = {
   archiveRequestId: 0,
   managedSources: [],
   activeSources: new Set(),
-  lane: localStorage.getItem(storageKeys.lane) || "All",
+  lane: LANE_VALUES.has(storedLane) ? storedLane : "All",
   software: readFilterSet(storageKeys.software),
   topics: readFilterSet(storageKeys.topics),
   view: "all",
@@ -67,6 +70,7 @@ const SOFTWARE_GROUP_ORDER = [
   "AI",
   "Production techniques",
   "Industry context",
+  "Business context",
 ];
 const SOFTWARE_GROUP_COLORS = {
   "Unreal Engine": "#4b75ff",
@@ -77,6 +81,7 @@ const SOFTWARE_GROUP_COLORS = {
   AI: "#a77bff",
   "Production techniques": "#d7ff57",
   "Industry context": "#f4a261",
+  "Business context": "#c78cff",
 };
 const TOPIC_ORDER = [
   "Modeling & sculpting",
@@ -176,6 +181,8 @@ const SEARCH_ALIASES = new Map([
   ["production-techniques", { field: "software", value: "Production techniques" }],
   ["industry", { field: "software", value: "Industry context" }],
   ["industry-context", { field: "software", value: "Industry context" }],
+  ["business", { field: "software", value: "Business context" }],
+  ["business-context", { field: "software", value: "Business context" }],
   ["ai", { field: "software", value: "AI" }],
   ["genai", { field: "software", value: "AI" }],
 ]);
@@ -452,7 +459,8 @@ function normalizeSearchQuery(query) {
     .replace(/#unreal\s+engine\b/giu, '#software:"Unreal Engine"')
     .replace(/#substance\s+(?:painter|designer|3d)\b/giu, '#software:"Substance 3D"')
     .replace(/#production\s+techniques\b/giu, '#software:"Production techniques"')
-    .replace(/#industry\s+context\b/giu, '#software:"Industry context"');
+    .replace(/#industry\s+context\b/giu, '#software:"Industry context"')
+    .replace(/#business\s+context\b/giu, '#software:"Business context"');
 }
 
 function searchTokens(query) {
@@ -724,7 +732,8 @@ function storyCard(article) {
   const image = imageUrl === "#" ? "" : `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`;
   const coverage = article.source_count > 1 ? `${article.source_count} sources` : "Single source";
   const lane = article.lane || "Tech & Development";
-  const laneLabel = lane === "Industry & Business" ? "Business" : "Tech";
+  const laneLabel = lane === "Business" ? "Business" : lane === "Industry" ? "Industry" : "Tech";
+  const laneClass = lane === "Business" ? "is-business" : lane === "Industry" ? "is-industry" : "";
   const category = softwareGroup(article);
   const reasons = [...new Set([
     ...articleSoftwareCategories(article),
@@ -747,7 +756,7 @@ function storyCard(article) {
         <div class="story-meta">
           <div class="story-classification">
             <span class="source-label">${escapeHtml(article.source)}</span>
-            <span class="lane-badge${lane === "Industry & Business" ? " is-industry" : ""}">${laneLabel}</span>
+            <span class="lane-badge${laneClass ? ` ${laneClass}` : ""}">${laneLabel}</span>
           </div>
           <time class="story-time" datetime="${escapeHtml(article.published_at)}" title="${escapeHtml(new Date(article.published_at).toLocaleString())}">${escapeHtml(relativeTime(article.published_at))}</time>
         </div>
@@ -834,7 +843,9 @@ function softwareGroup(article) {
   if (explicitGroup) return explicitGroup;
   const matchedReason = SOFTWARE_GROUP_ORDER.find((group) => (article.priority_reasons || []).includes(group));
   if (matchedReason) return matchedReason;
-  return article.lane === "Industry & Business" ? "Industry context" : "Production techniques";
+  if (article.lane === "Business") return "Business context";
+  if (article.lane === "Industry") return "Industry context";
+  return "Production techniques";
 }
 
 function facetCounts(articles, valuesForArticle) {

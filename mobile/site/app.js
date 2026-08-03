@@ -6,6 +6,8 @@ const storageKeys = {
   timeWindow: "cg-signal-mobile:time-window",
 };
 
+const CLASSIFICATION_VERSION = 4;
+
 const CATEGORY_ORDER = [
   "Unreal Engine",
   "Unity",
@@ -15,6 +17,7 @@ const CATEGORY_ORDER = [
   "AI",
   "Production techniques",
   "Industry context",
+  "Business context",
 ];
 
 const CATEGORY_COLORS = {
@@ -26,6 +29,7 @@ const CATEGORY_COLORS = {
   AI: "#a77bff",
   "Production techniques": "#d7ff57",
   "Industry context": "#f4a261",
+  "Business context": "#c78cff",
 };
 
 const TIME_WINDOW_LABELS = {
@@ -49,6 +53,7 @@ const SEARCH_ALIASES = new Map([
   ["genai", ["software", "ai"]],
   ["production", ["software", "production techniques"]],
   ["industry", ["software", "industry context"]],
+  ["business", ["software", "business context"]],
 ]);
 
 const state = {
@@ -187,7 +192,7 @@ function articleCategories(article) {
   const categories = [...new Set([...(article.software_tags || []), article.software_group].filter(Boolean))];
   return categories.length
     ? categories
-    : [article.lane === "Industry & Business" ? "Industry context" : "Production techniques"];
+    : [article.lane === "Business" ? "Business context" : article.lane === "Industry" ? "Industry context" : "Production techniques"];
 }
 
 function timeWindowStart() {
@@ -225,7 +230,9 @@ function searchableText(article) {
 function parseSearch(query) {
   const normalizedQuery = query
     .replace(/#unreal\s+engine\b/gi, '#software:"Unreal Engine"')
-    .replace(/#substance\s+(?:painter|designer|3d)\b/gi, '#software:"Substance 3D"');
+    .replace(/#substance\s+(?:painter|designer|3d)\b/gi, '#software:"Substance 3D"')
+    .replace(/#industry\s+context\b/gi, '#software:"Industry context"')
+    .replace(/#business\s+context\b/gi, '#software:"Business context"');
   const rawTokens = normalizedQuery.match(/-?#(?:software|topic|source|is):(?:"[^"]+"|'[^']+'|\S+)|-?#[\p{L}\p{N}_-]+|-?"[^"]+"|-?\S+/giu) || [];
   return rawTokens.map((raw) => {
     const negative = raw.startsWith("-");
@@ -395,7 +402,7 @@ function storyMarkup(article) {
       <div class="story-body">
         <div class="story-meta">
           <span class="source-name">${escapeHtml(article.source)}</span>
-          <span class="lane-label${article.lane === "Industry & Business" ? " is-industry" : ""}">${article.lane === "Industry & Business" ? "Industry" : "Tech"}</span>
+          <span class="lane-label${article.lane === "Business" ? " is-business" : article.lane === "Industry" ? " is-industry" : ""}">${article.lane === "Business" ? "Business" : article.lane === "Industry" ? "Industry" : "Tech"}</span>
           <time datetime="${escapeHtml(article.published_at)}">${escapeHtml(relativeTime(article.published_at))}</time>
         </div>
         <h3><a href="${escapeHtml(safeUrl(article.url))}" target="_blank" rel="noopener noreferrer">${escapeHtml(article.title)}</a></h3>
@@ -451,7 +458,7 @@ function renderFilterDrawerSummary() {
   const source = state.source === "All"
     ? "All sources"
     : (state.payload?.sources || []).find((item) => item.id === state.source)?.name || state.source;
-  const lane = state.lane === "All" ? "All types" : (state.lane === "Tech & Development" ? "Tech" : "Industry");
+  const lane = state.lane === "All" ? "All types" : (state.lane === "Tech & Development" ? "Tech" : state.lane);
   const category = state.category === "All" ? "All categories" : state.category;
   elements.filterDrawerSummary.textContent = `${TIME_WINDOW_LABELS[state.timeWindow]} · ${lane} · ${category} · ${source}`;
 }
@@ -524,7 +531,11 @@ function updateConnection(online, cached = false, checking = false) {
 function readCachedFeed() {
   try {
     const payload = JSON.parse(localStorage.getItem(storageKeys.feed) || "null");
-    return Array.isArray(payload?.articles) && payload.articles.length ? payload : null;
+    return payload?.classification_version === CLASSIFICATION_VERSION
+      && Array.isArray(payload.articles)
+      && payload.articles.length
+      ? payload
+      : null;
   } catch {
     return null;
   }
@@ -557,6 +568,7 @@ async function loadFeed() {
     const response = await fetch("./feed.json", { cache: "no-store" });
     if (!response.ok) throw new Error(`Feed request failed (${response.status})`);
     const payload = await response.json();
+    if (payload.classification_version !== CLASSIFICATION_VERSION) throw new Error("The hosted feed uses an incompatible classifier.");
     if (!Array.isArray(payload.articles) || !payload.articles.length) throw new Error("The hosted feed is empty.");
     applyFeed(payload, { store: true });
     updateConnection(true);
