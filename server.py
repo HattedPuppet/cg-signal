@@ -39,6 +39,7 @@ PID_FILE = CACHE_DIR / "server.pid"
 CACHE_TTL_SECONDS = 15 * 60
 FEED_REFRESH_RETRY_SECONDS = 60
 ARTICLE_CLASSIFICATION_VERSION = 4
+SERVER_SOURCE_REVISION = hashlib.sha256(Path(__file__).resolve().read_bytes()).hexdigest()
 FEED_SOURCE_CACHE_VERSION = ARTICLE_CLASSIFICATION_VERSION
 IMAGE_INDEX_TTL_SECONDS = 30 * 86400
 MAX_ITEMS_PER_SOURCE = 40
@@ -2261,7 +2262,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
         if parsed.path == "/api/health":
-            self.send_json({"ok": True, "service": "CG Signal"})
+            self.send_json(
+                {
+                    "ok": True,
+                    "service": "CG Signal",
+                    "source_revision": SERVER_SOURCE_REVISION,
+                    "pid": os.getpid(),
+                    "classification_version": ARTICLE_CLASSIFICATION_VERSION,
+                }
+            )
             return
         if parsed.path == "/api/feed":
             parameters = urllib.parse.parse_qs(parsed.query)

@@ -172,7 +172,19 @@ class MobileExportTests(unittest.TestCase):
         javascript = (MODULE_PATH.parent / "site" / "app.js").read_text(encoding="utf-8")
         self.assertIn("const CLASSIFICATION_VERSION = 4", javascript)
         self.assertIn("payload?.classification_version === CLASSIFICATION_VERSION", javascript)
-        self.assertIn("payload.classification_version !== CLASSIFICATION_VERSION", javascript)
+        self.assertIn("function feedPayloadIsCompatible(payload)", javascript)
+        self.assertIn("ARTICLE_LANES.has(article.lane)", javascript)
+
+    def test_mobile_shell_revision_is_bumped_with_lane_schema(self):
+        site = MODULE_PATH.parent / "site"
+        html = (site / "index.html").read_text(encoding="utf-8")
+        javascript = (site / "app.js").read_text(encoding="utf-8")
+        worker = (site / "sw.js").read_text(encoding="utf-8")
+        self.assertIn("app.js?v=20260804", html)
+        self.assertIn("styles.css?v=20260804", html)
+        self.assertIn('register("./sw.js?v=20260804")', javascript)
+        self.assertIn('const CACHE_NAME = "cg-signal-mobile-v18"', worker)
+        self.assertIn("app.js?v=20260804", worker)
 
     def test_mobile_shell_keeps_inline_controls_reachable(self):
         site = MODULE_PATH.parent / "site"
@@ -270,11 +282,11 @@ class MobileExportTests(unittest.TestCase):
         self.assertIn("function storyListMarkup(articles)", javascript)
         self.assertIn("function readCachedFeed()", javascript)
         self.assertIn("applyFeed(cached)", javascript)
-        self.assertIn("cg-signal-mobile-v17", service_worker)
-        self.assertIn("styles.css?v=20260730", service_worker)
-        self.assertIn("app.js?v=20260730", service_worker)
-        self.assertIn("sw.js?v=20260730", javascript)
-        self.assertIn("sw.js?v=20260730", service_worker)
+        self.assertIn("cg-signal-mobile-v18", service_worker)
+        self.assertIn("styles.css?v=20260804", service_worker)
+        self.assertIn("app.js?v=20260804", service_worker)
+        self.assertIn("sw.js?v=20260804", javascript)
+        self.assertIn("sw.js?v=20260804", service_worker)
         self.assertIn("fetch(event.request)", service_worker)
         self.assertIn("function articleRecencyBucket(article)", javascript)
         self.assertIn("Last 24 hours", javascript)

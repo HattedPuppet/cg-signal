@@ -23,7 +23,9 @@ const TIME_WINDOW_LABELS = {
   all: "All current",
 };
 
-const LANE_VALUES = new Set(["All", "Tech & Development", "Industry", "Business"]);
+const CLASSIFICATION_VERSION = 4;
+const ARTICLE_LANE_VALUES = new Set(["Tech & Development", "Industry", "Business"]);
+const LANE_VALUES = new Set(["All", ...ARTICLE_LANE_VALUES]);
 const storedLane = localStorage.getItem(storageKeys.lane);
 
 const state = {
@@ -1115,6 +1117,19 @@ function showWarnings(payload) {
   elements.notice.hidden = false;
 }
 
+function validateFeedPayload(payload) {
+  if (payload.classification_version !== CLASSIFICATION_VERSION) {
+    throw new Error("The dashboard server is using an older classifier. Restart CG Signal, then refresh the dashboard.");
+  }
+  if (!Array.isArray(payload.articles)) {
+    throw new Error("The dashboard server returned an invalid article feed.");
+  }
+  if (payload.articles.some((article) => !ARTICLE_LANE_VALUES.has(article.lane))) {
+    throw new Error("The dashboard server returned incompatible article labels. Restart CG Signal, then refresh the dashboard.");
+  }
+  return payload;
+}
+
 async function loadFeed(
   force = false,
   { background = false, waitForRefresh = false, waitForThumbnails = false } = {},
@@ -1136,7 +1151,7 @@ async function loadFeed(
     if (!response.ok) throw new Error(`Feed request failed (${response.status})`);
     const payload = await response.json();
     if (payload.error) throw new Error(payload.detail || payload.error);
-    updateDashboard(payload, { background });
+    updateDashboard(validateFeedPayload(payload), { background });
     syncAfterBackgroundRefresh(payload);
     syncAfterThumbnailRefresh(payload);
   } catch (error) {

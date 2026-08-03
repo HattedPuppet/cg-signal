@@ -3,13 +3,51 @@ param([switch]$NoOpen)
 $ErrorActionPreference = "Stop"
 $projectRoot = $PSScriptRoot
 $serverScript = Join-Path $projectRoot "server.py"
+$serverPidFile = Join-Path $projectRoot ".cache\server.pid"
+$serverSourceRevision = (Get-FileHash -LiteralPath $serverScript -Algorithm SHA256).Hash.ToLowerInvariant()
 $dashboardUrl = "http://127.0.0.1:4310"
 $healthUrl = "$dashboardUrl/api/health"
 
-function Test-CGSignalHealth {
+function Get-CGSignalHealth {
     try {
         $response = Invoke-RestMethod -Uri $healthUrl -TimeoutSec 1
-        return ($response.ok -eq $true -and $response.service -eq "CG Signal")
+        if ($response.ok -eq $true -and $response.service -eq "CG Signal") {
+            return $response
+        }
+    }
+    catch {
+        # No compatible CG Signal server is listening yet.
+    }
+    return $null
+}
+
+function Test-CGSignalHealth {
+    $response = Get-CGSignalHealth
+    return ($null -ne $response -and $response.source_revision -eq $serverSourceRevision)
+}
+
+function Stop-StaleCGSignal([object]$health) {
+    if (-not $health.pid -or -not (Test-Path -LiteralPath $serverPidFile)) {
+        return $false
+    }
+
+    $candidateProcessId = 0
+    $rawProcessId = (Get-Content -Raw -LiteralPath $serverPidFile).Trim()
+    if (-not [int]::TryParse($rawProcessId, [ref]$candidateProcessId) -or $candidateProcessId -le 0) {
+        return $false
+    }
+    if ([int]$health.pid -ne $candidateProcessId) {
+        return $false
+    }
+
+    try {
+        $process = Get-Process -Id $candidateProcessId -ErrorAction Stop
+        if ($process.ProcessName -notin @("python", "python3", "py")) {
+            return $false
+        }
+        Stop-Process -Id $candidateProcessId -ErrorAction Stop
+        $null = $process.WaitForExit(5000)
+        return $process.HasExited
     }
     catch {
         return $false
@@ -41,11 +79,18 @@ try {
         exit 0
     }
 
-    if (Test-CGSignalHealth) {
-        if (-not $NoOpen) {
-            Start-Process $dashboardUrl
+    $health = Get-CGSignalHealth
+    if ($null -ne $health) {
+        if ($health.source_revision -eq $serverSourceRevision) {
+            if (-not $NoOpen) {
+                Start-Process $dashboardUrl
+            }
+            exit 0
         }
-        exit 0
+        if (-not (Stop-StaleCGSignal $health)) {
+            Show-CGSignalMessage "CG Signal is running older code and could not be restarted safely. Close it, then open CG Signal again." 16
+            exit 1
+        }
     }
 
     $pythonPath = $null

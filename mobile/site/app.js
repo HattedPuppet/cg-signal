@@ -7,6 +7,7 @@ const storageKeys = {
 };
 
 const CLASSIFICATION_VERSION = 4;
+const ARTICLE_LANES = new Set(["Tech & Development", "Industry", "Business"]);
 
 const CATEGORY_ORDER = [
   "Unreal Engine",
@@ -528,14 +529,17 @@ function updateConnection(online, cached = false, checking = false) {
       : `Updated ${generated}${retainedLabel} · refreshes every 30 minutes`;
 }
 
+function feedPayloadIsCompatible(payload) {
+  return payload?.classification_version === CLASSIFICATION_VERSION
+    && Array.isArray(payload.articles)
+    && payload.articles.length
+    && payload.articles.every((article) => ARTICLE_LANES.has(article.lane));
+}
+
 function readCachedFeed() {
   try {
     const payload = JSON.parse(localStorage.getItem(storageKeys.feed) || "null");
-    return payload?.classification_version === CLASSIFICATION_VERSION
-      && Array.isArray(payload.articles)
-      && payload.articles.length
-      ? payload
-      : null;
+    return feedPayloadIsCompatible(payload) ? payload : null;
   } catch {
     return null;
   }
@@ -568,8 +572,7 @@ async function loadFeed() {
     const response = await fetch("./feed.json", { cache: "no-store" });
     if (!response.ok) throw new Error(`Feed request failed (${response.status})`);
     const payload = await response.json();
-    if (payload.classification_version !== CLASSIFICATION_VERSION) throw new Error("The hosted feed uses an incompatible classifier.");
-    if (!Array.isArray(payload.articles) || !payload.articles.length) throw new Error("The hosted feed is empty.");
+    if (!feedPayloadIsCompatible(payload)) throw new Error("The hosted feed uses incompatible article labels.");
     applyFeed(payload, { store: true });
     updateConnection(true);
     if (payload.unavailable_sources?.length) {
@@ -812,7 +815,7 @@ elements.filterDrawerHandle.addEventListener("pointercancel", () => {
 });
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=20260730").catch(() => {}));
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=20260804").catch(() => {}));
 }
 
 loadFeed();
