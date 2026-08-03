@@ -690,7 +690,7 @@ def classify_topic(title: str, summary: str) -> str:
 
 
 BUSINESS_TERMS = (
-    "acquisition", "acquires", "acquired", "bankruptcy", "bankrupt", "ceo", "cfo",
+    "acquisition", "acquire", "acquires", "acquired", "bankruptcy", "bankrupt", "ceo", "cfo",
     "coo", "copyright", "earnings", "executive", "executives",
     "funding", "hiring", "insolvency", "investment", "investor", "job cuts", "job picks", "jobs",
     "layoff", "layoffs", "legal action", "lawsuit", "liquidation", "merger", "m&a",

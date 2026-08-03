@@ -260,6 +260,9 @@ class LaneClassificationTests(unittest.TestCase):
 
     def test_corporate_matters_are_business(self):
         cases = (
+            ("EA to acquire Respawn", "The publisher plans to acquire the studio"),
+            ("Microsoft acquires a game studio", "The deal expands its first-party portfolio"),
+            ("Sony acquired a developer", "The transaction closed this quarter"),
             ("Publisher announces acquisition", "The merger closes this quarter"),
             ("Studio reports quarterly earnings", "Revenue and profit beat guidance"),
             ("Game company cuts its workforce", "Hundreds of employees are laid off"),
