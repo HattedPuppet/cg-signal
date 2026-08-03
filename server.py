@@ -38,7 +38,8 @@ ARCHIVE_DB_FILE = CACHE_DIR / "cg-signal.db"
 PID_FILE = CACHE_DIR / "server.pid"
 CACHE_TTL_SECONDS = 15 * 60
 FEED_REFRESH_RETRY_SECONDS = 60
-FEED_SOURCE_CACHE_VERSION = 1  # Bump after changes to feed parsing or classification.
+ARTICLE_CLASSIFICATION_VERSION = 4
+FEED_SOURCE_CACHE_VERSION = ARTICLE_CLASSIFICATION_VERSION
 IMAGE_INDEX_TTL_SECONDS = 30 * 86400
 MAX_ITEMS_PER_SOURCE = 40
 MAX_STATE_IDS = 5000
@@ -253,6 +254,14 @@ def initialize_archive_db(force: bool = False) -> None:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+                """
+            )
             now = datetime.now(timezone.utc).isoformat()
             for order, source in enumerate(FEEDS):
                 connection.execute(
@@ -277,6 +286,7 @@ def initialize_archive_db(force: bool = False) -> None:
                         order, now, now,
                     ),
                 )
+            reclassify_archive_if_needed(connection)
         ARCHIVE_INITIALIZED = True
 
 
@@ -679,48 +689,132 @@ def classify_topic(title: str, summary: str) -> str:
     return "General"
 
 
+BUSINESS_TERMS = (
+    "acquisition", "acquires", "acquired", "bankruptcy", "bankrupt", "ceo", "cfo",
+    "coo", "copyright", "earnings", "executive", "executives",
+    "funding", "hiring", "insolvency", "investment", "investor", "job cuts", "job picks", "jobs",
+    "layoff", "layoffs", "legal action", "lawsuit", "liquidation", "merger", "m&a",
+    "market cap", "profit", "revenue", "restructuring", "retirement", "share price",
+    "shareholder", "stock", "stocks", "studio closes", "studio closure", "studio closures",
+    "company closes", "company closure", "company closures", "closes studio", "closes its studio",
+    "shutdown", "shuts down",
+    "steps down", "workforce", "workforce reduction", "union", "company policy", "regulation",
+    "regulatory", "compliance", "terms of service", "事業", "企業", "労働", "合併",
+    "売上", "投資", "採用", "株主", "株価", "決算", "利益", "社長", "経営",
+    "著作権", "解雇", "訴訟", "買収", "資金", "資金調達", "閉鎖", "倒産", "退任",
+    "引退", "人員削減", "法的措置", "規制", "方針", "利用規約", "破産",
+)
+
+# Product/player-facing game news belongs in the Industry lane.  Keep these
+# terms separate from corporate evidence so a DLC or roadmap cannot be mistaken
+# for a company story merely because its publisher is mentioned.
 INDUSTRY_TERMS = (
-    "acquisition", "bankruptcy", "business", "ceo", "company", "copyright",
-    "deal", "earnings", "executive", "funding", "hiring", "industry",
-    "investment", "job", "jobs", "labor", "lawsuit", "layoff", "legal", "market",
-    "merger", "partnership", "policy", "price", "pricing", "profit",
-    "publisher", "revenue", "sales", "shutdown", "studio closes", "union",
-    "事業", "企業", "価格", "値上げ", "労働", "合併", "売上", "契約", "市場",
-    "投資", "採用", "提携", "株主", "決算", "利益", "業界", "求人", "社長",
-    "経営", "著作権", "解雇", "訴訟", "設立", "買収", "資金", "閉鎖", "倒産",
+    "battle pass", "beta", "console", "content update", "demo", "dlc",
+    "downloadable content", "early access", "expansion", "expansion pack", "game launch",
+    "game release", "game releases", "launch date", "live service", "loot box",
+    "microtransaction", "new character", "new characters", "new content", "patch",
+    "playable character", "pre-order", "preorder", "price increase", "pricing",
+    "release date", "roadmap", "season pass", "title update", "update", "gacha",
+    "in-game purchase", "in game purchase", "in-game pricing", "in game pricing",
+    "ゲーム内課金", "ゲーム内価格", "ゲーム発売", "ゲームリリース", "発売日", "ロードマップ",
+    "アップデート", "パッチ", "追加コンテンツ", "シーズンパス", "バトルパス", "ガチャ",
+    "課金", "新キャラクター", "早期アクセス", "事前予約", "先行予約", "無料プレイ",
 )
 
-TECH_TERMS = (
-    "animation", "beta", "blender", "breakdown", "developer", "engine",
-    "feature", "gameplay", "houdini", "modeling", "modelling", "open source",
-    "performance", "pipeline", "plugin", "release", "render", "rigging",
-    "shader", "spine", "substance", "technique", "technical", "technology",
-    "tool", "tutorial", "unreal", "update", "version", "vfx", "workflow",
-    "アニメーション", "アップデート", "エンジン", "オープンソース", "ゲーム制作",
-    "シェーダー", "チュートリアル", "ツール", "テクニック", "バージョン", "プラグイン",
-    "ベータ", "メイキング", "モデリング", "リギング", "リリース", "レンダリング",
-    "ワークフロー", "制作", "技術", "機能", "開発",
+GENERIC_INDUSTRY_TERMS = {
+    "beta", "console", "content update", "game launch", "game release", "game releases",
+    "launch date", "patch", "price increase", "pricing", "release date", "roadmap",
+    "launch", "release", "released", "title update", "update", "version", "アップデート", "パッチ", "ロードマップ",
+    "ゲーム発売", "ゲームリリース", "発売日", "価格改定",
+}
+
+GAME_CONTEXT_TERMS = (
+    "game", "games", "gameplay", "rpg", "mmo", "mmorpg", "player", "players",
+    "playable", "character", "characters", "console", "steam", "playstation", "xbox",
+    "nintendo", "mobile game", "live service", "fantasy adventure", "video game",
+    "ゲーム", "ゲームプレイ", "プレイヤー", "キャラクター", "新キャラ", "新作", "作品", "発売",
 )
 
-INDUSTRY_SOURCE_PRIOR = {
-    "cartoon-brew": 1,
-    "gamebusiness": 2,
-}
+# A source is useful context, but it is not evidence that every item it publishes
+# is technical.  Keep this list deliberately affirmative: ordinary release,
+# update, gameplay, or developer wording belongs in neither lane by itself.
+TECHNICAL_DETAIL_TERMS = (
+    "api", "artificial intelligence", "benchmark", "conference", "course",
+    "bundles and closures", "dev days", "documentation", "extension", "game ai",
+    "implementation", "keynote", "lecture", "library", "masterclass",
+    "middleware", "modeling", "modelling", "open source", "presentation", "sdk",
+    "seminar", "source code", "translation", "vfx", "workshop",
+    "technical", "technology", "technique", "technical art", "tech art",
+    "tutorial", "how to", "research", "researcher", "paper",
+    "symposium", "siggraph", "breakdown", "making of", "behind the scenes",
+    "case study", "workflow", "pipeline", "rendering", "ray tracing",
+    "path tracing", "global illumination", "shader", "rigging", "motion capture",
+    "procedural", "simulation", "optimization", "optimisation", "profiling",
+    "plugin", "add-on", "addon", "tool", "software", "asset", "assets",
+    "material", "materials",
+    "asset pack", "character art", "environment art", "concept art", "portfolio",
+    "3d model", "技術", "技法", "手法", "チュートリアル", "解説", "研究",
+    "論文", "カンファレンス", "学会", "講演", "講義", "講座", "セミナー",
+    "メイキング", "制作事例",
+    "制作の裏側", "ワークフロー", "パイプライン", "レンダリング", "レイトレーシング",
+    "パストレーシング", "グローバルイルミネーション", "シェーダー", "リギング",
+    "モーションキャプチャ", "プロシージャル", "シミュレーション", "最適化",
+    "パフォーマンス", "ベンチマーク", "プラグイン", "アドオン", "ツール", "ソフトウェア",
+    "アセット", "素材", "作品紹介", "コンセプトアート", "フォトグラメトリ", "新技術",
+    "オープンソース", "ミドルウェア", "拡張機能", "実装方法",
+    "ソースコード", "モデリング", "3dモデル", "モデルパック", "移植", "作り方",
+    "cedec", "workstation", "クリエイティブイベント", "ビジュアライゼーション",
+    "ワークステーション", "翻訳",
+    "iteration", "production process", "production style", "イテレーション",
+    "制作工程", "制作スタイル",
+)
 
-TECH_SOURCE_PRIOR = {
-    "80-level": 1,
-    "cgworld": 1,
-    "gamemakers": 2,
-    "3dnchu": 2,
-    "cginterest": 2,
-    "befores-afters": 2,
-    "game-developer": 1,
-    "siggraph": 2,
-    "automaton-interviews": 1,
-    "automaton": 2,
-    "unreal-engine": 3,
-    "blender-developers": 3,
-}
+# Explanatory and research-oriented terms are the strongest technical evidence.
+# Resource terms below are also allowed to qualify incidentally, per the product
+# preference for surfacing asset and material information.
+TECHNICAL_EXPLANATION_TERMS = (
+    "api", "benchmark", "case study", "conference", "course", "documentation",
+    "how to", "implementation", "keynote", "lecture", "masterclass", "middleware",
+    "open source", "optimization", "optimisation", "paper", "pipeline", "profiling",
+    "production process", "production style", "procedural", "ray tracing", "rendering",
+    "research", "sdk", "seminar", "shader", "simulation", "source code", "symposium",
+    "technical", "technique", "technology", "translation", "tutorial", "vfx", "workshop", "workflow",
+    "behind the scenes", "breakdown", "making of", "motion capture", "path tracing",
+    "bundles and closures", "dev days", "global illumination", "iteration", "rigging", "siggraph",
+    "cedec", "オープンソース", "カンファレンス", "シェーダー",
+    "シミュレーション", "シンポジウム", "セミナー", "チュートリアル", "テクニック",
+    "パイプライン", "プロシージャル", "ベンチマーク", "メイキング", "リギング",
+    "レンダリング", "ワークフロー", "イテレーション", "制作の裏側", "制作事例",
+    "制作工程", "制作スタイル", "実装方法", "学会", "技法", "技術", "手法", "最適化",
+    "研究", "移植", "作り方", "翻訳", "講座", "講演", "講義", "解説", "論文",
+)
+
+TECHNICAL_RESOURCE_TERMS = (
+    "3d asset", "3d model", "add-on", "addon", "asset", "assets", "asset pack", "extension",
+    "library", "material", "materials", "middleware", "plugin", "software", "tool",
+    "アセット", "アセットパック", "アドオン", "ソフトウェア", "ツール", "プラグイン",
+    "ミドルウェア", "モデルパック", "素材",
+)
+
+# Software names can appear incidentally in consumer-game announcements, so
+# they count as evidence but do not bypass the consumer-event guard by themselves.
+TECHNICAL_PRODUCT_TERMS = (
+    "blender", "fab", "gamemaker", "godot", "houdini", "maya", "nuke",
+    "spine 2d", "substance 3d", "substance designer", "substance painter",
+    "unity engine", "unreal", "unreal engine", "zbrush",
+)
+
+# Consumer-facing game announcements frequently contain words such as
+# "release", "update", or "developer".  These generic event words only become
+# Industry evidence when a game context is present, while explicit DLC/gacha
+# terms classify directly.
+CONSUMER_EVENT_TERMS = (
+    "banner", "game launch", "game launches", "game release", "game released", "new game",
+    "launch", "release", "released", "roadmap", "update", "version", "limited event",
+    "limited-time event", "limited time event", "in-game event", "in game event",
+    "イベント開催", "ゲーム内イベント", "期間限定イベント", "コンテンツアップデート",
+    "新作ゲーム", "キャラクター追加",
+)
 
 INTEREST_TERMS = (
     ("Unreal Engine", ("unreal engine", "unreal", "ue5", "ue 5"), 28),
@@ -888,22 +982,64 @@ PROMOTIONAL_TERMS = (
 
 def classify_lane(title: str, summary: str, source_id: str) -> str:
     value = f"{title} {summary}".lower()
-    industry_matches = sum(term in value for term in INDUSTRY_TERMS)
-    technical_matches = sum(term in value for term in TECH_TERMS)
-    industry_score = INDUSTRY_SOURCE_PRIOR.get(source_id, 0) + industry_matches
-    technical_score = TECH_SOURCE_PRIOR.get(source_id, 0) + technical_matches
-    if industry_score > technical_score or (
-        industry_score == technical_score and industry_matches > 0
-    ):
-        return "Industry & Business"
-    return "Tech & Development"
+    # Use boundary-aware matching so terms such as ``tool`` do not match an
+    # unrelated word fragment. Source identity never manufactures a lane
+    # classification without affirmative evidence in the article itself.
+    business_matches = [term for term in BUSINESS_TERMS if contains_term(value, term)]
+    industry_matches = [
+        term for term in INDUSTRY_TERMS
+        if term not in GENERIC_INDUSTRY_TERMS and contains_term(value, term)
+    ]
+    technical_detail_matches = [
+        term for term in TECHNICAL_DETAIL_TERMS if contains_term(value, term)
+    ]
+    technical_product_matches = [
+        term for term in TECHNICAL_PRODUCT_TERMS if contains_term(value, term)
+    ]
+    has_technical_explanation = any(
+        contains_term(value, term) for term in TECHNICAL_EXPLANATION_TERMS
+    )
+    has_technical_signal = bool(technical_detail_matches or technical_product_matches)
+    has_game_context = any(contains_term(value, term) for term in GAME_CONTEXT_TERMS)
+    has_consumer_event = any(contains_term(value, term) for term in CONSUMER_EVENT_TERMS)
+
+    # Affirmative corporate events (earnings, M&A, workforce, legal, etc.) stay
+    # Business even when a headline also mentions a technical team or pipeline.
+    # Generic words such as ``company`` or ``industry`` are intentionally absent.
+    if business_matches:
+        return "Business"
+
+    # Technical explainers remain technical when they merely mention a company,
+    # publisher, or product event without reporting a corporate event.
+    if has_technical_explanation:
+        return "Tech & Development"
+
+    # Explicit game events classify as Industry. Generic release/update terms
+    # require a game context so tool and engine releases can stay technical.
+    has_generic_industry_event = any(
+        contains_term(value, term) for term in GENERIC_INDUSTRY_TERMS
+    )
+    if industry_matches or (has_game_context and (has_consumer_event or has_generic_industry_event)):
+        return "Industry"
+
+    if has_technical_signal:
+        return "Tech & Development"
+
+    # The existing feed is intentionally broad; when no stronger evidence is
+    # available, keep an unclassified story in the product/news lane rather
+    # than inventing a corporate Business classification.
+    return "Industry"
 
 
 def term_position(value: str, term: str) -> int:
     """Find a term without treating ASCII word fragments as product names."""
 
     if term.isascii():
-        match = re.search(rf"(?<![a-z0-9]){re.escape(term)}(?![a-z0-9])", value)
+        following_characters = "a-z" if term[-1:].isalpha() else "a-z0-9"
+        match = re.search(
+            rf"(?<![a-z0-9]){re.escape(term)}(?![{following_characters}])",
+            value,
+        )
         return match.start() if match else -1
     return value.find(term)
 
@@ -1259,6 +1395,38 @@ def public_article(article: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in article.items() if not key.startswith("_") and key != "timestamp"}
 
 
+def apply_article_classification(article: dict[str, Any]) -> dict[str, Any]:
+    """Apply every classifier-derived field from the article's stored evidence."""
+
+    title = article.get("title", "")
+    summary = article.get("summary", "")
+    source_id = article.get("source_id", "")
+    lane = classify_lane(title, summary, source_id)
+    article["topic"] = classify_topic(title, summary)
+    article["lane"] = lane
+    priority_score, priority_reasons = score_relevance(
+        title,
+        summary,
+        source_id,
+        lane,
+        int(article.get("source_count", 1) or 1),
+    )
+    article["priority_score"] = priority_score
+    article["priority_reasons"] = priority_reasons
+    software_tags = classify_software(title, summary)
+    article["software_tags"] = software_tags
+    article["software_group"] = software_tags[0] if software_tags else {
+        "Industry": "Industry context",
+        "Business": "Business context",
+    }.get(lane, "Production techniques")
+    article["topic_tags"] = (
+        classify_topics(title, summary, lane)
+        if article["software_group"] == "Production techniques"
+        else []
+    )
+    return article
+
+
 def cluster_articles(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
     clusters: list[dict[str, Any]] = []
     for article in sorted(articles, key=lambda item: item["timestamp"], reverse=True):
@@ -1312,30 +1480,7 @@ def cluster_articles(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
             for member in unique_sources.values()
         ]
-        priority_score, priority_reasons = score_relevance(
-            public["title"],
-            public.get("summary", ""),
-            public["source_id"],
-            public.get("lane", "Tech & Development"),
-            len(unique_sources),
-        )
-        public["priority_score"] = priority_score
-        public["priority_reasons"] = priority_reasons
-        software_tags = classify_software(public["title"], public.get("summary", ""))
-        public["software_tags"] = software_tags
-        public["software_group"] = software_tags[0] if software_tags else (
-            "Industry context" if public.get("lane") == "Industry & Business" else "Production techniques"
-        )
-        public["topic_tags"] = (
-            classify_topics(
-                public["title"],
-                public.get("summary", ""),
-                public.get("lane", "Tech & Development"),
-            )
-            if public["software_group"] == "Production techniques"
-            else []
-        )
-        output.append(public)
+        output.append(apply_article_classification(public))
     return output
 
 
@@ -1352,6 +1497,66 @@ def archive_search_text(article: dict[str, Any]) -> str:
         for item in article.get("related", [])
     )
     return " ".join(str(value) for value in values if value).lower()
+
+
+def reclassify_archive_if_needed(connection: sqlite3.Connection) -> int:
+    stored = connection.execute(
+        "SELECT value FROM metadata WHERE key = 'article_classification_version'"
+    ).fetchone()
+    if stored and stored["value"] == str(ARTICLE_CLASSIFICATION_VERSION):
+        return 0
+
+    updates = []
+    for row in connection.execute("SELECT * FROM articles").fetchall():
+        try:
+            article = json.loads(row["data_json"])
+        except (TypeError, json.JSONDecodeError):
+            article = {}
+        if not isinstance(article, dict):
+            article = {}
+        article.update(
+            {
+                "id": row["id"],
+                "title": row["title"],
+                "url": row["url"],
+                "summary": row["summary"],
+                "source": row["source"],
+                "source_id": row["source_id"],
+                "published_at": row["published_at"],
+            }
+        )
+        apply_article_classification(article)
+        updates.append(
+            (
+                article["lane"],
+                article["software_group"],
+                json.dumps(article["software_tags"], ensure_ascii=False),
+                json.dumps(article["topic_tags"], ensure_ascii=False),
+                archive_search_text(article),
+                json.dumps(article, ensure_ascii=False),
+                row["id"],
+            )
+        )
+
+    if updates:
+        connection.executemany(
+            """
+            UPDATE articles
+            SET lane = ?, software_group = ?, software_tags = ?, topic_tags = ?,
+                search_text = ?, data_json = ?
+            WHERE id = ?
+            """,
+            updates,
+        )
+    connection.execute(
+        """
+        INSERT INTO metadata (key, value)
+        VALUES ('article_classification_version', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (str(ARTICLE_CLASSIFICATION_VERSION),),
+    )
+    return len(updates)
 
 
 def archive_articles(articles: list[dict[str, Any]]) -> int:
@@ -1429,6 +1634,8 @@ ARCHIVE_SEARCH_ALIASES = {
     "production-techniques": ("software", "production techniques"),
     "industry": ("software", "industry context"),
     "industry-context": ("software", "industry context"),
+    "business": ("software", "business context"),
+    "business-context": ("software", "business context"),
     "ai": ("software", "ai"),
     "genai": ("software", "ai"),
 }
@@ -1449,6 +1656,10 @@ def parse_archive_search(query: str) -> list[dict[str, Any]]:
     normalized = re.sub(
         r"#industry\s+context\b",
         '#software:"Industry context"', normalized, flags=re.IGNORECASE,
+    )
+    normalized = re.sub(
+        r"#business\s+context\b",
+        '#software:"Business context"', normalized, flags=re.IGNORECASE,
     )
     try:
         raw_tokens = shlex.split(normalized)
@@ -1538,7 +1749,7 @@ def query_archive(
         clause, token_parameters = archive_token_sql(token, new_after)
         clauses.append(clause)
         parameters.extend(token_parameters)
-    if lane in {"Tech & Development", "Industry & Business"}:
+    if lane in {"Tech & Development", "Industry", "Business"}:
         clauses.append("a.lane = ?")
         parameters.append(lane)
     valid_source_ids = [source_id for source_id in (source_ids or []) if source_id]
@@ -1843,6 +2054,7 @@ def cached_feed_is_fresh(cached: dict[str, Any]) -> bool:
     generated = cache_timestamp(cached, "generated_at")
     return bool(
         generated
+        and cached.get("classification_version") == ARTICLE_CLASSIFICATION_VERSION
         and (datetime.now(timezone.utc) - generated).total_seconds() < CACHE_TTL_SECONDS
     )
 
@@ -1858,6 +2070,13 @@ def cached_feed_payload(
     cached: dict[str, Any], *, refreshing: bool = False
 ) -> dict[str, Any]:
     payload = dict(cached)
+    if payload.get("classification_version") != ARTICLE_CLASSIFICATION_VERSION:
+        payload["classification_version"] = ARTICLE_CLASSIFICATION_VERSION
+        payload["articles"] = [
+            apply_article_classification(dict(article))
+            for article in cached.get("articles", [])
+            if isinstance(article, dict)
+        ]
     payload["cached"] = True
     payload["refreshing"] = refreshing
     if payload.get("thumbnails_refreshing"):
@@ -1893,6 +2112,12 @@ def refresh_feed(cached: dict[str, Any] | None = None) -> dict[str, Any]:
     failed = [result for result in results if not result["ok"]]
     if configured_sources and not all_articles and cached:
         fallback = dict(cached)
+        fallback["classification_version"] = ARTICLE_CLASSIFICATION_VERSION
+        fallback["articles"] = [
+            apply_article_classification(dict(article))
+            for article in cached.get("articles", [])
+            if isinstance(article, dict)
+        ]
         fallback["cached"] = True
         fallback["stale"] = True
         fallback["refreshing"] = False
@@ -1912,6 +2137,7 @@ def refresh_feed(cached: dict[str, Any] | None = None) -> dict[str, Any]:
 
     clusters = cluster_articles(all_articles)
     payload = {
+        "classification_version": ARTICLE_CLASSIFICATION_VERSION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "cached": False,
         "stale": False,
