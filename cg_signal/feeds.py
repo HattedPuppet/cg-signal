@@ -727,6 +727,9 @@ class FeedService:
         cached = self.read_cache()
         if not cached:
             return self.build_feed()
+        cached_schema, _ = self._versions(cached)
+        if cached_schema != FEED_SCHEMA_VERSION:
+            return self.build_feed()
         if self.cached_feed_is_fresh(cached):
             return self.cached_feed_payload(cached)
         if not self.feed_refresh_is_due(cached):

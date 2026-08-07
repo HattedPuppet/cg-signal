@@ -1,5 +1,11 @@
 import unittest
 from pathlib import Path
+import tempfile
+import threading
+import urllib.request
+
+from cg_signal.config import RuntimePaths
+from cg_signal.http import DashboardHandler, DashboardServer
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -7,6 +13,22 @@ SITE = PROJECT_ROOT / "static"
 
 
 class DesktopShellTests(unittest.TestCase):
+    def test_domain_module_is_served_as_javascript(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            paths = RuntimePaths.for_root(PROJECT_ROOT).with_cache_dir(Path(temporary))
+            server = DashboardServer(("127.0.0.1", 0), DashboardHandler, paths=paths)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                port = server.server_address[1]
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/domain.mjs") as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(response.headers.get_content_type(), "application/javascript")
+            finally:
+                server.shutdown()
+                thread.join(timeout=5)
+                server.server_close()
+
     def test_search_lives_in_the_sticky_header(self):
         html = (SITE / "index.html").read_text(encoding="utf-8")
         self.assertEqual(html.count('id="search-input"'), 1)

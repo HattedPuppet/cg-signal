@@ -1,4 +1,5 @@
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -48,6 +49,86 @@ class FeedCacheTests(unittest.TestCase):
         self.assertTrue(result["cached"])
         self.assertFalse(result["refreshing"])
         refresh.assert_not_called()
+
+    def test_incompatible_cache_is_rebuilt_synchronously_without_background_refresh(self):
+        cached = self.cached_feed(age_seconds=30)
+        cached.pop("feed_schema_version")
+        rebuilt = {"articles": [{"id": "rebuilt-story"}], "cached": False}
+        with (
+            mock.patch.object(self.service, "read_cache", return_value=cached),
+            mock.patch.object(self.service, "build_feed", return_value=rebuilt) as build,
+            mock.patch.object(self.service, "refresh_feed_in_background") as refresh,
+        ):
+            result = self.service.feed_for_request()
+        self.assertEqual(result["articles"], rebuilt["articles"])
+        build.assert_called_once_with()
+        refresh.assert_not_called()
+
+    def test_concurrent_incompatible_cache_callers_share_one_rebuild(self):
+        cached = self.cached_feed(age_seconds=30)
+        cached.pop("feed_schema_version")
+        rebuilt = {
+            **self.cached_feed(age_seconds=0),
+            "articles": [{"id": "rebuilt-story"}],
+            "cached": False,
+            "stale": False,
+        }
+        cache = {"payload": cached}
+        cache_lock = threading.Lock()
+        initial_reads = threading.Barrier(2)
+        build_reads = threading.Barrier(2)
+        read_count = 0
+        refresh_started = threading.Event()
+        release_refresh = threading.Event()
+
+        def read_cache():
+            nonlocal read_count
+            with cache_lock:
+                read_count += 1
+                call_number = read_count
+                payload = cache["payload"]
+            if call_number <= 2:
+                initial_reads.wait(timeout=5)
+            elif call_number <= 4:
+                build_reads.wait(timeout=5)
+            return payload
+
+        def refresh_feed(_cached):
+            refresh_started.set()
+            if not release_refresh.wait(timeout=5):
+                raise AssertionError("timed out waiting to release the shared refresh")
+            with cache_lock:
+                cache["payload"] = rebuilt
+            return rebuilt
+
+        results = [None, None]
+        errors = []
+
+        def request(index):
+            try:
+                results[index] = self.service.feed_for_request()
+            except BaseException as exc:  # pragma: no cover - surfaced below
+                errors.append(exc)
+
+        with (
+            mock.patch.object(self.service, "read_cache", side_effect=read_cache),
+            mock.patch.object(self.service, "refresh_feed", side_effect=refresh_feed) as refresh,
+            mock.patch.object(self.service, "refresh_feed_in_background") as background,
+        ):
+            threads = [threading.Thread(target=request, args=(index,)) for index in range(2)]
+            for thread in threads:
+                thread.start()
+            self.assertTrue(refresh_started.wait(timeout=5))
+            release_refresh.set()
+            for thread in threads:
+                thread.join(timeout=5)
+
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        if errors:
+            raise errors[0]
+        self.assertEqual([result["articles"] for result in results], [rebuilt["articles"]] * 2)
+        refresh.assert_called_once()
+        background.assert_not_called()
 
     def test_previous_classifier_cache_is_not_fresh(self):
         cached = self.cached_feed(age_seconds=30)

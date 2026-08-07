@@ -129,7 +129,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         body = candidate.read_bytes()
         content_type, _ = mimetypes.guess_type(candidate.name)
-        if content_type and content_type.startswith("text/"):
+        if candidate.suffix.lower() == ".mjs":
+            content_type = "application/javascript"
+        elif content_type and content_type.startswith("text/"):
             content_type += "; charset=utf-8"
         self.send_response(200)
         self.send_header("Content-Type", content_type or "application/octet-stream")
