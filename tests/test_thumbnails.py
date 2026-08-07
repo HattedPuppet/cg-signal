@@ -1,7 +1,7 @@
 import unittest
 import xml.etree.ElementTree as ET
 
-from server import extract_page_image, first_image, preferred_child_text
+from cg_signal.feeds import extract_page_image, first_image, preferred_child_text
 
 
 class ThumbnailTests(unittest.TestCase):

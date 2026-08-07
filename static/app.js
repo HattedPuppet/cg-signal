@@ -1,3 +1,20 @@
+import {
+  FEED_SCHEMA_VERSION,
+  ARTICLE_LANE_VALUES,
+  LANE_VALUES,
+  SOFTWARE_GROUP_ORDER,
+  SOFTWARE_GROUP_COLORS,
+  TOPIC_ORDER,
+  TOPIC_COLORS,
+  normalizeSoftwareCategory,
+  softwareGroup,
+  articleCategories as articleSoftwareCategories,
+  articleTopics,
+  matchesSearch as matchesSearchQuery,
+  articleWithinPublicationWindow,
+  feedPayloadIsStructurallyCompatible,
+} from "./domain.mjs";
+
 const storageKeys = {
   saved: "cg-signal:saved",
   archived: "cg-signal:archived",
@@ -23,9 +40,6 @@ const TIME_WINDOW_LABELS = {
   all: "All current",
 };
 
-const CLASSIFICATION_VERSION = 4;
-const ARTICLE_LANE_VALUES = new Set(["Tech & Development", "Industry", "Business"]);
-const LANE_VALUES = new Set(["All", ...ARTICLE_LANE_VALUES]);
 const storedLane = localStorage.getItem(storageKeys.lane);
 
 const state = {
@@ -63,58 +77,6 @@ const state = {
   sessionStartedAt: new Date().toISOString(),
 };
 
-const SOFTWARE_GROUP_ORDER = [
-  "Unreal Engine",
-  "Unity",
-  "Blender",
-  "Substance 3D",
-  "Houdini",
-  "AI",
-  "Production techniques",
-  "Industry context",
-  "Business context",
-];
-const SOFTWARE_GROUP_COLORS = {
-  "Unreal Engine": "#4b75ff",
-  Unity: "#222c37",
-  Blender: "#f18a21",
-  "Substance 3D": "#9fa9ff",
-  Houdini: "#ff7b38",
-  AI: "#a77bff",
-  "Production techniques": "#d7ff57",
-  "Industry context": "#f4a261",
-  "Business context": "#c78cff",
-};
-const TOPIC_ORDER = [
-  "Modeling & sculpting",
-  "Materials & texturing",
-  "Animation, rigging & mocap",
-  "Lighting & rendering",
-  "VFX, simulation & procedural",
-  "Technical art & optimization",
-  "Pipeline, tools & automation",
-  "Game design & development",
-  "Breakdowns & production stories",
-  "Research & emerging tech",
-  "Releases & product updates",
-  "Assets & inspiration",
-  "Other production",
-];
-const TOPIC_COLORS = {
-  "Modeling & sculpting": "#cb7cff",
-  "Materials & texturing": "#61d0c8",
-  "Animation, rigging & mocap": "#ff7597",
-  "Lighting & rendering": "#ffd166",
-  "VFX, simulation & procedural": "#ff7b38",
-  "Technical art & optimization": "#4b75ff",
-  "Pipeline, tools & automation": "#66b8ff",
-  "Game design & development": "#9ddc65",
-  "Breakdowns & production stories": "#ea8db3",
-  "Research & emerging tech": "#8e9dff",
-  "Releases & product updates": "#62c7db",
-  "Assets & inspiration": "#d6a6ff",
-  "Other production": "#b6bfad",
-};
 let stateSaveTimer = null;
 let noteSaveTimer = null;
 let backgroundRefreshTimer = null;
@@ -166,29 +128,6 @@ const elements = {
   configuredSourceCount: document.querySelector("#configured-source-count"),
 };
 
-const SEARCH_ALIASES = new Map([
-  ["unreal", { field: "software", value: "Unreal Engine" }],
-  ["unreal-engine", { field: "software", value: "Unreal Engine" }],
-  ["ue", { field: "software", value: "Unreal Engine" }],
-  ["ue5", { field: "software", value: "Unreal Engine" }],
-  ["unity", { field: "software", value: "Unity" }],
-  ["blender", { field: "software", value: "Blender" }],
-  ["houdini", { field: "software", value: "Houdini" }],
-  ["painter", { field: "software", value: "Substance 3D" }],
-  ["substance-painter", { field: "software", value: "Substance 3D" }],
-  ["designer", { field: "software", value: "Substance 3D" }],
-  ["substance-designer", { field: "software", value: "Substance 3D" }],
-  ["substance", { field: "software", value: "Substance 3D" }],
-  ["production", { field: "software", value: "Production techniques" }],
-  ["production-techniques", { field: "software", value: "Production techniques" }],
-  ["industry", { field: "software", value: "Industry context" }],
-  ["industry-context", { field: "software", value: "Industry context" }],
-  ["business", { field: "software", value: "Business context" }],
-  ["business-context", { field: "software", value: "Business context" }],
-  ["ai", { field: "software", value: "AI" }],
-  ["genai", { field: "software", value: "AI" }],
-]);
-
 const sourceShortNames = {
   "80-level": "80",
   cgworld: "CG",
@@ -221,14 +160,6 @@ function readObject(key) {
   } catch {
     return {};
   }
-}
-
-function normalizeSoftwareCategory(value) {
-  if (["Substance Painter", "Substance Designer", "Substance 3D"].includes(value)) {
-    return "Substance 3D";
-  }
-  if (value === "Spine") return "";
-  return value;
 }
 
 function normalizeFeedbackItem(item) {
@@ -407,18 +338,8 @@ function prioritySort(left, right) {
     || new Date(right.published_at).getTime() - new Date(left.published_at).getTime();
 }
 
-function timeWindowStart() {
-  if (state.timeWindow === "all") return null;
-  const monthOffset = state.timeWindow === "quarter" ? 2 : 0;
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth() - monthOffset, 1);
-}
-
 function articleWithinTimeWindow(article) {
-  const start = timeWindowStart();
-  if (!start) return true;
-  const published = new Date(article.published_at);
-  return Number.isNaN(published.getTime()) || published >= start;
+  return articleWithinPublicationWindow(article, state.timeWindow);
 }
 
 function articleMonthKey(article) {
@@ -439,93 +360,22 @@ function matchesSource(article) {
   );
 }
 
-function searchDocument(article) {
-  return [
-    article.title,
-    article.summary,
-    article.source,
-    article.lane,
-    article.software_group,
-    ...(article.software_tags || []),
-    ...(article.topic_tags || []),
-    ...(article.priority_reasons || []),
-    ...article.related.map((item) => `${item.source} ${item.title}`),
-    state.notes[article.id] || "",
-  ]
-    .join(" ")
-    .toLocaleLowerCase();
-}
-
-function normalizeSearchQuery(query) {
-  return query
-    .replace(/#unreal\s+engine\b/giu, '#software:"Unreal Engine"')
-    .replace(/#substance\s+(?:painter|designer|3d)\b/giu, '#software:"Substance 3D"')
-    .replace(/#production\s+techniques\b/giu, '#software:"Production techniques"')
-    .replace(/#industry\s+context\b/giu, '#software:"Industry context"')
-    .replace(/#business\s+context\b/giu, '#software:"Business context"');
-}
-
-function searchTokens(query) {
-  const normalized = normalizeSearchQuery(query.trim());
-  if (!normalized) return [];
-  const rawTokens = normalized.match(/-?#(?:software|topic|source|is):(?:"[^"]+"|'[^']+'|\S+)|-?#[\p{L}\p{N}_-]+|-?"[^"]+"|-?\S+/giu) || [];
-  return rawTokens.map((raw) => {
-    const negative = raw.startsWith("-");
-    let token = negative ? raw.slice(1) : raw;
-    if (token.startsWith("#")) {
-      token = token.slice(1);
-      const separator = token.indexOf(":");
-      if (separator > 0) {
-        const field = token.slice(0, separator).toLocaleLowerCase();
-        let value = token.slice(separator + 1).replace(/^['"]|['"]$/g, "").toLocaleLowerCase();
-        if (field === "software" && ["substance painter", "substance designer"].includes(value)) {
-          value = "substance 3d";
-        }
-        return { negative, field, value };
-      }
-      const aliasKey = token.toLocaleLowerCase().replaceAll("_", "-");
-      const alias = SEARCH_ALIASES.get(aliasKey);
-      if (alias) return { negative, field: alias.field, value: alias.value.toLocaleLowerCase() };
-      return { negative, field: "text", value: token.toLocaleLowerCase() };
-    }
-    return { negative, field: "text", value: token.replace(/^['"]|['"]$/g, "").toLocaleLowerCase() };
-  }).filter((token) => token.value);
-}
-
 function articleIsNew(article) {
   return Boolean(state.sessionCutoff)
     && new Date(article.published_at).getTime() > state.sessionCutoff.getTime();
 }
 
-function matchesSearchToken(article, token) {
-  const value = token.value;
-  if (token.field === "software") {
-    return articleSoftwareCategories(article).some((item) => item.toLocaleLowerCase().includes(value));
-  }
-  if (token.field === "topic") {
-    return articleTopics(article).some((item) => item.toLocaleLowerCase().includes(value));
-  }
-  if (token.field === "source") {
-    return (article.sources || []).some((source) => `${source.id} ${source.name}`.toLocaleLowerCase().includes(value));
-  }
-  if (token.field === "is") {
-    const statusMatches = {
-      saved: state.saved.has(article.id),
-      library: state.saved.has(article.id),
-      archived: state.archived.has(article.id),
-      new: articleIsNew(article),
-      liked: state.feedback.get(article.id)?.value === 1,
-      reduced: state.feedback.get(article.id)?.value === -1,
-    };
-    return Boolean(statusMatches[value]);
-  }
-  return searchDocument(article).includes(value);
-}
-
 function matchesSearch(article, query) {
-  return searchTokens(query).every((token) => {
-    const matches = matchesSearchToken(article, token);
-    return token.negative ? !matches : matches;
+  return matchesSearchQuery(article, query, {
+    extraText: state.notes[article.id] || "",
+    isStatus: (item, value) => ({
+      saved: state.saved.has(item.id),
+      library: state.saved.has(item.id),
+      archived: state.archived.has(item.id),
+      new: articleIsNew(item),
+      liked: state.feedback.get(item.id)?.value === 1,
+      reduced: state.feedback.get(item.id)?.value === -1,
+    })[value] || false,
   });
 }
 
@@ -538,18 +388,6 @@ function latestPool() {
     if (state.archived.has(article.id)) return false;
     return matchesSearch(article, query);
   });
-}
-
-function articleSoftwareCategories(article) {
-  const tags = [...new Set((article.software_tags || []).map(normalizeSoftwareCategory))].filter(Boolean);
-  return tags.length ? tags : [softwareGroup(article)];
-}
-
-function articleTopics(article) {
-  if (softwareGroup(article) !== "Production techniques") return [];
-  const tags = [...new Set(article.topic_tags || [])].filter(Boolean);
-  if (tags.length) return tags;
-  return ["Other production"];
 }
 
 function productionTopicsActive() {
@@ -840,16 +678,6 @@ function archiveControlsMarkup() {
     </div>`;
 }
 
-function softwareGroup(article) {
-  const explicitGroup = normalizeSoftwareCategory(article.software_group);
-  if (explicitGroup) return explicitGroup;
-  const matchedReason = SOFTWARE_GROUP_ORDER.find((group) => (article.priority_reasons || []).includes(group));
-  if (matchedReason) return matchedReason;
-  if (article.lane === "Business") return "Business context";
-  if (article.lane === "Industry") return "Industry context";
-  return "Production techniques";
-}
-
 function facetCounts(articles, valuesForArticle) {
   const counts = new Map();
   articles.forEach((article) => {
@@ -1118,13 +946,13 @@ function showWarnings(payload) {
 }
 
 function validateFeedPayload(payload) {
-  if (payload.classification_version !== CLASSIFICATION_VERSION) {
-    throw new Error("The dashboard server is using an older classifier. Restart CG Signal, then refresh the dashboard.");
+  if (payload?.feed_schema_version !== FEED_SCHEMA_VERSION) {
+    throw new Error("The dashboard server returned an incompatible feed schema. Restart CG Signal, then refresh the dashboard.");
   }
   if (!Array.isArray(payload.articles)) {
     throw new Error("The dashboard server returned an invalid article feed.");
   }
-  if (payload.articles.some((article) => !ARTICLE_LANE_VALUES.has(article.lane))) {
+  if (!feedPayloadIsStructurallyCompatible(payload)) {
     throw new Error("The dashboard server returned incompatible article labels. Restart CG Signal, then refresh the dashboard.");
   }
   return payload;

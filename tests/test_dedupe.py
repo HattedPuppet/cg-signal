@@ -1,7 +1,8 @@
 import unittest
 from datetime import datetime, timezone
 
-from server import canonical_url, same_story
+from cg_signal.dedupe import same_story
+from cg_signal.feeds import canonical_url
 
 
 def article(title: str, url: str, refs=None):

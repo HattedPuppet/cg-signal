@@ -866,7 +866,7 @@ button { color: inherit; }
   bottom: 0;
   left: 0;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   max-width: 860px;
   min-height: calc(66px + env(safe-area-inset-bottom));
   margin: 0 auto;

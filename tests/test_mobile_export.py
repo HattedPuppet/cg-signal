@@ -75,6 +75,7 @@ class MobileExportTests(unittest.TestCase):
             build_mobile.build_site(output, self.fixture())
             self.assertTrue((output / "index.html").is_file())
             self.assertTrue((output / "feed.json").is_file())
+            self.assertTrue((output / "domain.mjs").is_file())
             self.assertFalse((output / "user-state.json").exists())
             self.assertFalse((output / "cg-signal.db").exists())
 
@@ -168,23 +169,27 @@ class MobileExportTests(unittest.TestCase):
         self.assertEqual(result["classification_version"], 4)
         self.assertEqual(result["carried_forward_count"], 0)
 
-    def test_mobile_offline_cache_requires_current_classification_version(self):
+    def test_mobile_offline_cache_requires_current_feed_schema(self):
         javascript = (MODULE_PATH.parent / "site" / "app.js").read_text(encoding="utf-8")
-        self.assertIn("const CLASSIFICATION_VERSION = 4", javascript)
-        self.assertIn("payload?.classification_version === CLASSIFICATION_VERSION", javascript)
+        self.assertIn("FEED_SCHEMA_VERSION", javascript)
+        self.assertIn("payload?.feed_schema_version === FEED_SCHEMA_VERSION", javascript)
         self.assertIn("function feedPayloadIsCompatible(payload)", javascript)
-        self.assertIn("ARTICLE_LANES.has(article.lane)", javascript)
+        self.assertIn("feedPayloadIsStructurallyCompatible(payload)", javascript)
+        self.assertNotIn("CLASSIFICATION_VERSION", javascript)
 
     def test_mobile_shell_revision_is_bumped_with_lane_schema(self):
         site = MODULE_PATH.parent / "site"
         html = (site / "index.html").read_text(encoding="utf-8")
         javascript = (site / "app.js").read_text(encoding="utf-8")
         worker = (site / "sw.js").read_text(encoding="utf-8")
-        self.assertIn("app.js?v=20260804", html)
-        self.assertIn("styles.css?v=20260804", html)
-        self.assertIn('register("./sw.js?v=20260804")', javascript)
-        self.assertIn('const CACHE_NAME = "cg-signal-mobile-v18"', worker)
-        self.assertIn("app.js?v=20260804", worker)
+        self.assertIn('from "./domain.mjs"', javascript)
+        self.assertIn('type="module"', html)
+        self.assertIn("app.js?v=20260807", html)
+        self.assertIn("styles.css?v=20260807", html)
+        self.assertIn('register("./sw.js?v=20260807")', javascript)
+        self.assertIn('const CACHE_NAME = "cg-signal-mobile-v19"', worker)
+        self.assertIn("app.js?v=20260807", worker)
+        self.assertIn("./domain.mjs", worker)
 
     def test_mobile_shell_keeps_inline_controls_reachable(self):
         site = MODULE_PATH.parent / "site"
@@ -282,16 +287,23 @@ class MobileExportTests(unittest.TestCase):
         self.assertIn("function storyListMarkup(articles)", javascript)
         self.assertIn("function readCachedFeed()", javascript)
         self.assertIn("applyFeed(cached)", javascript)
-        self.assertIn("cg-signal-mobile-v18", service_worker)
-        self.assertIn("styles.css?v=20260804", service_worker)
-        self.assertIn("app.js?v=20260804", service_worker)
-        self.assertIn("sw.js?v=20260804", javascript)
-        self.assertIn("sw.js?v=20260804", service_worker)
+        self.assertIn("cg-signal-mobile-v19", service_worker)
+        self.assertIn("styles.css?v=20260807", service_worker)
+        self.assertIn("app.js?v=20260807", service_worker)
+        self.assertIn("./domain.mjs", service_worker)
+        self.assertIn("sw.js?v=20260807", javascript)
+        self.assertIn("sw.js?v=20260807", service_worker)
         self.assertIn("fetch(event.request)", service_worker)
         self.assertIn("function articleRecencyBucket(article)", javascript)
         self.assertIn("Last 24 hours", javascript)
         self.assertIn("Last 3 days", javascript)
         self.assertIn(".recency-section", styles)
+
+    def test_mobile_bottom_navigation_uses_exactly_two_columns(self):
+        styles = (MODULE_PATH.parent / "site" / "styles.css").read_text(encoding="utf-8")
+        self.assertIn(".bottom-nav", styles)
+        self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr));", styles)
+        self.assertNotIn("grid-template-columns: repeat(3, 1fr);", styles)
 
 
 if __name__ == "__main__":

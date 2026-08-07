@@ -4,7 +4,6 @@ $ErrorActionPreference = "Stop"
 $projectRoot = $PSScriptRoot
 $serverScript = Join-Path $projectRoot "server.py"
 $serverPidFile = Join-Path $projectRoot ".cache\server.pid"
-$serverSourceRevision = (Get-FileHash -LiteralPath $serverScript -Algorithm SHA256).Hash.ToLowerInvariant()
 $dashboardUrl = "http://127.0.0.1:4310"
 $healthUrl = "$dashboardUrl/api/health"
 
@@ -79,20 +78,6 @@ try {
         exit 0
     }
 
-    $health = Get-CGSignalHealth
-    if ($null -ne $health) {
-        if ($health.source_revision -eq $serverSourceRevision) {
-            if (-not $NoOpen) {
-                Start-Process $dashboardUrl
-            }
-            exit 0
-        }
-        if (-not (Stop-StaleCGSignal $health)) {
-            Show-CGSignalMessage "CG Signal is running older code and could not be restarted safely. Close it, then open CG Signal again." 16
-            exit 1
-        }
-    }
-
     $pythonPath = $null
     $pythonArguments = @()
     $codexPython = Join-Path $env:USERPROFILE ".cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
@@ -117,6 +102,34 @@ try {
     if (-not $pythonPath) {
         Show-CGSignalMessage "CG Signal needs Python 3. Install it, then open CG Signal again." 16
         exit 1
+    }
+
+    $revisionArguments = @($pythonArguments)
+    $revisionArguments += @($serverScript, "--print-source-revision")
+    try {
+        Push-Location $projectRoot
+        $serverSourceRevision = (& $pythonPath @revisionArguments).Trim()
+    }
+    finally {
+        Pop-Location
+    }
+    if (-not $serverSourceRevision -or $serverSourceRevision -notmatch '^[0-9a-f]{64}$') {
+        Show-CGSignalMessage "CG Signal could not determine its source revision. Close it, then open CG Signal again." 16
+        exit 1
+    }
+
+    $health = Get-CGSignalHealth
+    if ($null -ne $health) {
+        if ($health.source_revision -eq $serverSourceRevision) {
+            if (-not $NoOpen) {
+                Start-Process $dashboardUrl
+            }
+            exit 0
+        }
+        if (-not (Stop-StaleCGSignal $health)) {
+            Show-CGSignalMessage "CG Signal is running older code and could not be restarted safely. Close it, then open CG Signal again." 16
+            exit 1
+        }
     }
 
     $pythonArguments += @($serverScript, "--no-browser")

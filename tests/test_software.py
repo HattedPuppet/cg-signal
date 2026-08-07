@@ -1,6 +1,6 @@
 import unittest
 
-from server import classify_software
+from cg_signal.classification import classify_software
 
 
 class SoftwareClassificationTests(unittest.TestCase):

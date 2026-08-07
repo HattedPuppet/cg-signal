@@ -94,10 +94,11 @@ Git.
   SQLite archive. **History** searches this complete collection with paging, so
   articles remain findable after they disappear from a publisher's feed.
 - Saved, archived, research-note, recommendation, and source-tuning states are
-  persisted by the local server in `.cache/user-state.json`. Browser storage
-  acts as a fallback and migrates existing saved state automatically. The
-  database mirrors article state so full-history searches can use `#is:` filters
-  and research notes.
+  persisted transactionally in `.cache/cg-signal.db`. Browser storage acts as
+  a failure fallback and migrates existing saved state automatically. Existing
+  `.cache/user-state.json` data is imported once during the upgrade and then
+  retained unchanged as recovery evidence. Full-history searches use the same
+  SQLite state for `#is:` filters and research notes.
 - **Latest Signal** defaults to stories published **this month**. The publication
   window can be widened to the **last three months** (with month separators for
   scanning) or to all articles currently returned by the feeds. Older stories

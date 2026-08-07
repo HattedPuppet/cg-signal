@@ -1,6 +1,6 @@
 import unittest
 
-from server import classify_topics
+from cg_signal.classification import classify_topics
 
 
 class TopicClassificationTests(unittest.TestCase):

@@ -1,6 +1,6 @@
 import unittest
 
-from server import classify_lane
+from cg_signal.classification import classify_lane
 
 
 class LaneClassificationTests(unittest.TestCase):

@@ -15,6 +15,7 @@ class DesktopShellTests(unittest.TestCase):
         self.assertIn('id="scroll-top-button"', html)
         self.assertNotIn('id="density-toggle"', html)
         self.assertIn('id="sidebar-toggle"', html)
+        self.assertIn('<script src="/app.js" type="module">', html)
         self.assertNotIn('id="sidebar-close"', html)
         self.assertNotIn('class="brand-row"', html)
         self.assertNotIn('class="local-pill"', html)
@@ -23,6 +24,7 @@ class DesktopShellTests(unittest.TestCase):
 
     def test_first_article_jump_is_instant_and_persistent(self):
         javascript = (SITE / "app.js").read_text(encoding="utf-8")
+        self.assertIn('from "./domain.mjs"', javascript)
         styles = (SITE / "styles.css").read_text(encoding="utf-8")
         self.assertIn('story-card:not(.skeleton-card)', javascript)
         self.assertIn('scrollIntoView({ behavior: "auto", block: "center" })', javascript)
@@ -68,34 +70,31 @@ class DesktopShellTests(unittest.TestCase):
 
     def test_obsolete_or_invalid_persisted_lane_defaults_to_all(self):
         javascript = (SITE / "app.js").read_text(encoding="utf-8")
-        self.assertIn(
-            'new Set(["Tech & Development", "Industry", "Business"])',
-            javascript,
-        )
-        self.assertIn('new Set(["All", ...ARTICLE_LANE_VALUES])', javascript)
+        self.assertIn('ARTICLE_LANE_VALUES', javascript)
+        self.assertIn('LANE_VALUES', javascript)
         self.assertIn('lane: LANE_VALUES.has(storedLane) ? storedLane : "All"', javascript)
 
     def test_feed_rejects_stale_or_unknown_classification_lanes(self):
         javascript = (SITE / "app.js").read_text(encoding="utf-8")
-        self.assertIn("const CLASSIFICATION_VERSION = 4", javascript)
+        self.assertIn("FEED_SCHEMA_VERSION", javascript)
         self.assertIn("function validateFeedPayload(payload)", javascript)
-        self.assertIn("payload.classification_version !== CLASSIFICATION_VERSION", javascript)
-        self.assertIn("!ARTICLE_LANE_VALUES.has(article.lane)", javascript)
+        self.assertIn("payload?.feed_schema_version !== FEED_SCHEMA_VERSION", javascript)
+        self.assertIn("feedPayloadIsStructurallyCompatible(payload)", javascript)
+        self.assertNotIn("CLASSIFICATION_VERSION", javascript)
         self.assertIn("Restart CG Signal", javascript)
 
     def test_launcher_replaces_only_the_recorded_stale_server(self):
         launcher = (PROJECT_ROOT / "launch-dashboard.ps1").read_text(encoding="utf-8")
         server = (PROJECT_ROOT / "server.py").read_text(encoding="utf-8")
-        self.assertIn('Get-FileHash -LiteralPath $serverScript -Algorithm SHA256', launcher)
+        self.assertIn('$serverScript, "--print-source-revision"', launcher)
+        self.assertNotIn('Get-FileHash -LiteralPath $serverScript -Algorithm SHA256', launcher)
         self.assertIn('$health.source_revision -eq $serverSourceRevision', launcher)
         self.assertIn('Join-Path $projectRoot ".cache\\server.pid"', launcher)
         self.assertIn('if (-not $health.pid -or -not (Test-Path -LiteralPath $serverPidFile))', launcher)
         self.assertIn('if ([int]$health.pid -ne $candidateProcessId)', launcher)
         self.assertIn('$process.ProcessName -notin @("python", "python3", "py")', launcher)
         self.assertIn('Stop-Process -Id $candidateProcessId', launcher)
-        self.assertIn('"source_revision": SERVER_SOURCE_REVISION', server)
-        self.assertIn('"classification_version": ARTICLE_CLASSIFICATION_VERSION', server)
-        self.assertIn('"pid": os.getpid()', server)
+        self.assertIn('--print-source-revision', server)
 
     def test_startup_requests_state_and_feed_in_parallel(self):
         javascript = (SITE / "app.js").read_text(encoding="utf-8")

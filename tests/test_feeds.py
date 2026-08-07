@@ -1,7 +1,7 @@
 import unittest
 import xml.etree.ElementTree as ET
 
-from server import parse_feed_document
+from cg_signal.feeds import parse_feed_document
 
 
 class FeedParsingTests(unittest.TestCase):

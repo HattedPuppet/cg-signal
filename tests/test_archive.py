@@ -1,9 +1,10 @@
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
 
-import server
+from cg_signal.classification import apply_article_classification
+from cg_signal.config import CLASSIFICATION_REVISION, RuntimePaths
+from cg_signal.storage import SQLiteRepository
 
 
 def article(article_id, title, software_group="Production techniques", lane="Tech & Development"):
@@ -34,77 +35,63 @@ def article(article_id, title, software_group="Production techniques", lane="Tec
 class ArchiveTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        self.database_patch = mock.patch.object(
-            server, "ARCHIVE_DB_FILE", Path(self.temporary.name) / "archive.db"
-        )
-        self.database_patch.start()
-        server.ARCHIVE_INITIALIZED = False
+        self.repository = SQLiteRepository(RuntimePaths.for_root(Path(self.temporary.name)))
 
     def tearDown(self):
-        server.ARCHIVE_INITIALIZED = False
-        self.database_patch.stop()
         self.temporary.cleanup()
 
     def test_articles_are_durable_searchable_and_paginated(self):
-        server.archive_articles(
-            [
-                article("blender-light", "Blender lighting breakdown", "Blender"),
-                article("studio-deal", "Animation studio acquisition", "Business context", "Business"),
-            ]
-        )
-        result = server.query_archive("#blender lighting", limit=10)
+        self.repository.archive_articles([
+            article("blender-light", "Blender lighting breakdown", "Blender"),
+            article("studio-deal", "Animation studio acquisition", "Business context", "Business"),
+        ])
+        result = self.repository.query_archive("#blender lighting", limit=10)
         self.assertEqual(result["total"], 1)
         self.assertEqual(result["articles"][0]["id"], "blender-light")
-        self.assertEqual(server.query_archive("-#industry", limit=1)["total"], 2)
-        self.assertEqual(server.query_archive("#business")["total"], 1)
-        self.assertTrue(server.query_archive("", limit=1)["has_more"])
+        self.assertEqual(self.repository.query_archive("-#industry", limit=1)["total"], 2)
+        self.assertEqual(self.repository.query_archive("#business")["total"], 1)
+        self.assertTrue(self.repository.query_archive("", limit=1)["has_more"])
 
         updated = article("blender-light", "Blender lighting workflow", "Blender")
-        server.archive_articles([updated])
-        self.assertEqual(server.archive_article_count(), 2)
-        self.assertEqual(server.query_archive("workflow")["articles"][0]["title"], updated["title"])
+        self.repository.archive_articles([updated])
+        self.assertEqual(self.repository.archive_article_count(), 2)
+        self.assertEqual(self.repository.query_archive("workflow")["articles"][0]["title"], updated["title"])
 
     def test_saved_state_and_notes_are_searchable(self):
-        server.archive_articles([article("saved-story", "Procedural material guide")])
-        state = server.normalize_user_state(
-            {
-                "saved": ["saved-story"],
-                "notes": {"saved-story": "Revisit this node graph reference"},
-                "feedback": [{"id": "saved-story", "value": 1}],
-            }
-        )
-        server.sync_user_state_to_archive(state)
-        self.assertEqual(server.query_archive("#is:saved reference")["total"], 1)
-        self.assertEqual(server.query_archive("#is:liked")["total"], 1)
+        self.repository.archive_articles([article("saved-story", "Procedural material guide")])
+        state = {
+            "saved": ["saved-story"],
+            "notes": {"saved-story": "Revisit this node graph reference"},
+            "feedback": [{"id": "saved-story", "value": 1}],
+        }
+        self.repository.write_state(state)
+        self.assertEqual(self.repository.query_archive("#is:saved reference")["total"], 1)
+        self.assertEqual(self.repository.query_archive("#is:liked")["total"], 1)
 
     def test_classifier_upgrade_relabels_existing_history(self):
         stale = article("stale-gacha", "期間限定ガチャイベントを開催")
         stale["summary"] = "新キャラを入手できるキャンペーン"
-        server.archive_articles([stale])
-        with server.archive_connection() as connection:
+        self.repository.archive_articles([stale])
+        with self.repository.connection() as connection:
             connection.execute(
-                "UPDATE metadata SET value = '1' WHERE key = 'article_classification_version'"
+                "UPDATE metadata SET value = '1' WHERE key = 'article_classification_revision'"
             )
-
-        server.ARCHIVE_INITIALIZED = False
-        server.initialize_archive_db(force=True)
-
-        with server.archive_connection() as connection:
+        self.repository.initialize(force=True)
+        with self.repository.connection() as connection:
             row = connection.execute(
                 "SELECT lane, software_group, topic_tags, data_json FROM articles WHERE id = ?",
                 ("stale-gacha",),
             ).fetchone()
             version = connection.execute(
-                "SELECT value FROM metadata WHERE key = 'article_classification_version'"
+                "SELECT value FROM metadata WHERE key = 'article_classification_revision'"
             ).fetchone()["value"]
-
         self.assertEqual(row["lane"], "Industry")
         self.assertEqual(row["software_group"], "Industry context")
         self.assertEqual(row["topic_tags"], "[]")
         self.assertIn('"lane": "Industry"', row["data_json"])
-        self.assertEqual(version, str(server.ARTICLE_CLASSIFICATION_VERSION))
-        self.assertEqual(server.query_archive("#industry")["total"], 1)
-        self.assertEqual(server.query_archive("#business")["total"], 0)
+        self.assertEqual(version, str(CLASSIFICATION_REVISION))
+        self.assertEqual(self.repository.query_archive("#industry")["total"], 1)
+        self.assertEqual(self.repository.query_archive("#business")["total"], 0)
 
 
 if __name__ == "__main__":

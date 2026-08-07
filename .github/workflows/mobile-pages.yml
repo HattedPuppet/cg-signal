@@ -27,6 +27,16 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Run client domain tests
+        run: |
+          node --test tests/client/*.test.mjs
+          node --check static/app.js
+          node --check mobile/site/app.js
+          node --check mobile/site/sw.js
       - name: Run regression tests
         run: python -m unittest discover -s tests -v
       - name: Restore publisher request cache

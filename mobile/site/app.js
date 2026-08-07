@@ -1,3 +1,14 @@
+import {
+  FEED_SCHEMA_VERSION,
+  SOFTWARE_GROUP_ORDER,
+  SOFTWARE_GROUP_COLORS,
+  articleCategories,
+  articleSourceIds,
+  articleWithinPublicationWindow,
+  matchesSearch as matchesSearchQuery,
+  feedPayloadIsStructurallyCompatible,
+} from "./domain.mjs";
+
 const storageKeys = {
   pinned: "cg-signal-mobile:pinned",
   feed: "cg-signal-mobile:last-feed",
@@ -6,56 +17,11 @@ const storageKeys = {
   timeWindow: "cg-signal-mobile:time-window",
 };
 
-const CLASSIFICATION_VERSION = 4;
-const ARTICLE_LANES = new Set(["Tech & Development", "Industry", "Business"]);
-
-const CATEGORY_ORDER = [
-  "Unreal Engine",
-  "Unity",
-  "Blender",
-  "Substance 3D",
-  "Houdini",
-  "AI",
-  "Production techniques",
-  "Industry context",
-  "Business context",
-];
-
-const CATEGORY_COLORS = {
-  "Unreal Engine": "#4b75ff",
-  Unity: "#202a34",
-  Blender: "#f18a21",
-  "Substance 3D": "#9fa9ff",
-  Houdini: "#ff7b38",
-  AI: "#a77bff",
-  "Production techniques": "#d7ff57",
-  "Industry context": "#f4a261",
-  "Business context": "#c78cff",
-};
-
 const TIME_WINDOW_LABELS = {
   month: "This month",
   quarter: "Last 3 months",
   all: "All available",
 };
-
-const SEARCH_ALIASES = new Map([
-  ["unreal", ["software", "unreal engine"]],
-  ["unreal-engine", ["software", "unreal engine"]],
-  ["ue", ["software", "unreal engine"]],
-  ["ue5", ["software", "unreal engine"]],
-  ["unity", ["software", "unity"]],
-  ["blender", ["software", "blender"]],
-  ["houdini", ["software", "houdini"]],
-  ["substance", ["software", "substance 3d"]],
-  ["painter", ["software", "substance 3d"]],
-  ["designer", ["software", "substance 3d"]],
-  ["ai", ["software", "ai"]],
-  ["genai", ["software", "ai"]],
-  ["production", ["software", "production techniques"]],
-  ["industry", ["software", "industry context"]],
-  ["business", ["software", "business context"]],
-]);
 
 const state = {
   payload: null,
@@ -166,10 +132,6 @@ function safeUrl(value) {
   }
 }
 
-function normalize(value) {
-  return String(value || "").toLocaleLowerCase();
-}
-
 function relativeTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Date unavailable";
@@ -189,103 +151,19 @@ function relativeTime(value) {
   return "just now";
 }
 
-function articleCategories(article) {
-  const categories = [...new Set([...(article.software_tags || []), article.software_group].filter(Boolean))];
-  return categories.length
-    ? categories
-    : [article.lane === "Business" ? "Business context" : article.lane === "Industry" ? "Industry context" : "Production techniques"];
-}
-
-function timeWindowStart() {
-  if (state.timeWindow === "all") return null;
-  const monthOffset = state.timeWindow === "quarter" ? 2 : 0;
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth() - monthOffset, 1);
-}
-
 function articleWithinTimeWindow(article) {
-  const start = timeWindowStart();
-  if (!start) return true;
-  const published = new Date(article.published_at);
-  return Number.isNaN(published.getTime()) || published >= start;
+  return articleWithinPublicationWindow(article, state.timeWindow);
 }
 
 function primaryCategory(article) {
   return article.software_group || articleCategories(article)[0];
 }
 
-function searchableText(article) {
-  return normalize([
-    article.title,
-    article.summary,
-    article.source,
-    article.lane,
-    article.software_group,
-    ...(article.software_tags || []),
-    ...(article.topic_tags || []),
-    ...(article.priority_reasons || []),
-    ...(article.related || []).flatMap((item) => [item.source, item.title]),
-  ].join(" "));
-}
-
-function parseSearch(query) {
-  const normalizedQuery = query
-    .replace(/#unreal\s+engine\b/gi, '#software:"Unreal Engine"')
-    .replace(/#substance\s+(?:painter|designer|3d)\b/gi, '#software:"Substance 3D"')
-    .replace(/#industry\s+context\b/gi, '#software:"Industry context"')
-    .replace(/#business\s+context\b/gi, '#software:"Business context"');
-  const rawTokens = normalizedQuery.match(/-?#(?:software|topic|source|is):(?:"[^"]+"|'[^']+'|\S+)|-?#[\p{L}\p{N}_-]+|-?"[^"]+"|-?\S+/giu) || [];
-  return rawTokens.map((raw) => {
-    const negative = raw.startsWith("-");
-    let token = negative ? raw.slice(1) : raw;
-    let field = "text";
-    let value = token;
-    if (token.startsWith("#")) {
-      token = token.slice(1);
-      const separator = token.indexOf(":");
-      if (separator > -1) {
-        const possibleField = token.slice(0, separator).toLocaleLowerCase();
-        if (["software", "topic", "source", "is"].includes(possibleField)) {
-          field = possibleField;
-          value = token.slice(separator + 1);
-        }
-      } else {
-        const alias = SEARCH_ALIASES.get(token.toLocaleLowerCase().replaceAll("_", "-"));
-        if (alias) [field, value] = alias;
-        else value = token;
-      }
-    }
-    value = normalize(value.replace(/^['"]|['"]$/g, ""));
-    return { negative, field, value };
-  }).filter((token) => token.value);
-}
-
-function tokenMatches(article, token) {
-  if (token.field === "software") {
-    return articleCategories(article).some((category) => normalize(category).includes(token.value));
-  }
-  if (token.field === "topic") {
-    return (article.topic_tags || []).some((topic) => normalize(topic).includes(token.value));
-  }
-  if (token.field === "source") {
-    return (article.sources || []).some((source) => normalize(`${source.id} ${source.name}`).includes(token.value))
-      || normalize(`${article.source_id} ${article.source}`).includes(token.value);
-  }
-  if (token.field === "is") {
-    if (token.value === "new") return Date.now() - new Date(article.published_at).getTime() < 24 * 60 * 60 * 1000;
-    return false;
-  }
-  return searchableText(article).includes(token.value);
-}
-
 function matchesSearch(article) {
-  return parseSearch(state.search).every((token) => tokenMatches(article, token) !== token.negative);
-}
-
-function articleSourceIds(article) {
-  const ids = new Set((article.sources || []).map((source) => source.id).filter(Boolean));
-  if (article.source_id) ids.add(article.source_id);
-  return ids;
+  return matchesSearchQuery(article, state.search, {
+    isStatus: (item, value) => value === "new"
+      && Date.now() - new Date(item.published_at).getTime() < 24 * 60 * 60 * 1000,
+  });
 }
 
 function articleHasEnabledSource(article) {
@@ -325,13 +203,13 @@ function syncControlValues() {
 
 function renderCategories() {
   const counts = categoryCounts();
-  const categories = CATEGORY_ORDER.filter((category) => counts.has(category) || category === state.category);
+  const categories = SOFTWARE_GROUP_ORDER.filter((category) => counts.has(category) || category === state.category);
   const allCount = state.articles.filter(matchesBaseFilters).length;
   const markup = ["All", ...categories].map((category) => {
     const active = category === state.category;
     const label = category === "All" ? "All categories" : category;
     const count = category === "All" ? allCount : (counts.get(category) || 0);
-    const color = category === "All" ? "#d7ff57" : (CATEGORY_COLORS[category] || "#7fa9ff");
+    const color = category === "All" ? "#d7ff57" : (SOFTWARE_GROUP_COLORS[category] || "#7fa9ff");
     return `<button class="category-button${active ? " is-active" : ""}" type="button" data-category="${escapeHtml(category)}" aria-pressed="${active}" style="--category-accent:${escapeHtml(color)}"><span>${escapeHtml(label)}</span><strong>${count}</strong></button>`;
   }).join("");
   elements.categoryLists.forEach((list) => { list.innerHTML = markup; });
@@ -395,7 +273,7 @@ function storyMarkup(article) {
     .slice(0, 2);
   const coverage = article.source_count > 1 ? `${article.source_count} sources` : "Single source";
   return `
-    <article class="story-card" style="--story-accent:${escapeHtml(article.accent || CATEGORY_COLORS[category] || "#7fa9ff")}">
+    <article class="story-card" style="--story-accent:${escapeHtml(article.accent || SOFTWARE_GROUP_COLORS[category] || "#7fa9ff")}">
       <div class="story-image${image ? "" : " no-image"}">
         ${image}
         <span>${escapeHtml(category)}</span>
@@ -530,10 +408,10 @@ function updateConnection(online, cached = false, checking = false) {
 }
 
 function feedPayloadIsCompatible(payload) {
-  return payload?.classification_version === CLASSIFICATION_VERSION
+  return payload?.feed_schema_version === FEED_SCHEMA_VERSION
     && Array.isArray(payload.articles)
     && payload.articles.length
-    && payload.articles.every((article) => ARTICLE_LANES.has(article.lane));
+    && feedPayloadIsStructurallyCompatible(payload);
 }
 
 function readCachedFeed() {
@@ -815,7 +693,7 @@ elements.filterDrawerHandle.addEventListener("pointercancel", () => {
 });
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=20260804").catch(() => {}));
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=20260807").catch(() => {}));
 }
 
 loadFeed();

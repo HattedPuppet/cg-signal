@@ -1,6 +1,6 @@
 import unittest
 
-from server import score_relevance
+from cg_signal.classification import score_relevance
 
 
 class RelevanceScoringTests(unittest.TestCase):

@@ -5,6 +5,7 @@ import json
 import shutil
 import sys
 import tempfile
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -87,9 +88,28 @@ def sanitize_feed(payload: Any) -> dict[str, Any]:
     for warning in payload.get("warnings", []):
         if isinstance(warning, str) and warning.strip():
             warning_sources.append(warning.split(":", 1)[0].strip()[:100])
+    try:
+        feed_schema_version = int(
+            payload.get("feed_schema_version", payload.get("schema_version", 1)) or 1
+        )
+    except (TypeError, ValueError):
+        feed_schema_version = 1
+    try:
+        classification_revision = int(
+            payload.get(
+                "classification_revision",
+                payload.get("classification_version", 1),
+            )
+            or 1
+        )
+    except (TypeError, ValueError):
+        classification_revision = 1
     return {
-        "schema_version": 1,
-        "classification_version": int(payload.get("classification_version", 1) or 1),
+        "schema_version": feed_schema_version,
+        "feed_schema_version": feed_schema_version,
+        "classification_revision": classification_revision,
+        # Existing hosted consumers still read this alias during the rollout.
+        "classification_version": classification_revision,
         "generated_at": payload.get("generated_at", ""),
         "unique_count": len(articles),
         "duplicates_collapsed": int(payload.get("duplicates_collapsed", 0) or 0),
@@ -130,7 +150,9 @@ def merge_feed_history(
         previous = sanitize_feed(previous_payload)
     except ValueError:
         return current
-    if previous["classification_version"] != current["classification_version"]:
+    if previous["feed_schema_version"] != current["feed_schema_version"]:
+        return current
+    if previous["classification_revision"] != current["classification_revision"]:
         return current
 
     reference_time = now or parsed_datetime(current.get("generated_at")) or datetime.now(timezone.utc)
@@ -204,24 +226,24 @@ def merge_feed_history(
 
 def gather_feed(request_cache_dir: Path | None = None) -> dict[str, Any]:
     sys.path.insert(0, str(PROJECT_ROOT))
-    import server  # pylint: disable=import-outside-toplevel
+    from cg_signal.config import RuntimePaths  # pylint: disable=import-outside-toplevel
+    from cg_signal.feeds import FeedService  # pylint: disable=import-outside-toplevel
 
     with tempfile.TemporaryDirectory(prefix="cg-signal-mobile-") as temporary:
-        cache = Path(temporary)
+        cache = Path(temporary).resolve()
         request_cache = request_cache_dir.resolve() if request_cache_dir else cache
         request_cache.mkdir(parents=True, exist_ok=True)
-        server.CACHE_DIR = cache
-        server.CACHE_FILE = cache / "feed-cache.json"
-        server.FEED_SOURCE_CACHE_FILE = request_cache / "feed-source-cache.json"
-        server.IMAGE_INDEX_FILE = request_cache / "image-index.json"
-        server.USER_STATE_FILE = cache / "user-state.json"
-        server.ARCHIVE_DB_FILE = cache / "cg-signal.db"
-        server.PID_FILE = cache / "server.pid"
-        server.ARCHIVE_INITIALIZED = False
-        payload = server.build_feed(force=True)
+        paths = RuntimePaths.for_root(PROJECT_ROOT).with_cache_dir(cache)
+        paths = replace(
+            paths,
+            feed_source_cache_file=request_cache / "feed-source-cache.json",
+            image_index_file=request_cache / "image-index.json",
+        )
+        service = FeedService(paths)
+        payload = service.build_feed(force=True)
         if payload.get("thumbnails_refreshing"):
-            server.wait_for_thumbnail_refresh()
-            return server.read_cache() or payload
+            service.wait_for_thumbnail_refresh()
+            return service.read_cache() or payload
         return payload
 
 
@@ -229,6 +251,7 @@ def build_site(output: Path, payload: dict[str, Any]) -> Path:
     if output.exists():
         shutil.rmtree(output)
     shutil.copytree(SITE_DIR, output)
+    shutil.copy2(PROJECT_ROOT / "static" / "domain.mjs", output / "domain.mjs")
     for icon_name in ("favicon.ico", "icon-180.png", "icon-192.png", "icon-512.png"):
         shutil.copy2(PROJECT_ROOT / "static" / icon_name, output / icon_name)
     (output / ".nojekyll").write_text("", encoding="utf-8")

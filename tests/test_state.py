@@ -1,6 +1,6 @@
 import unittest
 
-from server import normalize_user_state
+from cg_signal.storage import normalize_user_state
 
 
 class UserStateTests(unittest.TestCase):
@@ -50,6 +50,12 @@ class UserStateTests(unittest.TestCase):
         state = normalize_user_state({"read": [], "admin": True})
         self.assertNotIn("admin", state)
         self.assertNotIn("read", state)
+
+    def test_updated_at_is_bounded_and_must_be_an_iso_timestamp(self):
+        oversized = normalize_user_state({"updated_at": "x" * 1000})
+        malformed = normalize_user_state({"updated_at": "not-a-date"})
+        self.assertLessEqual(len(oversized["updated_at"]), 64)
+        self.assertNotEqual(malformed["updated_at"], "not-a-date")
 
 
 if __name__ == "__main__":
