@@ -45,9 +45,6 @@ const elements = {
   storyList: document.querySelector("#story-list"),
   empty: document.querySelector("#empty-state"),
   clearFilters: document.querySelector("#clear-filters"),
-  storyTotal: document.querySelector("#story-total"),
-  repeatTotal: document.querySelector("#repeat-total"),
-  recentTotal: document.querySelector("#recent-total"),
   updateStatus: document.querySelector("#update-status"),
   connectionDot: document.querySelector("#connection-dot"),
   categoryLists: [...document.querySelectorAll("[data-category-list]")],
@@ -180,11 +177,19 @@ function matchesBaseFilters(article) {
   return matchesSearch(article);
 }
 
+function matchesCategory(article) {
+  return state.category === "All" || articleCategories(article).includes(state.category);
+}
+
+function chronologicalArticles(articles) {
+  return [...articles].sort((left, right) => (
+    new Date(right.published_at).getTime() - new Date(left.published_at).getTime()
+    || String(left.id || "").localeCompare(String(right.id || ""))
+  ));
+}
+
 function visibleArticles() {
-  return state.articles.filter((article) => {
-    if (!matchesBaseFilters(article)) return false;
-    return state.category === "All" || articleCategories(article).includes(state.category);
-  });
+  return chronologicalArticles(state.articles.filter((article) => matchesBaseFilters(article) && matchesCategory(article)));
 }
 
 function categoryCounts() {
@@ -358,9 +363,6 @@ function render() {
   renderSourceManager();
   renderFilterDrawerSummary();
   updateLaneCounts();
-  elements.storyTotal.textContent = state.view === "pinned" ? pinned : enabledArticles.length;
-  elements.repeatTotal.textContent = state.payload.duplicates_collapsed || 0;
-  elements.recentTotal.textContent = enabledArticles.filter((article) => articleRecencyBucket(article) === "day").length;
   elements.pinnedTotal.textContent = pinned;
   elements.feedKicker.textContent = state.view === "pinned" ? "Pinned signal" : "Latest signal";
   elements.feedTitle.textContent = state.view === "pinned" ? "Keep these close" : "What is worth a look";
@@ -377,7 +379,7 @@ function render() {
   elements.storyList.setAttribute("aria-busy", "false");
   elements.clearSearchButtons.forEach((button) => { button.hidden = !state.search.trim(); });
   document.querySelectorAll("[data-view]").forEach((button) => {
-    const active = button.dataset.view === state.view || (button.dataset.view === "latest" && state.view === "latest");
+    const active = button.dataset.view === state.view;
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-current", active ? "page" : "false");
   });
@@ -439,6 +441,19 @@ function applyFeed(payload, { store = false } = {}) {
   render();
 }
 
+function showUnavailableNotice(names = [], { stale = false, retained = 0 } = {}) {
+  const uniqueNames = [...new Set(names.map((name) => String(name).trim()).filter(Boolean))];
+  const summary = stale
+    ? "Live refresh unavailable · showing cached stories"
+    : `${uniqueNames.length || "Some"} sources unavailable · showing cached stories`;
+  const retainedMessage = retained ? ` · ${retained} retained` : "";
+  const detail = uniqueNames.length
+    ? `<details><summary>Show unavailable sources</summary><span>${uniqueNames.map(escapeHtml).join(", ")}</span></details>`
+    : "";
+  elements.notice.innerHTML = `<strong>${escapeHtml(summary)}${escapeHtml(retainedMessage)}</strong>${detail}`;
+  elements.notice.hidden = false;
+}
+
 async function loadFeed() {
   state.lastFetchAt = Date.now();
   const cached = readCachedFeed();
@@ -454,11 +469,7 @@ async function loadFeed() {
     applyFeed(payload, { store: true });
     updateConnection(true);
     if (payload.unavailable_sources?.length) {
-      const retentionMessage = payload.carried_forward_count
-        ? " Recent articles from earlier successful updates are retained."
-        : "";
-      elements.notice.textContent = `Some sources missed the latest update: ${payload.unavailable_sources.join(", ")}.${retentionMessage}`;
-      elements.notice.hidden = false;
+      showUnavailableNotice(payload.unavailable_sources, { retained: payload.carried_forward_count });
     } else {
       elements.notice.hidden = true;
     }
@@ -467,8 +478,7 @@ async function loadFeed() {
     if (fallback?.articles?.length) {
       if (!state.payload) applyFeed(fallback);
       updateConnection(false, true);
-      elements.notice.textContent = "The network is unavailable, so the most recent copy stored on this phone is shown.";
-      elements.notice.hidden = false;
+      showUnavailableNotice([], { stale: true });
     } else {
       elements.storyList.hidden = true;
       elements.empty.hidden = false;
@@ -693,7 +703,7 @@ elements.filterDrawerHandle.addEventListener("pointercancel", () => {
 });
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=20260807").catch(() => {}));
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=20260810").catch(() => {}));
 }
 
 loadFeed();

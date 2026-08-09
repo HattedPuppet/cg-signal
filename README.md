@@ -42,9 +42,12 @@ disappear. The Windows PC does not need to be on.
 Open [CG Signal Mobile](https://hattedpuppet.github.io/cg-signal/) on Android,
 then use the browser menu to install it or add it to the home screen.
 
-The mobile edition includes Latest Signal, one-tap category and source chips
-directly in the feed controls, a header search field with text and hashtag
-support, pinned stories, offline fallback, and Android home-screen installation.
+The mobile edition opens to **Latest Signal**, a strict newest-first chronology
+with **This month**, **Last 3 months**, and **All available** publication
+windows. **Pinned** stories stay device-local. It also includes one-tap
+category and source chips directly in the feed controls, a header search field
+with text and hashtag support, offline fallback, and Android home-screen
+installation.
 Stories are grouped into **Last 24 hours**, **Last 3 days**, and **Earlier** so
 freshness is visible without maintaining read markers. The header and filter
 drawer share one compact sticky surface: tap or swipe its handle to pull the
@@ -62,9 +65,9 @@ RSS URLs added only to the desktop remain desktop-only unless they are later
 added to the repository's public feed configuration.
 
 The export uses an explicit field allowlist. It never publishes the desktop
-SQLite archive, saved or archived IDs, notes, source preferences, feedback, or
-any `.cache` file. Learning Library, History, source management, and preference
-tuning remain desktop-only.
+SQLite article history, saved IDs, notes, or any `.cache` file. Learning
+Library, History, notes, and desktop source configuration remain desktop-only;
+mobile source enablement and pins are device-local.
 
 To build the same deployment locally from the current feed cache:
 
@@ -93,13 +96,13 @@ Git.
 - Every gathered story is also retained in `.cache/cg-signal.db`, a local
   SQLite archive. **History** searches this complete collection with paging, so
   articles remain findable after they disappear from a publisher's feed.
-- Saved, archived, research-note, recommendation, and source-tuning states are
-  persisted transactionally in `.cache/cg-signal.db`. Browser storage acts as
+- Saved and research-note states are persisted transactionally in
+  `.cache/cg-signal.db`. Browser storage acts as
   a failure fallback and migrates existing saved state automatically. Existing
   `.cache/user-state.json` data is imported once during the upgrade and then
   retained unchanged as recovery evidence. Full-history searches use the same
   SQLite state for `#is:` filters and research notes.
-- **Latest Signal** defaults to stories published **this month**. The publication
+- **Latest Signal** is the default chronological view and defaults to stories published **this month**. The publication
   window can be widened to the **last three months** (with month separators for
   scanning) or to all articles currently returned by the feeds. Older stories
   are not deleted: desktop **History** searches the complete local archive.
@@ -113,19 +116,17 @@ Git.
   and source panel can be collapsed into a drawer when you want more room for
   the feed.
 - A divider identifies stories published since the previous visit. Keyboard
-  triage uses `J`/`K` to move, `Enter` to open, `S` to save, `A` to archive,
-  and `A` to archive.
+  triage uses `J`/`K` to move, `Enter` to open, and `S` to save.
 - Saved stories form a durable Learning Library grouped by software/context.
-  Each item accepts a searchable research note. Saved and archived items remain
-  available even after the live RSS window moves on, and every archived item
-  can be restored.
+  Each item accepts a searchable research note and remains available after the
+  live RSS window moves on.
 - Search supports ordinary text plus combinable tags: `#unreal`, `#blender`,
   `#substance`, `#topic:animation`, `#source:"80 Level"`,
   `#is:saved`, and `#is:new`. Prefix a term with `-` to exclude it,
   such as `-#industry`; `#industry` selects Industry context and `#business`
   selects Business context.
-- Individual sources can be temporarily filtered, reduced in recommendations,
-  or muted. Clicking a source isolates it; clicking it again restores all
+- Individual sources can be temporarily filtered or muted. Clicking a source
+  isolates it; clicking it again restores all
   sources, and Ctrl/Cmd-click combines sources. **Reset** restores all source
   settings. **Manage** opens a local source manager where RSS/Atom URLs can be
   tested, added, disabled, or re-enabled without editing code.
@@ -162,4 +163,6 @@ Git.
 The hidden launcher records the active server in `.cache/server.pid`; the stop
 shortcut only closes that local CG Signal process.
 
-The project intent and product requirements are maintained in `PRD.md`.
+Desktop notes and source mute state stay local to the PC. Mobile pins and source
+enablement stay local to that device and are never synced to the desktop. The
+project intent and product requirements are maintained in `PRD.md`.
