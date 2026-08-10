@@ -7,6 +7,7 @@ import {
   articleWithinPublicationWindow,
   matchesSearch as matchesSearchQuery,
   feedPayloadIsStructurallyCompatible,
+  thumbnailReferenceIsValid,
 } from "./domain.mjs";
 
 const storageKeys = {
@@ -152,6 +153,17 @@ function articleWithinTimeWindow(article) {
   return articleWithinPublicationWindow(article, state.timeWindow);
 }
 
+function safeImageUrl(value) {
+  if (typeof value !== "string" || value === "" || !thumbnailReferenceIsValid(value)) return "#";
+  try {
+    const url = new URL(value, document.baseURI);
+    if (url.origin !== window.location.origin) return "#";
+    return url.href;
+  } catch {
+    return "#";
+  }
+}
+
 function primaryCategory(article) {
   return article.software_group || articleCategories(article)[0];
 }
@@ -271,7 +283,7 @@ function trimSummary(value) {
 function storyMarkup(article) {
   const pinned = state.pinned.has(article.id);
   const category = primaryCategory(article);
-  const imageUrl = safeUrl(article.image);
+  const imageUrl = safeImageUrl(article.image);
   const image = imageUrl === "#" ? "" : `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`;
   const reasons = [...new Set([...(article.software_tags || []), ...(article.topic_tags || [])])]
     .filter((reason) => reason !== category)
@@ -297,33 +309,8 @@ function storyMarkup(article) {
     </article>`;
 }
 
-const RECENCY_SECTIONS = [
-  { key: "day", label: "Last 24 hours" },
-  { key: "three-days", label: "Last 3 days" },
-  { key: "older", label: "Earlier" },
-];
-
-function articleRecencyBucket(article) {
-  const published = new Date(article.published_at).getTime();
-  if (Number.isNaN(published)) return "older";
-  const age = Math.max(0, Date.now() - published);
-  if (age < 24 * 60 * 60 * 1000) return "day";
-  if (age < 3 * 24 * 60 * 60 * 1000) return "three-days";
-  return "older";
-}
-
 function storyListMarkup(articles) {
-  return RECENCY_SECTIONS.map(({ key, label }) => {
-    const sectionArticles = articles.filter((article) => articleRecencyBucket(article) === key);
-    if (!sectionArticles.length) return "";
-    const headingId = "recency-" + key;
-    return [
-      '<section class="recency-section" aria-labelledby="' + headingId + '">',
-      '<div class="recency-section-heading"><h2 id="' + headingId + '">' + escapeHtml(label) + '</h2><span>' + sectionArticles.length + '</span></div>',
-      '<div class="recency-stories">' + sectionArticles.map(storyMarkup).join("") + '</div>',
-      '</section>',
-    ].join("");
-  }).join("");
+  return articles.map(storyMarkup).join("");
 }
 
 function updateLaneCounts() {
@@ -418,16 +405,41 @@ function feedPayloadIsCompatible(payload) {
 
 function readCachedFeed() {
   try {
-    const payload = JSON.parse(localStorage.getItem(storageKeys.feed) || "null");
-    return feedPayloadIsCompatible(payload) ? payload : null;
+    const raw = localStorage.getItem(storageKeys.feed);
+    if (!raw) return null;
+    const payload = JSON.parse(raw);
+    if (feedPayloadIsCompatible(payload)) return payload;
+    localStorage.removeItem(storageKeys.feed);
+    return null;
   } catch {
+    try { localStorage.removeItem(storageKeys.feed); } catch { /* storage may be unavailable */ }
     return null;
   }
 }
 
 function applyFeed(payload, { store = false } = {}) {
-  state.payload = payload;
-  state.articles = payload.articles;
+  if (!feedPayloadIsCompatible(payload)) throw new Error("The feed payload is not render-safe.");
+  const previousPayload = state.payload;
+  const previousArticles = state.articles;
+  const previousSource = state.source;
+  try {
+    state.payload = payload;
+    state.articles = payload.articles;
+    persistPinned();
+    persistDisabledSources();
+    if (state.disabledSources.has(state.source)) state.source = "All";
+    render();
+  } catch (error) {
+    state.payload = previousPayload;
+    state.articles = previousArticles;
+    state.source = previousSource;
+    try { if (previousPayload) render(); } catch { /* preserve the original failure */ }
+    if (store) {
+      try { localStorage.removeItem(storageKeys.feed); } catch { /* ignore storage errors */ }
+    }
+    throw error;
+  }
+  // Persist only after applying and rendering the candidate successfully.
   if (store) {
     try {
       localStorage.setItem(storageKeys.feed, JSON.stringify(payload));
@@ -435,10 +447,6 @@ function applyFeed(payload, { store = false } = {}) {
       console.warn("CG Signal could not update its offline feed copy.", error);
     }
   }
-  persistPinned();
-  persistDisabledSources();
-  if (state.disabledSources.has(state.source)) state.source = "All";
-  render();
 }
 
 function showUnavailableNotice(names = [], { stale = false, retained = 0 } = {}) {
@@ -456,10 +464,16 @@ function showUnavailableNotice(names = [], { stale = false, retained = 0 } = {})
 
 async function loadFeed() {
   state.lastFetchAt = Date.now();
-  const cached = readCachedFeed();
+  let cached = readCachedFeed();
   if (!state.payload && cached) {
-    applyFeed(cached);
-    updateConnection(navigator.onLine, true, navigator.onLine);
+    try {
+      applyFeed(cached);
+      updateConnection(navigator.onLine, true, navigator.onLine);
+    } catch (error) {
+      cached = null;
+      try { localStorage.removeItem(storageKeys.feed); } catch { /* ignore storage errors */ }
+      console.warn("CG Signal evicted an unreadable offline feed copy.", error);
+    }
   }
   try {
     const response = await fetch("./feed.json", { cache: "no-store" });
@@ -703,7 +717,7 @@ elements.filterDrawerHandle.addEventListener("pointercancel", () => {
 });
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=20260810").catch(() => {}));
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=20260811-v22").catch(() => {}));
 }
 
 loadFeed();

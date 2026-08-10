@@ -491,33 +491,6 @@ button { color: inherit; }
 
 .story-list { display: grid; gap: 12px; }
 
-.recency-section {
-  display: grid;
-  gap: 10px;
-}
-
-.recency-section + .recency-section { margin-top: 8px; }
-
-.recency-section-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  margin: 5px 2px 0;
-  color: var(--muted);
-}
-
-.recency-section-heading h2 {
-  margin: 0;
-  font-size: 8px;
-  font-weight: 850;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-}
-
-.recency-section-heading span { font-size: 8px; font-weight: 800; opacity: .65; }
-.recency-stories { display: grid; gap: 12px; }
-
 .story-card {
   overflow: hidden;
   scroll-margin-top: calc(92px + env(safe-area-inset-top));

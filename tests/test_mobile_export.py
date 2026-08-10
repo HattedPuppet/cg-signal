@@ -1,8 +1,12 @@
 import importlib.util
+import json
 import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
+
+from cg_signal.thumbnails import store_thumbnail, validate_thumbnail_bytes
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "mobile" / "build_mobile.py"
@@ -69,6 +73,78 @@ class MobileExportTests(unittest.TestCase):
         self.assertNotIn("connection detail", serialized)
         self.assertEqual(result["unavailable_sources"], ["Example"])
 
+    def test_sanitizer_normalizes_null_nested_values_and_drops_bad_urls(self):
+        payload = self.fixture()
+        payload["articles"][0]["software_tags"] = None
+        payload["articles"][0]["topic_tags"] = ["Blender", 7]
+        payload["articles"][0]["related"] = [None, {"title": "missing URL"}]
+        payload["articles"][0]["sources"] = ["wrong", {"id": "example", "name": "Example", "site": "javascript:bad"}]
+        payload["sources"] = [None, {"id": "example", "name": "Example", "site": "file:///private"}]
+        result = build_mobile.sanitize_feed(payload)
+        article = result["articles"][0]
+        self.assertEqual(article["software_tags"], [])
+        self.assertEqual(article["topic_tags"], ["Blender"])
+        self.assertEqual(article["related"], [])
+        self.assertEqual(article["sources"], [])
+        self.assertEqual(result["sources"], [])
+        self.assertNotIn("javascript:", str(result))
+        self.assertNotIn("file:", str(result))
+
+    def test_sanitizer_and_renderers_do_not_emit_remote_thumbnail_urls(self):
+        payload = self.fixture()
+        payload["articles"][0]["image"] = "https://cdn.example.test/card.jpg"
+        result = build_mobile.sanitize_feed(payload)
+        self.assertEqual(result["articles"][0]["image"], "")
+        desktop = (MODULE_PATH.parents[1] / "static" / "app.js").read_text(encoding="utf-8")
+        mobile = (MODULE_PATH.parent / "site" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("function safeImageUrl", desktop)
+        self.assertIn("function safeImageUrl", mobile)
+
+    def test_sanitizer_caps_collections_at_shared_validator_limits(self):
+        payload = self.fixture()
+        payload["warnings"] = []
+        payload["articles"] = [
+            {
+                **payload["articles"][0],
+                "id": f"article-{index}",
+                "url": f"https://example.com/article-{index}",
+            }
+            for index in range(build_mobile.MAX_MOBILE_ARTICLES + 1)
+        ]
+        payload["sources"] = [
+            {
+                "id": f"source-{index}",
+                "name": f"Source {index}",
+                "site": f"https://source-{index}.example",
+                "accent": "#fff",
+                "ok": True,
+                "count": index,
+            }
+            for index in range(build_mobile.MAX_MOBILE_SOURCES + 1)
+        ]
+        payload["unavailable_sources"] = [
+            f"Unavailable {index}"
+            for index in range(build_mobile.MAX_MOBILE_UNAVAILABLE_SOURCES + 1)
+        ]
+
+        result = build_mobile.sanitize_feed(payload)
+
+        self.assertEqual(len(result["articles"]), build_mobile.MAX_MOBILE_ARTICLES)
+        self.assertEqual(result["articles"][0]["id"], "article-0")
+        self.assertEqual(result["articles"][-1]["id"], "article-1499")
+        self.assertEqual(len(result["sources"]), build_mobile.MAX_MOBILE_SOURCES)
+        self.assertEqual(result["sources"][0]["id"], "source-0")
+        self.assertEqual(result["sources"][-1]["id"], "source-299")
+        self.assertEqual(
+            len(result["unavailable_sources"]),
+            build_mobile.MAX_MOBILE_UNAVAILABLE_SOURCES,
+        )
+        self.assertEqual(result["unavailable_sources"][-1], "Unavailable 299")
+
+        domain = (MODULE_PATH.parents[1] / "static" / "domain.mjs").read_text(encoding="utf-8")
+        self.assertIn(f"MAX_FEED_ARTICLES = {build_mobile.MAX_MOBILE_ARTICLES}", domain)
+        self.assertIn(f"MAX_FEED_SOURCES = {build_mobile.MAX_MOBILE_SOURCES}", domain)
+
     def test_build_copies_only_mobile_assets_and_sanitized_feed(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "site"
@@ -79,6 +155,99 @@ class MobileExportTests(unittest.TestCase):
             self.assertFalse((output / "user-state.json").exists())
             self.assertFalse((output / "cg-signal.db").exists())
 
+    def test_mobile_bundle_copies_only_verified_referenced_thumbnails(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary) / "http"
+            validated = validate_thumbnail_bytes(b"\x89PNG\r\n\x1a\nmobile", "image/png")
+            reference = store_thumbnail(cache / "thumbnails", validated)
+            payload = self.fixture()
+            payload["articles"][0]["image"] = reference
+            output = Path(temporary) / "site"
+            build_mobile.build_site(output, payload, thumbnail_root=cache / "thumbnails")
+            emitted = json.loads((output / "feed.json").read_text(encoding="utf-8"))
+            self.assertEqual(emitted["articles"][0]["image"], reference)
+            self.assertEqual((output / reference).read_bytes(), validated.body)
+
+            (cache / "thumbnails" / Path(reference).name).unlink()
+            build_mobile.build_site(output, payload, thumbnail_root=cache / "thumbnails")
+            emitted = json.loads((output / "feed.json").read_text(encoding="utf-8"))
+            self.assertEqual(emitted["articles"][0]["image"], "")
+            self.assertFalse((output / reference).exists())
+
+    def test_mobile_bundle_rejects_symlinked_thumbnail_root_without_touching_sentinel(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            anchor = base / "http"
+            anchor.mkdir()
+            external = base / "external"
+            external.mkdir()
+            sentinel = external / "sentinel.txt"
+            sentinel.write_text("keep", encoding="utf-8")
+            root = anchor / "thumbnails"
+            try:
+                root.symlink_to(external, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("directory symlinks are unavailable")
+            with self.assertRaises(ValueError):
+                build_mobile.bundle_thumbnails(
+                    self.fixture(),
+                    base / "output",
+                    root,
+                    thumbnail_anchor=anchor,
+                )
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep")
+            self.assertFalse((base / "output").exists())
+
+    def test_gather_and_build_keep_persistent_thumbnail_anchor(self):
+        from cg_signal.feeds import FeedService
+
+        with tempfile.TemporaryDirectory() as temporary:
+            request_cache = Path(temporary) / "persistent-http"
+            output = Path(temporary) / "site"
+            payload = self.fixture()
+            body = b"\x89PNG\r\n\x1a\nfrom-gather"
+
+            def fake_build_feed(service, *, force=False):
+                validated = validate_thumbnail_bytes(body, "image/png")
+                reference = store_thumbnail(
+                    service.paths.thumbnail_dir,
+                    validated,
+                    expected_anchor=service.paths.thumbnail_anchor,
+                )
+                result = dict(payload)
+                result["articles"] = [dict(payload["articles"][0], image=reference)]
+                return result
+
+            with mock.patch.object(FeedService, "build_feed", fake_build_feed):
+                gathered = build_mobile.gather_feed(request_cache)
+
+            reference = gathered["articles"][0]["image"]
+            self.assertTrue((request_cache / "thumbnails" / Path(reference).name).is_file())
+            build_mobile.build_site(
+                output,
+                gathered,
+                thumbnail_root=request_cache / "thumbnails",
+                thumbnail_anchor=request_cache,
+            )
+            emitted = json.loads((output / "feed.json").read_text(encoding="utf-8"))
+            self.assertEqual(emitted["articles"][0]["image"], reference)
+            self.assertEqual((output / reference).read_bytes(), body)
+
+    def test_history_merge_keeps_current_sources_before_historical_sources(self):
+        current = self.fixture()
+        current["sources"] = [
+            {"id": f"current-{index}", "name": f"Current {index}", "site": "https://example.com"}
+            for index in range(build_mobile.MAX_MOBILE_SOURCES)
+        ]
+        previous = self.fixture()
+        previous["sources"] = [
+            {"id": f"history-{index}", "name": f"History {index}", "site": "https://example.com"}
+            for index in range(build_mobile.MAX_MOBILE_SOURCES)
+        ]
+        merged = build_mobile.merge_feed_history(current, previous)
+        self.assertEqual(len(merged["sources"]), build_mobile.MAX_MOBILE_SOURCES)
+        self.assertTrue(all(source["id"].startswith("current-") for source in merged["sources"]))
+
     def test_scheduled_build_restores_only_the_public_request_cache(self):
         project_root = MODULE_PATH.parents[1]
         workflow = (
@@ -86,9 +255,17 @@ class MobileExportTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         ignore = (project_root / ".gitignore").read_text(encoding="utf-8")
 
-        self.assertIn("uses: actions/cache@v5", workflow)
+        self.assertIn("uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25", workflow)
         self.assertIn("path: .mobile-cache", workflow)
-        self.assertIn("--request-cache-dir .mobile-cache", workflow)
+        self.assertIn("--request-cache-dir .mobile-cache/http", workflow)
+        self.assertIn("--previous-json .mobile-cache/history/feed.json", workflow)
+        self.assertIn("discard_history", workflow)
+        self.assertIn(".mobile-cache/http/image-index.json", workflow)
+        self.assertIn(".mobile-cache/http/thumbnails", workflow)
+        self.assertIn("permissions: {}", workflow)
+        self.assertIn("persist-credentials: false", workflow)
+        self.assertNotIn("configure-pages", workflow)
+        self.assertNotIn("curl ", workflow)
         self.assertIn(".mobile-cache/", ignore)
 
     def test_previous_public_feed_fills_transient_gaps_with_bounded_history(self):
@@ -184,11 +361,11 @@ class MobileExportTests(unittest.TestCase):
         worker = (site / "sw.js").read_text(encoding="utf-8")
         self.assertIn('from "./domain.mjs"', javascript)
         self.assertIn('type="module"', html)
-        self.assertIn("app.js?v=20260810", html)
-        self.assertIn("styles.css?v=20260810", html)
-        self.assertIn('register("./sw.js?v=20260810")', javascript)
-        self.assertIn('const CACHE_NAME = "cg-signal-mobile-v20"', worker)
-        self.assertIn("app.js?v=20260810", worker)
+        self.assertIn("app.js?v=20260811-v22", html)
+        self.assertIn("styles.css?v=20260811-v22", html)
+        self.assertIn('register("./sw.js?v=20260811-v22")', javascript)
+        self.assertIn('const CACHE_NAME = "cg-signal-mobile-v22"', worker)
+        self.assertIn("app.js?v=20260811-v22", worker)
         self.assertIn("./domain.mjs", worker)
 
     def test_mobile_shell_keeps_inline_controls_reachable(self):
@@ -238,6 +415,10 @@ class MobileExportTests(unittest.TestCase):
         self.assertNotIn('id="story-total"', html)
         self.assertNotIn('id="repeat-total"', html)
         self.assertNotIn('id="recent-total"', html)
+        self.assertNotIn("Today’s board", html)
+        self.assertNotIn("Today's board", html)
+        self.assertNotIn("Stay current", html)
+        self.assertNotIn("Keep moving", html)
         self.assertIn('class="update-row feed-update-row"', html)
         self.assertNotIn("storyTotal", javascript)
         self.assertNotIn("cg-signal-mobile:visited", javascript)
@@ -295,17 +476,18 @@ class MobileExportTests(unittest.TestCase):
         self.assertIn("function storyListMarkup(articles)", javascript)
         self.assertIn("function readCachedFeed()", javascript)
         self.assertIn("applyFeed(cached)", javascript)
-        self.assertIn("cg-signal-mobile-v20", service_worker)
-        self.assertIn("styles.css?v=20260810", service_worker)
-        self.assertIn("app.js?v=20260810", service_worker)
+        self.assertIn("cg-signal-mobile-v22", service_worker)
+        self.assertIn("styles.css?v=20260811-v22", service_worker)
+        self.assertIn("app.js?v=20260811-v22", service_worker)
         self.assertIn("./domain.mjs", service_worker)
-        self.assertIn("sw.js?v=20260810", javascript)
-        self.assertIn("sw.js?v=20260810", service_worker)
+        self.assertIn("sw.js?v=20260811-v22", javascript)
+        self.assertIn("sw.js?v=20260811-v22", service_worker)
         self.assertIn("fetch(event.request)", service_worker)
-        self.assertIn("function articleRecencyBucket(article)", javascript)
-        self.assertIn("Last 24 hours", javascript)
-        self.assertIn("Last 3 days", javascript)
-        self.assertIn(".recency-section", styles)
+        self.assertIn("return articles.map(storyMarkup).join", javascript)
+        self.assertNotIn("function articleRecencyBucket(article)", javascript)
+        self.assertNotIn("Last 24 hours", javascript)
+        self.assertNotIn("Last 3 days", javascript)
+        self.assertNotIn(".recency-section", styles)
 
     def test_mobile_bottom_navigation_uses_latest_and_pinned(self):
         html = (MODULE_PATH.parent / "site" / "index.html").read_text(encoding="utf-8")

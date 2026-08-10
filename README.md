@@ -34,10 +34,11 @@ required.
 The public-safe mobile edition is built from `mobile/` and deployed through the
 `Refresh mobile signal` GitHub Pages workflow. GitHub gathers the same feeds,
 runs the existing classification and deduplication rules, and refreshes the
-hosted static feed every 30 minutes. Each build merges the previous public feed
-into a bounded 100-day rolling history (up to 1,500 stories), so a temporary
-publisher outage or a story rotating out of RSS does not make recent coverage
-disappear. The Windows PC does not need to be on.
+hosted static feed every 30 minutes. The workflow keeps HTTP validators and a
+sanitized 100-day rolling history (up to 1,500 stories) in a repository-scoped
+Actions cache, so a temporary publisher outage or a story rotating out of RSS
+does not make recent coverage disappear. A cache miss publishes current
+content only; the Windows PC does not need to be on.
 
 Open [CG Signal Mobile](https://hattedpuppet.github.io/cg-signal/) on Android,
 then use the browser menu to install it or add it to the home screen.
@@ -134,7 +135,8 @@ Git.
   metadata and short excerpts.
 - When a feed omits thumbnails, articles are published to the dashboard first.
   A separate background pass reads standard Open Graph preview images, updates
-  the visible cards when ready, and caches those lookups locally for 30 days.
+  the visible cards when ready, and caches validated JPEG/PNG/WebP bytes as
+  app-owned content-addressed assets.
 - Deduplication compares canonical links, shared outbound links, similar titles,
   and product/version signatures that often survive between Japanese and
   English headlines. Related coverage remains expandable beneath the lead card.

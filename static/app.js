@@ -13,7 +13,20 @@ import {
   matchesSearch as matchesSearchQuery,
   articleWithinPublicationWindow,
   feedPayloadIsStructurallyCompatible,
+  thumbnailReferenceIsValid,
 } from "./domain.mjs";
+
+const apiToken = document.querySelector('meta[name="cg-signal-api-token"]')?.content || "";
+
+async function apiFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  headers.set("X-CG-Signal-Token", apiToken);
+  return fetch(url, {
+    cache: "no-store",
+    ...options,
+    headers,
+  });
+}
 
 const storageKeys = {
   saved: "cg-signal:saved",
@@ -200,7 +213,7 @@ function cacheUserState() {
 async function persistUserState() {
   cacheUserState();
   try {
-    const response = await fetch("/api/state", {
+    const response = await apiFetch("/api/state", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -227,7 +240,7 @@ function queueUserStateSave() {
 
 async function loadUserState() {
   try {
-    const response = await fetch("/api/state", { cache: "no-store" });
+    const response = await apiFetch("/api/state");
     if (!response.ok) throw new Error(`State request failed (${response.status})`);
     const stored = await response.json();
     const mergeLocal = localStorage.getItem(storageKeys.stateMigrated) !== "1"
@@ -296,6 +309,17 @@ function trimSummary(value = "") {
 function chronologicalSort(left, right) {
   return new Date(right.published_at).getTime() - new Date(left.published_at).getTime()
     || String(left.id || "").localeCompare(String(right.id || ""));
+}
+
+function safeImageUrl(value = "") {
+  if (typeof value !== "string" || value === "" || !thumbnailReferenceIsValid(value)) return "#";
+  try {
+    const url = new URL(value, document.baseURI);
+    if (url.origin !== window.location.origin) return "#";
+    return url.href;
+  } catch {
+    return "#";
+  }
 }
 
 function articleWithinTimeWindow(article) {
@@ -405,7 +429,7 @@ async function loadArchive({ append = false } = {}) {
   if (sourceIds.length) parameters.set("sources", sourceIds.join(","));
   if (state.sessionCutoff) parameters.set("new_after", state.sessionCutoff.toISOString());
   try {
-    const response = await fetch(`/api/archive?${parameters}`, { cache: "no-store" });
+    const response = await apiFetch(`/api/archive?${parameters}`);
     const payload = await response.json();
     if (!response.ok || payload.error) throw new Error(payload.detail || payload.error || `Archive request failed (${response.status})`);
     if (requestId !== state.archiveRequestId) return;
@@ -505,7 +529,7 @@ function libraryNote(article) {
 
 function storyCard(article) {
   const saved = state.saved.has(article.id);
-  const imageUrl = safeUrl(article.image);
+  const imageUrl = safeImageUrl(article.image);
   const image = imageUrl === "#" ? "" : `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`;
   const coverage = article.source_count > 1 ? `${article.source_count} sources` : "Single source";
   const lane = article.lane || "Tech & Development";
@@ -894,14 +918,17 @@ async function loadFeed(
     elements.stories.setAttribute("aria-busy", "true");
   }
   try {
-    const query = force
-      ? "?refresh=1"
-      : waitForRefresh
-        ? "?wait=1"
-        : waitForThumbnails
-          ? "?wait_thumbnails=1"
-          : "";
-    const response = await fetch(`/api/feed${query}`, { cache: "no-store" });
+    const query = waitForRefresh
+      ? "?wait=1"
+      : waitForThumbnails
+        ? "?wait_thumbnails=1"
+        : "";
+    const response = await apiFetch(
+      force ? "/api/feed/refresh" : `/api/feed${query}`,
+      force
+        ? { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }
+        : {},
+    );
     if (!response.ok) throw new Error(`Feed request failed (${response.status})`);
     const payload = await response.json();
     if (payload.error) throw new Error(payload.detail || payload.error);
@@ -929,7 +956,7 @@ async function loadFeed(
 }
 
 async function requestJson(url, options = {}) {
-  const response = await fetch(url, {
+  const response = await apiFetch(url, {
     cache: "no-store",
     ...options,
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },

@@ -12,9 +12,7 @@ import re
 import sqlite3
 import threading
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,12 +34,50 @@ from .config import (
     SOURCE_CACHE_SCHEMA_VERSION,
 )
 from .dedupe import cluster_articles
-from .storage import SQLiteRepository, validated_http_url
+from .safe_http import SafeHttpClient, SafeHttpError
+from .storage import SQLiteRepository, normalized_http_url
+from .thumbnails import (
+    MAX_THUMBNAIL_BYTES,
+    THUMBNAIL_NEGATIVE_TTL_SECONDS,
+    THUMBNAIL_POSITIVE_TTL_SECONDS,
+    canonical_thumbnail_reference,
+    load_thumbnail_index,
+    parse_thumbnail_reference,
+    prune_thumbnail_store,
+    read_verified_thumbnail,
+    save_thumbnail_index,
+    store_thumbnail,
+    validate_thumbnail_response,
+    validate_thumbnail_root,
+)
 
 
 TRACKING_PARAMETERS = {
     "fbclid", "gclid", "mc_cid", "mc_eid", "ref", "referrer", "source",
 }
+
+
+def render_safe_article(value: Any) -> dict[str, Any]:
+    """Copy an article while omitting untrusted or empty image references."""
+
+    if not isinstance(value, dict):
+        return {}
+    article = dict(value)
+    for key in list(article):
+        if isinstance(key, str) and key.startswith("_"):
+            article.pop(key, None)
+    if "image" in article:
+        raw_image = article.get("image", "")
+        image = canonical_thumbnail_reference(raw_image)
+        if image:
+            article["image"] = image
+        elif raw_image == "":
+            # Preserve an explicit empty optional field for cache shape
+            # compatibility; it cannot produce a browser request.
+            article["image"] = ""
+        else:
+            article.pop("image", None)
+    return article
 
 
 def local_name(tag: str) -> str:
@@ -207,9 +243,10 @@ def outbound_links(raw_summary: str, article_url: str) -> list[str]:
 class FeedService:
     """Build feeds for one explicit runtime and repository."""
 
-    def __init__(self, paths: RuntimePaths):
+    def __init__(self, paths: RuntimePaths, *, http_client: SafeHttpClient | None = None):
         self.paths = paths
         self.repository = SQLiteRepository(paths)
+        self.http = http_client or SafeHttpClient()
         self._refresh_lock = threading.Lock()
         self._thumbnail_condition = threading.Condition()
         self._thumbnail_worker_active = False
@@ -262,50 +299,124 @@ class FeedService:
             return {}
         return cached
 
-    def fetch_page_image(self, article_url: str) -> str:
-        request = urllib.request.Request(
-            article_url,
-            headers={
-                "User-Agent": "CGSignal/1.0 (local personal RSS reader)",
-                "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
-            },
-        )
+    @staticmethod
+    def _remaining(deadline: float) -> float:
+        return max(0.001, deadline - time.monotonic())
+
+    def _fetch_thumbnail_asset(self, image_url: str, deadline: float) -> str:
+        """Fetch, validate, and store one publisher image as an app asset."""
+
+        if not image_url or time.monotonic() >= deadline:
+            return ""
         try:
-            with urllib.request.urlopen(request, timeout=18) as response:
-                content_type = response.headers.get_content_type()
-                if content_type not in {"text/html", "application/xhtml+xml"}:
-                    return ""
-                charset = response.headers.get_content_charset() or "utf-8"
-                markup = response.read(2_500_000).decode(charset, errors="replace")
-            return extract_page_image(markup, article_url)
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError, UnicodeError):
+            response = self.http.get(
+                image_url,
+                headers={
+                    "User-Agent": "CGSignal/1.0 (local personal RSS reader)",
+                    "Accept": "image/jpeg,image/png,image/webp;q=0.9",
+                },
+                timeout=self._remaining(deadline),
+                max_bytes=MAX_THUMBNAIL_BYTES,
+            )
+            validated = validate_thumbnail_response(response)
+            if validated is None:
+                return ""
+            return store_thumbnail(
+                self.paths.thumbnail_dir,
+                validated,
+                expected_anchor=self.paths.thumbnail_anchor,
+            )
+        except (SafeHttpError, TimeoutError, OSError, ValueError):
             return ""
 
-    def read_image_index(self) -> dict[str, dict[str, Any]]:
-        try:
-            value = json.loads(self.paths.image_index_file.read_text(encoding="utf-8"))
-            return value if isinstance(value, dict) else {}
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            return {}
+    def fetch_page_image(self, article_url: str, deadline: float | None = None) -> str:
+        """Discover an OG/Twitter candidate from a safe article page."""
 
-    def write_image_index(self, index: dict[str, dict[str, Any]]) -> None:
-        self.paths.image_index_file.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.paths.image_index_file.with_suffix(".tmp")
-        temporary.write_text(json.dumps(index, ensure_ascii=False), encoding="utf-8")
-        temporary.replace(self.paths.image_index_file)
+        operation_deadline = deadline or (time.monotonic() + 18)
+        if time.monotonic() >= operation_deadline:
+            return ""
+        try:
+            response = self.http.get(
+                article_url,
+                headers={
+                    "User-Agent": "CGSignal/1.0 (local personal RSS reader)",
+                    "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5",
+                },
+                timeout=self._remaining(operation_deadline),
+                max_bytes=2_500_000,
+            )
+            if response.status != 200:
+                return ""
+            try:
+                content_type = response.headers.get_content_type()
+                charset = response.headers.get_content_charset() or "utf-8"
+            except AttributeError:
+                raw_content_type = response.headers.get("Content-Type", "")
+                content_type = str(raw_content_type).split(";", 1)[0].strip().lower()
+                charset = "utf-8"
+            if content_type not in {"text/html", "application/xhtml+xml"}:
+                return ""
+            markup = response.body.decode(charset, errors="replace")
+            return extract_page_image(markup, response.final_url)
+        except (SafeHttpError, TimeoutError, OSError, UnicodeError):
+            return ""
+
+    def read_image_index(self) -> dict[str, Any]:
+        try:
+            validate_thumbnail_root(self.paths.thumbnail_dir, self.paths.thumbnail_anchor)
+        except ValueError:
+            return {"schema_version": 1, "entries": {}}
+        index = load_thumbnail_index(self.paths.image_index_file)
+        try:
+            cleaned = prune_thumbnail_store(
+                self.paths.thumbnail_dir,
+                index,
+                expected_anchor=self.paths.thumbnail_anchor,
+            )
+        except ValueError:
+            return {"schema_version": 1, "entries": {}}
+        if cleaned != index:
+            try:
+                save_thumbnail_index(self.paths.image_index_file, cleaned)
+            except OSError:
+                pass
+        return cleaned
+
+    def write_image_index(self, index: dict[str, Any]) -> None:
+        validate_thumbnail_root(self.paths.thumbnail_dir, self.paths.thumbnail_anchor)
+        save_thumbnail_index(self.paths.image_index_file, index)
 
     def apply_cached_images(self, articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        for article in articles:
+            if "image" in article:
+                image = canonical_thumbnail_reference(article.get("image", ""))
+                if image and read_verified_thumbnail(
+                    self.paths.thumbnail_dir, image, expected_anchor=self.paths.thumbnail_anchor
+                ):
+                    article["image"] = image
+                else:
+                    article["image"] = ""
         missing = [article for article in articles if not article.get("image")]
         if not missing:
             return []
         now = time.time()
         index = self.read_image_index()
+        entries = index.get("entries", {})
         unresolved: list[dict[str, Any]] = []
         for article in missing:
-            cached = index.get(article["url"], {})
-            age = now - float(cached.get("checked_at", 0))
-            if age < IMAGE_INDEX_TTL_SECONDS:
-                article["image"] = cached.get("image", "")
+            cached = entries.get(article.get("url", ""), {}) if isinstance(entries, dict) else {}
+            try:
+                age = now - float(cached.get("checked_at", 0))
+            except (TypeError, ValueError):
+                age = float("inf")
+            if cached.get("status") == "ok" and age < THUMBNAIL_POSITIVE_TTL_SECONDS:
+                image = canonical_thumbnail_reference(cached.get("image", ""))
+                if image and read_verified_thumbnail(
+                    self.paths.thumbnail_dir, image, expected_anchor=self.paths.thumbnail_anchor
+                ):
+                    article["image"] = image
+            elif cached.get("status") == "miss" and age < THUMBNAIL_NEGATIVE_TTL_SECONDS:
+                continue
             else:
                 unresolved.append(article)
         return unresolved
@@ -314,19 +425,65 @@ class FeedService:
         missing = self.apply_cached_images(articles)
         if not missing:
             return
-        now = time.time()
+        batch_deadline = time.monotonic() + 45
         index = self.read_image_index()
-        to_fetch: dict[str, list[dict[str, Any]]] = {}
+        by_url: dict[str, list[dict[str, Any]]] = {}
         for article in missing:
-            to_fetch.setdefault(article["url"], []).append(article)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-            fetched = dict(zip(to_fetch, executor.map(self.fetch_page_image, to_fetch)))
-        for url, image_url in fetched.items():
-            index[url] = {"image": image_url, "checked_at": now}
-            for article in to_fetch[url]:
-                article["image"] = image_url
+            if article.get("url"):
+                by_url.setdefault(article["url"], []).append(article)
+
+        def enrich_one(article: dict[str, Any]) -> str:
+            operation_deadline = min(batch_deadline, time.monotonic() + 18)
+            if time.monotonic() >= operation_deadline:
+                return ""
+            candidate = article.get("_thumbnail_candidate", "")
+            reference = self._fetch_thumbnail_asset(candidate, operation_deadline)
+            if reference:
+                return reference
+            page_candidate = self.fetch_page_image(article.get("url", ""), operation_deadline)
+            return self._fetch_thumbnail_asset(page_candidate, operation_deadline)
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+        future_to_url = {
+            executor.submit(enrich_one, article_list[0]): url
+            for url, article_list in by_url.items()
+            if time.monotonic() < batch_deadline
+        }
+        done, pending = concurrent.futures.wait(
+            future_to_url,
+            timeout=max(0.0, batch_deadline - time.monotonic()),
+        )
+        for future in pending:
+            future.cancel()
         try:
-            self.write_image_index(index)
+            executor.shutdown(wait=False, cancel_futures=True)
+        except TypeError:  # pragma: no cover - older Python fallback
+            executor.shutdown(wait=False)
+
+        now = time.time()
+        entries = index.setdefault("entries", {})
+        for future in done:
+            url = future_to_url[future]
+            try:
+                reference = canonical_thumbnail_reference(future.result())
+            except Exception:
+                reference = ""
+            if reference:
+                for article in by_url[url]:
+                    article["image"] = reference
+                entries[url] = {"status": "ok", "image": reference, "checked_at": now}
+            else:
+                entries[url] = {"status": "miss", "checked_at": now}
+        try:
+            cleaned = prune_thumbnail_store(
+                self.paths.thumbnail_dir,
+                index,
+                expected_anchor=self.paths.thumbnail_anchor,
+            )
+        except ValueError:
+            cleaned = {"schema_version": 1, "entries": {}}
+        try:
+            self.write_image_index(cleaned)
         except OSError:
             pass
 
@@ -350,13 +507,27 @@ class FeedService:
             headers["If-None-Match"] = str(cached["etag"])
         if cached_articles and cached.get("last_modified"):
             headers["If-Modified-Since"] = str(cached["last_modified"])
-        request = urllib.request.Request(source["feed"], headers=headers)
         started = time.monotonic()
         try:
-            with urllib.request.urlopen(request, timeout=22) as response:
-                xml_bytes = response.read(6_000_000)
-                etag = response.headers.get("ETag", "")
-                last_modified = response.headers.get("Last-Modified", "")
+            response = self.http.get(
+                source["feed"],
+                headers=headers,
+                timeout=22,
+                max_bytes=6_000_000,
+            )
+            if response.status == 304 and cached_articles:
+                return {
+                    "source": source, "articles": cached_articles, "ok": True, "message": "",
+                    "duration_ms": round((time.monotonic() - started) * 1000),
+                    "etag": response.headers.get("ETag", cached.get("etag", "")),
+                    "last_modified": response.headers.get("Last-Modified", cached.get("last_modified", "")),
+                    "not_modified": True, "used_stale_cache": False,
+                }
+            if not 200 <= response.status < 300:
+                raise SafeHttpError(f"HTTP {response.status}")
+            xml_bytes = response.body
+            etag = response.headers.get("ETag", "")
+            last_modified = response.headers.get("Last-Modified", "")
             root = parse_feed_document(xml_bytes)
             entries = [node for node in root.iter() if local_name(node.tag) in {"item", "entry"}]
             articles: list[dict[str, Any]] = []
@@ -368,6 +539,7 @@ class FeedService:
                     continue
                 raw_summary = preferred_child_text(item, ("encoded", "content", "description", "summary"))
                 summary = strip_markup(raw_summary)
+                thumbnail_candidate = first_image(item, raw_summary)
                 published = parse_date(child_text(item, {"pubdate", "published", "updated", "date", "created"}))
                 article_id = hashlib.sha1(
                     f"{source['id']}|{url}".encode("utf-8")
@@ -378,7 +550,8 @@ class FeedService:
                         "title": title,
                         "url": url,
                         "summary": summary[:900],
-                        "image": first_image(item, raw_summary),
+                        "image": "",
+                        "_thumbnail_candidate": thumbnail_candidate,
                         "published_at": published.isoformat(),
                         "timestamp": published.timestamp(),
                         "source": source["name"],
@@ -396,17 +569,7 @@ class FeedService:
                 "etag": etag, "last_modified": last_modified,
                 "not_modified": False, "used_stale_cache": False,
             }
-        except urllib.error.HTTPError as exc:
-            if exc.code == 304 and cached_articles:
-                return {
-                    "source": source, "articles": cached_articles, "ok": True, "message": "",
-                    "duration_ms": round((time.monotonic() - started) * 1000),
-                    "etag": exc.headers.get("ETag", cached.get("etag", "")),
-                    "last_modified": exc.headers.get("Last-Modified", cached.get("last_modified", "")),
-                    "not_modified": True, "used_stale_cache": False,
-                }
-            error: Exception = exc
-        except (urllib.error.URLError, TimeoutError, ET.ParseError, OSError) as exc:
+        except (SafeHttpError, TimeoutError, ET.ParseError, OSError) as exc:
             error = exc
         return {
             "source": source, "articles": cached_articles, "ok": False, "message": str(error),
@@ -424,8 +587,8 @@ class FeedService:
             if not source:
                 raise ValueError("Source not found.")
         else:
-            feed = validated_http_url(payload.get("feed"), "Feed URL")
-            site = validated_http_url(payload.get("site"), "Website URL", required=False)
+            feed = normalized_http_url(payload.get("feed"), "Feed URL")
+            site = normalized_http_url(payload.get("site"), "Website URL", required=False)
             parsed = urllib.parse.urlsplit(feed)
             raw_name = payload.get("name", "")
             name = raw_name.strip() if isinstance(raw_name, str) else ""
@@ -481,6 +644,15 @@ class FeedService:
             revision = -1
         return schema, revision
 
+    def _render_cached_article(self, value: Any) -> dict[str, Any]:
+        article = render_safe_article(value)
+        image = article.get("image", "")
+        if image and not read_verified_thumbnail(
+            self.paths.thumbnail_dir, image, expected_anchor=self.paths.thumbnail_anchor
+        ):
+            article["image"] = ""
+        return article
+
     def cache_timestamp(self, payload: dict[str, Any], field: str) -> datetime | None:
         try:
             value = datetime.fromisoformat(str(payload[field]))
@@ -513,13 +685,17 @@ class FeedService:
             payload["classification_revision"] = CLASSIFICATION_REVISION
             payload["classification_version"] = CLASSIFICATION_REVISION
             payload["articles"] = [
-                apply_article_classification(dict(article))
+                self._render_cached_article(apply_article_classification(dict(article)))
                 for article in cached.get("articles", []) if isinstance(article, dict)
             ]
         else:
             payload["feed_schema_version"] = FEED_SCHEMA_VERSION
             payload["classification_revision"] = CLASSIFICATION_REVISION
             payload["classification_version"] = CLASSIFICATION_REVISION
+            payload["articles"] = [
+                self._render_cached_article(article)
+                for article in cached.get("articles", []) if isinstance(article, dict)
+            ]
         payload["cached"] = True
         payload["refreshing"] = refreshing
         if payload.get("thumbnails_refreshing"):
@@ -535,8 +711,15 @@ class FeedService:
 
     def update_cached_thumbnail_images(self, articles: list[dict[str, Any]], generated_at: str) -> None:
         images_by_url = {
-            article["url"]: article["image"]
-            for article in articles if article.get("url") and article.get("image")
+            article["url"]: canonical_thumbnail_reference(article.get("image", ""))
+            for article in articles
+            if article.get("url")
+            and canonical_thumbnail_reference(article.get("image", ""))
+            and read_verified_thumbnail(
+                self.paths.thumbnail_dir,
+                canonical_thumbnail_reference(article.get("image", "")),
+                expected_anchor=self.paths.thumbnail_anchor,
+            )
         }
         with self._refresh_lock:
             cached = self.read_cache()
@@ -545,7 +728,22 @@ class FeedService:
             changed = False
             updated_articles = []
             for article in cached.get("articles", []):
-                updated = dict(article)
+                updated = dict(article) if isinstance(article, dict) else {}
+                updated.pop("_thumbnail_candidate", None)
+                raw_image = updated.get("image", "")
+                normalized_image = canonical_thumbnail_reference(raw_image)
+                if normalized_image and not read_verified_thumbnail(
+                    self.paths.thumbnail_dir,
+                    normalized_image,
+                    expected_anchor=self.paths.thumbnail_anchor,
+                ):
+                    normalized_image = ""
+                if normalized_image:
+                    updated["image"] = normalized_image
+                elif raw_image not in (None, ""):
+                    updated.pop("image", None)
+                if isinstance(article, dict) and "image" in article and "image" not in updated:
+                    changed = True
                 image = images_by_url.get(updated.get("url", ""))
                 if image and not updated.get("image"):
                     updated["image"] = image
@@ -638,7 +836,7 @@ class FeedService:
                 "classification_revision": CLASSIFICATION_REVISION,
                 "classification_version": CLASSIFICATION_REVISION,
                 "articles": [
-                    apply_article_classification(dict(article))
+                    self._render_cached_article(apply_article_classification(dict(article)))
                     for article in cached.get("articles", [])
                     if schema_compatible and isinstance(article, dict)
                 ],

@@ -16,20 +16,27 @@ import {
   publicationWindowStart,
   searchTokens,
   softwareGroup,
+  thumbnailReferenceIsValid,
 } from "../../static/domain.mjs";
 
 const article = {
   id: "story-1",
   title: "A Blender workflow 日本語 guide",
   summary: "Production techniques for procedural materials",
+  url: "https://example.com/story-1",
+  image: "",
   source: "Example Studio",
   source_id: "example",
+  source_site: "https://example.com",
+  accent: "#fff",
   lane: "Tech & Development",
   software_group: "Blender",
   software_tags: ["Blender"],
   topic_tags: ["Materials & texturing"],
+  priority_reasons: [],
   published_at: "2026-08-05T12:00:00Z",
   sources: [{ id: "example", name: "Example Studio" }],
+  related: [],
 };
 
 test("search grammar handles aliases, quoted values, negation, and Unicode", () => {
@@ -84,9 +91,48 @@ test("publication windows share month and quarter boundaries", () => {
 test("feed schema contract accepts only the canonical structural revision", () => {
   assert.equal(FEED_SCHEMA_VERSION, 1);
   assert.deepEqual([...ARTICLE_LANE_VALUES], ["Tech & Development", "Industry", "Business"]);
-  const valid = { feed_schema_version: 1, articles: [article] };
+  const valid = {
+    feed_schema_version: 1,
+    generated_at: "2026-08-05T12:00:00Z",
+    sources: [{ id: "example", name: "Example Studio" }],
+    articles: [article],
+  };
   assert.equal(feedPayloadIsStructurallyCompatible(valid), true);
+  assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, articles: [{ ...article, summary: "" }] }), true);
+  assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, articles: [{ ...article, summary: null }] }), false);
   assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, feed_schema_version: 2 }), false);
   assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, classification_version: 999 }), true);
   assert.equal(feedPayloadIsStructurallyCompatible({ feed_schema_version: 1, articles: [{ ...article, lane: "Unknown" }] }), false);
+});
+
+test("feed schema rejects malformed render fields and URLs", () => {
+  const valid = {
+    feed_schema_version: 1,
+    generated_at: "2026-08-05T12:00:00Z",
+    sources: [{ id: "example", name: "Example Studio" }],
+    articles: [article],
+  };
+  assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, articles: [{ ...article, software_tags: null }] }), false);
+  assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, articles: [{ ...article, sources: [null] }] }), false);
+  assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, articles: [{ ...article, related: [{ title: "x" }] }] }), false);
+  assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, articles: [{ ...article, url: "javascript:alert(1)" }] }), false);
+  assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, articles: [{ ...article, image: "https://cdn.example.test/card.jpg" }] }), false);
+  assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, unavailable_sources: [null] }), false);
+  assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, articles: [{ ...article, priority_score: Number.NaN }] }), false);
+  assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, schema_version: 2 }), false);
+});
+
+test("thumbnail references are exact content-addressed project-relative assets", () => {
+  const reference = `thumbnails/${"a".repeat(64)}.jpg`;
+  assert.equal(thumbnailReferenceIsValid(reference), true);
+  assert.equal(feedPayloadIsStructurallyCompatible({
+    feed_schema_version: 1,
+    generated_at: "2026-08-05T12:00:00Z",
+    sources: [{ id: "example", name: "Example Studio" }],
+    articles: [{ ...article, image: reference }],
+  }), true);
+  assert.equal(thumbnailReferenceIsValid(`thumbnails/${"A".repeat(64)}.jpg`), false);
+  assert.equal(thumbnailReferenceIsValid("/assets/card.jpg"), false);
+  assert.equal(thumbnailReferenceIsValid("https://cdn.example/card.jpg"), false);
+  assert.equal(thumbnailReferenceIsValid(""), true);
 });

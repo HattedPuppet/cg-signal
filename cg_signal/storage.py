@@ -115,7 +115,8 @@ def normalize_user_state(payload: Any) -> dict[str, Any]:
     return normalized
 
 
-def validated_http_url(value: Any, label: str, required: bool = True) -> str:
+def normalized_http_url(value: Any, label: str, required: bool = True) -> str:
+    """Normalize URL syntax for storage; network safety is enforced at fetch time."""
     if value in (None, "") and not required:
         return ""
     if not isinstance(value, str):
@@ -123,8 +124,25 @@ def validated_http_url(value: Any, label: str, required: bool = True) -> str:
     clean = value.strip()
     if not clean or len(clean) > MAX_SOURCE_URL_LENGTH:
         raise ValueError(f"{label} must be a valid HTTP or HTTPS URL.")
-    parsed = urllib.parse.urlsplit(clean)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    parsed = None
+    try:
+        parsed = urllib.parse.urlsplit(clean)
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        hostname = None
+        port = None
+    if (
+        parsed is None
+        or parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.netloc
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.netloc.endswith(":")
+        or (port is not None and not 1 <= port <= 65535)
+        or any(ord(character) < 32 or character.isspace() for character in parsed.netloc)
+    ):
         raise ValueError(f"{label} must be a valid HTTP or HTTPS URL.")
     return urllib.parse.urlunsplit(parsed)
 
@@ -379,8 +397,8 @@ class SQLiteRepository:
     def add_source_config(self, payload: Any) -> dict[str, Any]:
         if not isinstance(payload, dict):
             raise ValueError("Source details must be an object.")
-        feed = validated_http_url(payload.get("feed"), "Feed URL")
-        site = validated_http_url(payload.get("site"), "Website URL", required=False)
+        feed = normalized_http_url(payload.get("feed"), "Feed URL")
+        site = normalized_http_url(payload.get("site"), "Website URL", required=False)
         parsed = urllib.parse.urlsplit(feed)
         raw_name = payload.get("name", "")
         name = raw_name.strip() if isinstance(raw_name, str) else ""
