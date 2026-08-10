@@ -3,6 +3,8 @@ name: Refresh mobile signal
 on:
   push:
     branches: [master, main]
+  pull_request:
+    branches: [main]
   schedule:
     - cron: "17,47 * * * *"
   workflow_dispatch:
@@ -20,7 +22,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  test:
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -46,6 +48,23 @@ jobs:
           node --check mobile/site/sw.js
       - name: Run regression tests
         run: python -m unittest discover -s tests -v
+
+  build:
+    if: github.event_name != 'pull_request'
+    needs: test
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
       - name: Restore publisher request cache
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
@@ -75,6 +94,7 @@ jobs:
           path: mobile/dist
 
   deploy:
+    if: github.event_name != 'pull_request'
     permissions:
       pages: write
       id-token: write

@@ -255,6 +255,9 @@ class MobileExportTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         ignore = (project_root / ".gitignore").read_text(encoding="utf-8")
 
+        self.assertIn("pull_request:", workflow)
+        self.assertIn("if: github.event_name != 'pull_request'", workflow)
+        self.assertIn("needs: test", workflow)
         self.assertIn("uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25", workflow)
         self.assertIn("path: .mobile-cache", workflow)
         self.assertIn("--request-cache-dir .mobile-cache/http", workflow)
