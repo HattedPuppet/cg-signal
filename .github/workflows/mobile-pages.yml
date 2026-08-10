@@ -18,7 +18,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: cg-signal-mobile-pages
+  group: ${{ github.event_name == 'pull_request' && format('cg-signal-pr-{0}', github.event.pull_request.number) || 'cg-signal-mobile-pages' }}
   cancel-in-progress: true
 
 jobs:

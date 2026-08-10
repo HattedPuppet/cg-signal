@@ -98,6 +98,7 @@ test("feed schema contract accepts only the canonical structural revision", () =
     articles: [article],
   };
   assert.equal(feedPayloadIsStructurallyCompatible(valid), true);
+  assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, articles: [] }), true);
   assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, articles: [{ ...article, summary: "" }] }), true);
   assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, articles: [{ ...article, summary: null }] }), false);
   assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, feed_schema_version: 2 }), false);

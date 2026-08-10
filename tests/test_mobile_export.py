@@ -258,6 +258,8 @@ class MobileExportTests(unittest.TestCase):
         self.assertIn("pull_request:", workflow)
         self.assertIn("if: github.event_name != 'pull_request'", workflow)
         self.assertIn("needs: test", workflow)
+        self.assertIn("format('cg-signal-pr-{0}', github.event.pull_request.number)", workflow)
+        self.assertIn("|| 'cg-signal-mobile-pages'", workflow)
         self.assertIn("uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25", workflow)
         self.assertIn("path: .mobile-cache", workflow)
         self.assertIn("--request-cache-dir .mobile-cache/http", workflow)

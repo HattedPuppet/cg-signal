@@ -344,7 +344,7 @@ export function feedPayloadIsStructurallyCompatible(payload) {
   if (!feedPayloadHasSchema(payload) || !payload || typeof payload !== "object") return false;
   if (payload.schema_version !== undefined && payload.schema_version !== FEED_SCHEMA_VERSION) return false;
   if (!nonEmptyString(payload.generated_at, 128)) return false;
-  if (!Array.isArray(payload.articles) || payload.articles.length === 0 || payload.articles.length > MAX_FEED_ARTICLES) {
+  if (!Array.isArray(payload.articles) || payload.articles.length > MAX_FEED_ARTICLES) {
     return false;
   }
   if (!Array.isArray(payload.sources) || payload.sources.length > MAX_FEED_SOURCES || !payload.sources.every(validNestedSource)) {

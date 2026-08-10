@@ -204,8 +204,8 @@ And is actively interested in:
 - Provide Latest Signal and Pinned views, plus information-type and category
   filtering, source selection, publication-window filtering, text and hashtag
   search.
-- Group mobile stories into Last 24 hours, Last 3 days, and Earlier sections so
-  freshness is clear without read-state tracking.
+- Keep mobile stories in one flat newest-first chronology without a separate
+  recency board or read-state tracking.
 - Keep search in the mobile header and expose information type, category, and
   source controls as touch-sized inline choices in the feed, with clear
   active-state indication and no required discovery drawer.

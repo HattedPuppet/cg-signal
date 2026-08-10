@@ -49,12 +49,11 @@ windows. **Pinned** stories stay device-local. It also includes one-tap
 category and source chips directly in the feed controls, a header search field
 with text and hashtag support, offline fallback, and Android home-screen
 installation.
-Stories are grouped into **Last 24 hours**, **Last 3 days**, and **Earlier** so
-freshness is visible without maintaining read markers. The header and filter
-drawer share one compact sticky surface: tap or swipe its handle to pull the
-full controls out. A persistent Top button jumps directly to the first visible
-article without a smooth-scroll delay. Pins are stored only in that phone's
-browser.
+Stories remain in one flat newest-first list without a separate recency board.
+The header and filter drawer share one compact sticky surface: tap or swipe its
+handle to pull the full controls out. A persistent Top button jumps directly to
+the first visible article without a smooth-scroll delay. Pins are stored only
+in that phone's browser.
 
 Source selection never requires opening a separate discovery panel. The optional
 **Manage sources** sheet is only for hiding or restoring sources on this device.
