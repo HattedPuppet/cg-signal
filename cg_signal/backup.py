@@ -26,7 +26,12 @@ import uuid
 from typing import Any
 
 from .config import RuntimePaths
-from .storage import STORAGE_SCHEMA_VERSION, StorageSchemaError, validate_current_schema
+from .storage import (
+    STORAGE_SCHEMA_VERSION,
+    StorageSchemaError,
+    migrate_storage_schema,
+    validate_current_schema,
+)
 
 
 APP_NAME = "cg-signal"
@@ -560,8 +565,16 @@ def create_backup(
             # Connection.backup() reads the source's committed state, including
             # committed WAL pages, without copying live sidecar files.
             source.backup(destination_connection)
+            destination_connection.commit()
+            source.close()
+            source = None
+            # Legacy v0 databases are normalized only in the temporary copy;
+            # the live read-only source is never migrated in place.
+            migrate_storage_schema(destination_connection)
             destination_connection.execute("PRAGMA journal_mode=DELETE")
             destination_connection.commit()
+        except StorageSchemaError as exc:
+            raise BackupError(f"Unable to normalize live SQLite database snapshot: {exc}") from exc
         except sqlite3.Error as exc:
             raise BackupError(f"Unable to snapshot live SQLite database: {exc}") from exc
         finally:

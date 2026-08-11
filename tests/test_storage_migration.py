@@ -30,6 +30,8 @@ class StorageMigrationTests(unittest.TestCase):
         version: int = 0,
         feedback_count: int = 3,
         include_metadata: bool = True,
+        historical: bool = False,
+        ddl_variant: str | None = None,
         article_variant: str = "valid",
         state_order: str = "current",
         indexes: bool = True,
@@ -55,10 +57,19 @@ class StorageMigrationTests(unittest.TestCase):
             articles = articles.replace("published_at TEXT NOT NULL", "published_at TEXT")
         elif article_variant == "extra_column":
             articles = articles.replace("last_seen_at TEXT NOT NULL", "last_seen_at TEXT NOT NULL, extra TEXT NOT NULL DEFAULT ''")
+        if ddl_variant == "check":
+            articles = articles.replace("title TEXT NOT NULL", "title TEXT NOT NULL CHECK(length(title)<=1)")
+        elif ddl_variant == "collate":
+            articles = articles.replace("title TEXT NOT NULL", "title TEXT NOT NULL COLLATE NOCASE")
+        elif ddl_variant == "not_null_conflict":
+            articles = articles.replace("title TEXT NOT NULL", "title TEXT NOT NULL ON CONFLICT IGNORE")
         connection.execute(articles)
         if indexes:
             connection.execute("CREATE INDEX articles_published_idx ON articles(published_at DESC)")
-            connection.execute("CREATE INDEX articles_source_idx ON articles(source_id)")
+            if ddl_variant == "index_collate":
+                connection.execute("CREATE INDEX articles_source_idx ON articles(source_id COLLATE NOCASE)")
+            else:
+                connection.execute("CREATE INDEX articles_source_idx ON articles(source_id)")
         if state_order == "updated_before_feedback":
             state = """
                 CREATE TABLE article_state (
@@ -89,7 +100,7 @@ class StorageMigrationTests(unittest.TestCase):
         )
         for name, definition in feedback_columns[:feedback_count]:
             connection.execute(f"ALTER TABLE article_state ADD COLUMN {name} {definition}")
-        connection.execute("""
+        sources = """
             CREATE TABLE sources (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, site TEXT NOT NULL DEFAULT '',
                 feed TEXT NOT NULL UNIQUE, accent TEXT NOT NULL,
@@ -97,14 +108,18 @@ class StorageMigrationTests(unittest.TestCase):
                 is_builtin INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 1000,
                 created_at TEXT NOT NULL, updated_at TEXT NOT NULL
             )
-        """)
-        connection.execute("""
-            CREATE TABLE source_preferences (
-                source_id TEXT PRIMARY KEY, muted INTEGER NOT NULL DEFAULT 0,
-                reduced INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
-            )
-        """)
-        if include_metadata:
+        """
+        if ddl_variant == "unique_conflict":
+            sources = sources.replace("feed TEXT NOT NULL UNIQUE", "feed TEXT NOT NULL UNIQUE ON CONFLICT REPLACE")
+        connection.execute(sources)
+        if not historical:
+            connection.execute("""
+                CREATE TABLE source_preferences (
+                    source_id TEXT PRIMARY KEY, muted INTEGER NOT NULL DEFAULT 0,
+                    reduced INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+                )
+            """)
+        if include_metadata or historical:
             connection.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         connection.execute(f"PRAGMA user_version={int(version)}")
         connection.commit()
@@ -227,7 +242,7 @@ class StorageMigrationTests(unittest.TestCase):
     def test_exact_historical_four_table_state_migrates_without_data_loss(self):
         temporary, paths = self.make_runtime()
         try:
-            connection = self._create_known_schema(paths, include_metadata=False, feedback_count=0)
+            connection = self._create_known_schema(paths, historical=True, feedback_count=0)
             connection.execute(
                 "INSERT INTO articles(id,title,url,published_at,data_json,first_seen_at,last_seen_at) VALUES (?,?,?,?,?,?,?)",
                 ("article", "Title", "https://example.invalid/a", "2026-01-01", "{}", "a", "b"),
@@ -255,6 +270,7 @@ class StorageMigrationTests(unittest.TestCase):
                 self.assertEqual(row[0], "Title")
                 self.assertEqual(state, (1, "note", 1, "", "[]", "[]"))
                 self.assertEqual(migrated.execute("PRAGMA user_version").fetchone()[0], 1)
+                self.assertEqual(migrated.execute("SELECT COUNT(*) FROM source_preferences").fetchone()[0], 0)
             finally:
                 migrated.close()
         finally:
@@ -371,6 +387,33 @@ class StorageMigrationTests(unittest.TestCase):
                     connection.execute("DROP INDEX articles_source_idx")
                     connection.execute("CREATE INDEX articles_source_idx ON articles(source_id DESC)")
                 connection.commit()
+                connection.close()
+                with self.assertRaises(StorageSchemaError):
+                    SQLiteRepository(paths).initialize()
+            finally:
+                temporary.cleanup()
+
+    def test_v0_allowlisted_ddl_rejects_semantically_similar_variants(self):
+        for variant in ("check", "collate", "not_null_conflict", "unique_conflict", "index_collate"):
+            temporary, paths = self.make_runtime()
+            try:
+                connection = self._create_known_schema(paths, ddl_variant=variant)
+                connection.close()
+                with self.assertRaises(StorageSchemaError):
+                    SQLiteRepository(paths).initialize()
+                untouched = sqlite3.connect(paths.archive_db_file)
+                try:
+                    self.assertEqual(untouched.execute("PRAGMA user_version").fetchone()[0], 0)
+                finally:
+                    untouched.close()
+            finally:
+                temporary.cleanup()
+
+    def test_v1_allowlisted_ddl_rejects_semantically_similar_variants(self):
+        for variant in ("check", "collate", "not_null_conflict", "unique_conflict", "index_collate"):
+            temporary, paths = self.make_runtime()
+            try:
+                connection = self._create_known_schema(paths, version=1, ddl_variant=variant)
                 connection.close()
                 with self.assertRaises(StorageSchemaError):
                     SQLiteRepository(paths).initialize()

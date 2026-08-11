@@ -27,7 +27,9 @@ python server.py
 ### Local SQLite backups
 
 The desktop archive can be captured as a verified, atomic SQLite snapshot. A
-manual snapshot is written beneath `.backups/` (or to an explicit destination):
+manual snapshot is written beneath `.backups/` (or to an explicit destination).
+Legacy v0 databases are normalized in the temporary snapshot copy; the live
+database remains unchanged during backup:
 
 ```powershell
 python server.py backup
@@ -47,6 +49,8 @@ already be stopped. When a live database exists, the command first creates and
 verifies a `pre-restore` recovery snapshot, stages the candidate beside the
 live database, and verifies it again after replacement. If post-install
 verification fails, that verified recovery snapshot is restored atomically.
+If the live database was v0, the recovery snapshot is v1, so a rollback
+restores the same user data while advancing only the schema version to v1.
 When no live database existed, a failed post-install verification removes the
 failed installed database and its SQLite sidecars to restore the original
 absence. Start the dashboard separately after a restore.

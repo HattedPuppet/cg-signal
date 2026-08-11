@@ -69,6 +69,74 @@ class BackupTests(unittest.TestCase):
             "related": [],
         }
 
+    def _create_v0_database(self, *, historical: bool = False, malformed: str | None = None) -> None:
+        """Create a raw persisted v0 fixture without invoking repository migration."""
+
+        self.paths.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.paths.archive_db_file.unlink(missing_ok=True)
+        for suffix in ("-wal", "-shm"):
+            self.paths.archive_db_file.with_name(self.paths.archive_db_file.name + suffix).unlink(missing_ok=True)
+        connection = sqlite3.connect(self.paths.archive_db_file)
+        articles = """
+            CREATE TABLE articles (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL, url TEXT NOT NULL,
+                summary TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '',
+                source_id TEXT NOT NULL DEFAULT '', published_at TEXT NOT NULL,
+                lane TEXT NOT NULL DEFAULT '', software_group TEXT NOT NULL DEFAULT '',
+                software_tags TEXT NOT NULL DEFAULT '[]', topic_tags TEXT NOT NULL DEFAULT '[]',
+                sources_text TEXT NOT NULL DEFAULT '', search_text TEXT NOT NULL DEFAULT '',
+                data_json TEXT NOT NULL, first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL
+            )
+        """
+        if malformed == "check":
+            articles = articles.replace("title TEXT NOT NULL", "title TEXT NOT NULL CHECK(length(title)<=1)")
+        connection.execute(articles)
+        connection.execute("CREATE INDEX articles_published_idx ON articles(published_at DESC)")
+        connection.execute("CREATE INDEX articles_source_idx ON articles(source_id)")
+        connection.execute("""
+            CREATE TABLE article_state (
+                article_id TEXT PRIMARY KEY, is_read INTEGER NOT NULL DEFAULT 0,
+                is_saved INTEGER NOT NULL DEFAULT 0, is_archived INTEGER NOT NULL DEFAULT 0,
+                note TEXT NOT NULL DEFAULT '', feedback_value INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            )
+        """)
+        if not historical:
+            for name, definition in (
+                ("feedback_source_id", "TEXT NOT NULL DEFAULT ''"),
+                ("feedback_software_tags", "TEXT NOT NULL DEFAULT '[]'"),
+                ("feedback_topic_tags", "TEXT NOT NULL DEFAULT '[]'"),
+            ):
+                connection.execute(f"ALTER TABLE article_state ADD COLUMN {name} {definition}")
+        connection.execute("""
+            CREATE TABLE sources (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, site TEXT NOT NULL DEFAULT '',
+                feed TEXT NOT NULL UNIQUE, accent TEXT NOT NULL,
+                item_limit INTEGER NOT NULL DEFAULT 40, enabled INTEGER NOT NULL DEFAULT 1,
+                is_builtin INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 1000,
+                created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+            )
+        """)
+        if not historical:
+            connection.execute("""
+                CREATE TABLE source_preferences (
+                    source_id TEXT PRIMARY KEY, muted INTEGER NOT NULL DEFAULT 0,
+                    reduced INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+                )
+            """)
+        connection.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        connection.execute(f"PRAGMA user_version=0")
+        connection.execute(
+            "INSERT INTO articles(id,title,url,published_at,data_json,first_seen_at,last_seen_at) VALUES (?,?,?,?,?,?,?)",
+            ("legacy", "L" if malformed == "check" else "Legacy", "https://legacy.invalid", "2026-01-01", "{}", "a", "b"),
+        )
+        connection.execute(
+            "INSERT INTO article_state(article_id,is_saved,note,feedback_value,updated_at) VALUES (?,?,?,?,?)",
+            ("legacy", 1, "legacy note", 1, "2026-01-02"),
+        )
+        connection.commit()
+        connection.close()
+
     def _snapshot(self, root: Path | None = None) -> Path:
         if not self.paths.archive_db_file.exists():
             self._repository().initialize()
@@ -137,6 +205,102 @@ class BackupTests(unittest.TestCase):
                 restored.close()
         finally:
             writer.close()
+
+    def test_backup_normalizes_current_v0_in_temp_and_leaves_live_unchanged(self):
+        self._create_v0_database()
+        live_before = self.paths.archive_db_file.read_bytes()
+        snapshot = create_backup(self.paths)
+        verified = verify_snapshot(snapshot)
+        self.assertEqual(verified.manifest["sqlite"]["user_version"], 1)
+        self.assertEqual(live_before, self.paths.archive_db_file.read_bytes())
+        live = sqlite3.connect(self.paths.archive_db_file)
+        try:
+            self.assertEqual(live.execute("PRAGMA user_version").fetchone()[0], 0)
+        finally:
+            live.close()
+
+    def test_backup_normalizes_historical_v0_and_preserves_defaults(self):
+        self._create_v0_database(historical=True)
+        snapshot = create_backup(self.paths)
+        verify_snapshot(snapshot)
+        restored = sqlite3.connect(snapshot / "cg-signal.db")
+        try:
+            self.assertEqual(restored.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertEqual(restored.execute("SELECT COUNT(*) FROM source_preferences").fetchone()[0], 0)
+            self.assertEqual(
+                restored.execute(
+                    "SELECT feedback_source_id,feedback_software_tags,feedback_topic_tags FROM article_state"
+                ).fetchone(),
+                ("", "[]", "[]"),
+            )
+        finally:
+            restored.close()
+
+    def test_malformed_v0_backup_leaves_live_and_backup_root_untouched(self):
+        self._create_v0_database(malformed="check")
+        live_before = self.paths.archive_db_file.read_bytes()
+        with self.assertRaises(BackupError):
+            create_backup(self.paths)
+        self.assertEqual(live_before, self.paths.archive_db_file.read_bytes())
+        self.assertEqual(list(self.paths.backup_dir.iterdir()), [])
+
+    def test_restore_v0_live_creates_verified_v1_recovery_snapshot(self):
+        candidate_root = Path(self.temporary.name) / "candidate-root"
+        candidate = self._snapshot(candidate_root)
+        self._create_v0_database(historical=True)
+        result = restore_snapshot(self.paths, candidate)
+        self.assertIsNotNone(result.recovery_snapshot)
+        recovery = verify_snapshot(result.recovery_snapshot)
+        self.assertEqual(recovery.manifest["sqlite"]["user_version"], 1)
+        live = sqlite3.connect(self.paths.archive_db_file)
+        try:
+            self.assertEqual(live.execute("PRAGMA user_version").fetchone()[0], 1)
+        finally:
+            live.close()
+
+    def test_postinstall_corruption_of_live_v0_rolls_back_as_v1(self):
+        candidate = self._snapshot(Path(self.temporary.name) / "candidate-root")
+        self._create_v0_database(historical=True)
+        live = self.paths.archive_db_file
+        real_replace = backup_module.os.replace
+
+        def corrupt_stage(source: str | os.PathLike[str], destination: str | os.PathLike[str]):
+            source_path = Path(source)
+            if Path(destination) == live and source_path.name.startswith(".cg-signal.db.restore-"):
+                data = bytearray(source_path.read_bytes())
+                data[100] ^= 0xFF
+                source_path.write_bytes(data)
+            return real_replace(source, destination)
+
+        with mock.patch.object(backup_module.os, "replace", side_effect=corrupt_stage):
+            with self.assertRaisesRegex(RestoreError, "rollback succeeded"):
+                restore_snapshot(self.paths, candidate)
+        recovered = sqlite3.connect(live)
+        try:
+            self.assertEqual(recovered.execute("PRAGMA user_version").fetchone()[0], 1)
+            self.assertEqual(recovered.execute("SELECT note FROM article_state").fetchone()[0], "legacy note")
+        finally:
+            recovered.close()
+
+    def test_raw_v0_candidate_is_rejected_before_restore(self):
+        candidate = self._snapshot(Path(self.temporary.name) / "candidate-root")
+        raw_root = Path(self.temporary.name) / "raw-root"
+        raw_root.mkdir()
+        raw_db = raw_root / "cg-signal.db"
+        self._create_v0_database(historical=True)
+        raw_db.write_bytes(self.paths.archive_db_file.read_bytes())
+        manifest = self._manifest(candidate)
+        content = raw_db.read_bytes()
+        manifest["database"]["size_bytes"] = len(content)
+        manifest["database"]["sha256"] = hashlib.sha256(content).hexdigest()
+        manifest["sqlite"]["user_version"] = 0
+        raw_candidate = Path(self.temporary.name) / "raw-candidate"
+        raw_candidate.mkdir()
+        manifest["snapshot_id"] = raw_candidate.name
+        (raw_candidate / "cg-signal.db").write_bytes(content)
+        self._rewrite_manifest(raw_candidate, manifest)
+        with self.assertRaises(SnapshotFormatError):
+            verify_snapshot(raw_candidate)
 
     def test_correlated_transaction_snapshot_is_before_or_after_never_mixed(self):
         repository = self._repository()
@@ -560,6 +724,20 @@ class BackupCliTests(unittest.TestCase):
         code, _, error = self._run(["backup"])
         self.assertEqual(code, 1)
         self.assertIn("database is missing", error)
+
+    def test_cli_backup_normalizes_v0_live_database(self):
+        BackupTests._create_v0_database(self)
+        code, output, error = self._run(["backup"])
+        self.assertEqual(code, 0)
+        self.assertEqual(error, "")
+        self.assertIn("Backup verified:", output)
+        snapshot = Path(output.split(":", 1)[1].strip())
+        self.assertEqual(verify_snapshot(snapshot).manifest["sqlite"]["user_version"], 1)
+        live = sqlite3.connect(self.paths.archive_db_file)
+        try:
+            self.assertEqual(live.execute("PRAGMA user_version").fetchone()[0], 0)
+        finally:
+            live.close()
 
     def test_cli_all_invalid_maintenance_and_serve_combinations_exit_two(self):
         root = str(Path(self.temporary.name) / "root")
