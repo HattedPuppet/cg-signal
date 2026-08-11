@@ -213,14 +213,14 @@
     },
     {
       "id": "dedupe-positive-blender-5-2-bilingual",
-      "left": {"title": "Blender 5.2 LTS Has Been Released", "source_id": "blender-developers"},
-      "right": {"title": "Blender 5.2 LTSが正式リリース！新機能を紹介", "source_id": "cginterest"},
+      "left": {"title": "Blender 5.2 LTS Has Been Released", "source_id": "80-level"},
+      "right": {"title": "「Blender 5.2 LTS」正式リリース。髪の物理シミュレーションが可能な「XPBD Solver」ノードが追加、レンダリング効率改善も", "source_id": "gamemakers"},
       "expected_same_story": true
     },
     {
       "id": "dedupe-positive-dead-space-retirement-bilingual",
-      "left": {"title": "Dead Space creator Glen Schofield retires after 35 years", "source_id": "game-developer"},
-      "right": {"title": "『Dead Space』生みの親グレン・スコフィールド氏が業界から引退", "source_id": "automaton"},
+      "left": {"title": "Dead Space co-creator Glen Schofield retires", "source_id": "game-developer"},
+      "right": {"title": "『Dead Space』生みの親グレン・スコフィールド氏が業界から引退表明―約35年携わり「この業界は本当に素晴らしい」と前向きに終える", "source_id": "gamebusiness"},
       "expected_same_story": true
     },
     {
@@ -261,14 +261,14 @@
     },
     {
       "id": "dedupe-negative-blender-release-tutorial",
-      "left": {"title": "Blender 5.2 LTS Has Been Released", "source_id": "blender-developers"},
-      "right": {"title": "Blender 5.2 Geometry Nodes Tutorial", "source_id": "80-level"},
+      "left": {"title": "Blender 5.2 LTS Has Been Released", "source_id": "80-level"},
+      "right": {"title": "Artist Shows Web Tornado from Spider-Man: Brand New Day Made with Blender Geometry Nodes", "source_id": "80-level"},
       "expected_same_story": false
     },
     {
       "id": "dedupe-negative-blender-conference-release",
-      "left": {"title": "Blender Foundation announces a new conference", "source_id": "blender-developers"},
-      "right": {"title": "Blender 5.2 LTS has been released", "source_id": "blender-developers"},
+      "left": {"title": "Geometry Nodes Workshop: September 2025", "source_id": "blender-developers"},
+      "right": {"title": "Blender 5.2 LTS Has Been Released", "source_id": "80-level"},
       "expected_same_story": false
     },
     {
