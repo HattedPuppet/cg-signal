@@ -1,0 +1,281 @@
+{
+  "schema_version": 1,
+  "captured_on": "2026-08-11",
+  "content_policy": "Publisher titles and source metadata only; no summaries or article bodies.",
+  "classification_cases": [
+    {
+      "id": "classification-en-shader-alien",
+      "title": "This Alien Has No Mesh & Is Built in Three.js with Shader Math",
+      "source_id": "80-level",
+      "expected": {
+        "lane": "Tech & Development",
+        "software_tags": [],
+        "topic_tags": ["Technical art & optimization"]
+      }
+    },
+    {
+      "id": "classification-en-godot-water",
+      "title": "Stunning Sea Of Thieves-Inspired Water In Godot",
+      "source_id": "80-level",
+      "expected": {
+        "lane": "Tech & Development",
+        "software_tags": [],
+        "topic_tags": ["Other production"]
+      }
+    },
+    {
+      "id": "classification-en-blender-tornado",
+      "title": "Artist Shows Web Tornado from Spider-Man: Brand New Day Made with Blender Geometry Nodes",
+      "source_id": "80-level",
+      "expected": {
+        "lane": "Tech & Development",
+        "software_tags": ["Blender"],
+        "topic_tags": []
+      }
+    },
+    {
+      "id": "classification-en-unreal-5-8-release",
+      "title": "Unreal Engine 5.8 is now available",
+      "source_id": "unreal-engine",
+      "expected": {
+        "lane": "Tech & Development",
+        "software_tags": ["Unreal Engine"],
+        "topic_tags": []
+      }
+    },
+    {
+      "id": "classification-ja-kitbash-acquisition",
+      "title": "KitBashがArtStationとSketchfabをEpic Gamesから買収！両サービスはこれまで通り継続！EpicはUnreal Engine 6などに注力へ！",
+      "source_id": "3dnchu",
+      "expected": {
+        "lane": "Business",
+        "software_tags": ["Unreal Engine"],
+        "topic_tags": []
+      }
+    },
+    {
+      "id": "classification-ja-klab-earnings",
+      "title": "KLab、2Q営業益4.9億円で黒字転換 『DQスマグロ』が売上倍増、新作ラッシュで通期10億円視野",
+      "source_id": "gamebusiness",
+      "expected": {
+        "lane": "Business",
+        "software_tags": [],
+        "topic_tags": []
+      }
+    },
+    {
+      "id": "classification-ja-ffxiv-cedec-production",
+      "title": "『FFXIV: 白銀のワンダラー』ティザー映像の制作事例や、『プラグマタ』における髪・表情の表現などを解説。「CEDEC2026」アーカイブ約40本が公開",
+      "source_id": "gamemakers",
+      "expected": {
+        "lane": "Tech & Development",
+        "software_tags": [],
+        "topic_tags": ["Breakdowns & production stories", "Releases & product updates"]
+      }
+    },
+    {
+      "id": "classification-ja-zbrush-modeling",
+      "title": "Maxon、ZBrushによるスタイライズドハードサーフェスモデリングの様子をライブ配信 Heather Courage氏による講演 - ニュース",
+      "source_id": "cgworld",
+      "expected": {
+        "lane": "Tech & Development",
+        "software_tags": [],
+        "topic_tags": ["Modeling & sculpting"]
+      }
+    },
+    {
+      "id": "classification-ja-ai-hair-toolkit",
+      "title": "AI Hair Toolkit | 1枚の人物画像からAIの力を借りてBlender用ヘアーカーブを生成出来るアドオン！",
+      "source_id": "3dnchu",
+      "expected": {
+        "lane": "Tech & Development",
+        "software_tags": ["AI", "Blender"],
+        "topic_tags": []
+      }
+    },
+    {
+      "id": "classification-ja-atlas2mesh",
+      "title": "Atlas2Mesh | テクスチャアトラス内のアルファ形状を自動検出＆シルエットに沿ったメッシュへ変換してくれるアドオン！Blender Extensionsにて無料公開！",
+      "source_id": "3dnchu",
+      "expected": {
+        "lane": "Tech & Development",
+        "software_tags": ["Blender"],
+        "topic_tags": []
+      }
+    },
+    {
+      "id": "classification-ja-houdini-sidefx-interview",
+      "title": "「先生や業界の方から勧められたことを、できる範囲でやってみることが大切です」行動を積み重ね、SideFXで活躍中 第122回：奥野莉奈（Houdini FX Artist / SideFX） - 連載",
+      "source_id": "cgworld",
+      "expected": {
+        "lane": "Tech & Development",
+        "software_tags": ["Houdini"],
+        "topic_tags": []
+      }
+    },
+    {
+      "id": "classification-ja-mingtoon-unity-shader",
+      "title": "MingToon | 影・逆光・深度表現にこだわったVRChat＆Warudo向け多機能Unityトゥーンシェーダー！クローズドベータテスター募集中！",
+      "source_id": "3dnchu",
+      "expected": {
+        "lane": "Tech & Development",
+        "software_tags": ["Unity"],
+        "topic_tags": []
+      }
+    },
+    {
+      "id": "classification-ja-raygui-api",
+      "title": "オープンソースGUIライブラリ「raygui」、約3年ぶりに新版登場。アイコン512個対応、全関数が操作結果を返すAPI刷新",
+      "source_id": "gamemakers",
+      "expected": {
+        "lane": "Tech & Development",
+        "software_tags": [],
+        "topic_tags": ["Other production"]
+      }
+    },
+    {
+      "id": "classification-en-1666-early-access",
+      "title": "1666: Amsterdam's Early Access Launch Date Revealed",
+      "source_id": "80-level",
+      "expected": {
+        "lane": "Industry",
+        "software_tags": [],
+        "topic_tags": []
+      }
+    },
+    {
+      "id": "classification-ja-1666-early-access",
+      "title": "人間に紛れた「悪魔」を特定し“魔術”で対抗するゲーム『1666: Amsterdam』が8月26日に早期アクセス開始。『アサクリ』クリエイティブ・ディレクターを務めたパトリス・デジーレ氏が設立したスタジオの新作",
+      "source_id": "denfaminicogamer",
+      "expected": {
+        "lane": "Industry",
+        "software_tags": [],
+        "topic_tags": []
+      }
+    },
+    {
+      "id": "classification-ja-castle-gate-update",
+      "title": "新感覚タワーディフェンス『城門を守れ』、無料大型アプデで「2人協力プレイ」実装。“自分も暴れる”防衛ストラテジー、共闘解禁",
+      "source_id": "automaton",
+      "expected": {
+        "lane": "Industry",
+        "software_tags": [],
+        "topic_tags": []
+      }
+    },
+    {
+      "id": "classification-en-halo-ue5",
+      "title": "Halo: Campaign Evolved brings the legendary franchise into a new era with UE5",
+      "source_id": "unreal-engine",
+      "expected": {
+        "lane": "Industry",
+        "software_tags": ["Unreal Engine"],
+        "topic_tags": []
+      }
+    },
+    {
+      "id": "classification-ja-kimbap-factory",
+      "title": "Steam「キンパ工場」自動化シム『Kimbap Factory』発表。具材を流してじゃんじゃん量産、無数の“韓国風海苔巻き”が宙を舞う",
+      "source_id": "automaton",
+      "expected": {
+        "lane": "Industry",
+        "software_tags": [],
+        "topic_tags": []
+      }
+    },
+    {
+      "id": "classification-en-uzumaki-3d-recreation",
+      "title": "Character from Junji Ito's Uzumaki Manga Series Recreated in 3D",
+      "source_id": "80-level",
+      "expected": {
+        "lane": "Tech & Development",
+        "software_tags": [],
+        "topic_tags": ["Assets & inspiration"]
+      }
+    },
+    {
+      "id": "classification-en-shoulder-deformation",
+      "title": "Testing Shoulder Deformation With Joints On Curves",
+      "source_id": "80-level",
+      "expected": {
+        "lane": "Tech & Development",
+        "software_tags": [],
+        "topic_tags": ["Animation, rigging & mocap"]
+      }
+    }
+  ],
+  "dedupe_pairs": [
+    {
+      "id": "dedupe-positive-kitbash-bilingual",
+      "left": {"title": "ArtStation and Sketchfab Have Been Acquired by KitBash", "source_id": "80-level"},
+      "right": {"title": "KitBashがArtStationとSketchfabをEpic Gamesから買収！両サービスはこれまで通り継続！EpicはUnreal Engine 6などに注力へ！", "source_id": "3dnchu"},
+      "expected_same_story": true
+    },
+    {
+      "id": "dedupe-positive-blender-5-2-bilingual",
+      "left": {"title": "Blender 5.2 LTS Has Been Released", "source_id": "blender-developers"},
+      "right": {"title": "Blender 5.2 LTSが正式リリース！新機能を紹介", "source_id": "cginterest"},
+      "expected_same_story": true
+    },
+    {
+      "id": "dedupe-positive-dead-space-retirement-bilingual",
+      "left": {"title": "Dead Space creator Glen Schofield retires after 35 years", "source_id": "game-developer"},
+      "right": {"title": "『Dead Space』生みの親グレン・スコフィールド氏が業界から引退", "source_id": "automaton"},
+      "expected_same_story": true
+    },
+    {
+      "id": "dedupe-positive-1666-early-access-bilingual",
+      "left": {"title": "1666: Amsterdam's Early Access Launch Date Revealed", "source_id": "80-level"},
+      "right": {"title": "人間に紛れた「悪魔」を特定し“魔術”で対抗するゲーム『1666: Amsterdam』が8月26日に早期アクセス開始。『アサクリ』クリエイティブ・ディレクターを務めたパトリス・デジーレ氏が設立したスタジオの新作", "source_id": "denfaminicogamer"},
+      "expected_same_story": true
+    },
+    {
+      "id": "dedupe-positive-setsuso-japanese",
+      "left": {"title": "チラズアートの新作ホラーゲーム『雪葬』は8月14日リリースか。雪山で雪かきをする一人称視点のホラーゲーム。雪の中から出てくるものや、たどり着く建物から、そこで何があったのか、何が起こるのかに迫る", "source_id": "denfaminicogamer"},
+      "right": {"title": "チラズアート新作・雪かきサイコホラー『雪葬』8月14日配信へ。掘り進むと“なにかが出る”吹雪の雪山ヒトコワホラー", "source_id": "automaton"},
+      "expected_same_story": true
+    },
+    {
+      "id": "dedupe-negative-kenney-asset-packs",
+      "left": {"title": "ドミノ牌29枚×5セットの画像素材を収録。アセットパック『Domino Pack』、Webサイト「Kenney」で無料公開", "source_id": "gamemakers"},
+      "right": {"title": "FPS制作に役立つクロスヘアの素材が200種類収録。無料アセットパック『Crosshair Pack』アップデート版、Webサイト「Kenney」で公開", "source_id": "gamemakers"},
+      "expected_same_story": false
+    },
+    {
+      "id": "dedupe-negative-red-giant-redshift-releases",
+      "left": {"title": "Red Giant 2026.5.0 リリース！Real Lens Flaresがインタラクティブズームと非球面レンズをサポート", "source_id": "cginterest"},
+      "right": {"title": "Redshift 2026.8.0がリリース！高層雲のレンダリング対応、ArchViz向け機能の強化など", "source_id": "cginterest"},
+      "expected_same_story": false
+    },
+    {
+      "id": "dedupe-negative-siggraph-spotlight-episodes",
+      "left": {"title": "SIGGRAPH Spotlight: Episode 106 – In Conversation With the SIGGRAPH 2026 Electronic Theater Award-Winning Directors", "source_id": "siggraph"},
+      "right": {"title": "SIGGRAPH Spotlight: Episode 105 – Program Chairs Preview: Inside SIGGRAPH 2026", "source_id": "siggraph"},
+      "expected_same_story": false
+    },
+    {
+      "id": "dedupe-negative-flow-studio-stories",
+      "left": {"title": "【AI×VFX最前線】Autodesk Flow Studio開発者ニコラ・トドロビッチ氏に訊く、CGキャラクターと実写融合の現在地と未来 - スペシャルコンテンツ", "source_id": "cgworld"},
+      "right": {"title": "Autodesk、キャラクターや背景を3D空間で演出できる Flow Studio の新機能「3D Editor + Canvas」を発表", "source_id": "cginterest"},
+      "expected_same_story": false
+    },
+    {
+      "id": "dedupe-negative-blender-release-tutorial",
+      "left": {"title": "Blender 5.2 LTS Has Been Released", "source_id": "blender-developers"},
+      "right": {"title": "Blender 5.2 Geometry Nodes Tutorial", "source_id": "80-level"},
+      "expected_same_story": false
+    },
+    {
+      "id": "dedupe-negative-blender-conference-release",
+      "left": {"title": "Blender Foundation announces a new conference", "source_id": "blender-developers"},
+      "right": {"title": "Blender 5.2 LTS has been released", "source_id": "blender-developers"},
+      "expected_same_story": false
+    },
+    {
+      "id": "dedupe-negative-unreal-5-8-unreal-6",
+      "left": {"title": "Unreal Engine 5.8 is now available", "source_id": "unreal-engine"},
+      "right": {"title": "The road to Unreal Engine 6", "source_id": "unreal-engine"},
+      "expected_same_story": false
+    }
+  ]
+}
