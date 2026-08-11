@@ -6,3 +6,4 @@ __pycache__/
 .pnpm-store/
 node_modules/
 mobile/dist/
+test-results/
