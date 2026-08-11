@@ -377,6 +377,64 @@ class BackupTests(unittest.TestCase):
         self.assertEqual(before, self.paths.archive_db_file.read_bytes())
         self.assertEqual(list(self.paths.cache_dir.glob(".*.restore-*")), [])
 
+    def test_stage_cleanup_failure_preserves_primary_restore_error_and_releases_lease(self):
+        repository = self._repository()
+        repository.write_state({"saved": ["candidate"]})
+        candidate = self._snapshot(Path(self.temporary.name) / "candidate-root")
+        self.paths.archive_db_file.unlink()
+        for suffix in ("-wal", "-shm"):
+            self.paths.archive_db_file.with_name(self.paths.archive_db_file.name + suffix).unlink(missing_ok=True)
+        original_unlink = Path.unlink
+
+        def fail_restore_stage(path: Path, *args: object, **kwargs: object):
+            if path.name.startswith(".cg-signal.db.restore-"):
+                raise PermissionError("injected stage cleanup failure")
+            return original_unlink(path, *args, **kwargs)
+
+        caught: RestoreError | None = None
+        traceback_ref = None
+        with mock.patch.object(
+            backup_module,
+            "_verify_staged_database",
+            side_effect=SnapshotVerificationError("primary staged verification failure"),
+        ), mock.patch.object(Path, "unlink", side_effect=fail_restore_stage):
+            try:
+                restore_snapshot(self.paths, candidate)
+            except RestoreError as error:
+                caught = error
+                traceback_ref = error.__traceback__
+        self.assertIsNotNone(caught)
+        self.assertIn("Unable to install verified SQLite snapshot", str(caught))
+        self.assertIn("primary staged verification failure", str(caught))
+        self.assertTrue(any("Restore cleanup failed" in note for note in (caught.__notes__ or [])))
+        self.assertIsNotNone(traceback_ref)
+        lease = DatabaseLease(self.paths.database_lock_file).acquire()
+        lease.release()
+        # The injected cleanup failure intentionally leaves the stage for the
+        # test process to remove after proving lease release.
+        for stage in self.paths.cache_dir.glob(".*.restore-*"):
+            original_unlink(stage)
+
+    def test_restore_cleanup_only_failure_is_reported(self):
+        repository = self._repository()
+        repository.write_state({"saved": ["candidate"]})
+        candidate = self._snapshot(Path(self.temporary.name) / "candidate-root")
+        self.paths.archive_db_file.unlink()
+        for suffix in ("-wal", "-shm"):
+            self.paths.archive_db_file.with_name(self.paths.archive_db_file.name + suffix).unlink(missing_ok=True)
+        original_unlink = Path.unlink
+
+        def fail_restore_stage(path: Path, *args: object, **kwargs: object):
+            if path.name.startswith(".cg-signal.db.restore-"):
+                raise PermissionError("injected stage cleanup failure")
+            return original_unlink(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "unlink", side_effect=fail_restore_stage):
+            with self.assertRaisesRegex(RestoreError, "Unable to clean up restore stage"):
+                restore_snapshot(self.paths, candidate)
+        for stage in self.paths.cache_dir.glob(".*.restore-*"):
+            original_unlink(stage)
+
     def test_initial_replace_failure_preserves_usable_old_database_and_recovery(self):
         repository = self._repository()
         repository.write_state({"saved": ["old"]})
@@ -786,6 +844,38 @@ class BackupCliTests(unittest.TestCase):
             self.assertIn("database lease", error)
         finally:
             lease.release()
+
+    def test_server_close_cleanup_preserves_primary_error_and_releases_lease(self):
+        import cg_signal.http as http
+
+        server = mock.Mock()
+        server.serve_forever.side_effect = RuntimeError("primary serve failure")
+        server.server_close.side_effect = OSError("injected server_close failure")
+        caught: RuntimeError | None = None
+        traceback_ref = None
+        with mock.patch.object(http, "DashboardServer", return_value=server):
+            try:
+                self._run(["--no-browser"])
+            except RuntimeError as error:
+                caught = error
+                traceback_ref = error.__traceback__
+        self.assertIsNotNone(caught)
+        self.assertEqual(str(caught), "primary serve failure")
+        self.assertTrue(any("Dashboard cleanup failed" in note for note in (caught.__notes__ or [])))
+        self.assertIsNotNone(traceback_ref)
+        lease = DatabaseLease(self.paths.database_lock_file).acquire()
+        lease.release()
+
+    def test_server_cleanup_only_failure_is_reported(self):
+        import cg_signal.http as http
+
+        server = mock.Mock()
+        server.server_close.side_effect = OSError("injected server_close failure")
+        with mock.patch.object(http, "DashboardServer", return_value=server):
+            with self.assertRaisesRegex(RuntimeError, "Dashboard cleanup failed"):
+                self._run(["--no-browser"])
+        lease = DatabaseLease(self.paths.database_lock_file).acquire()
+        lease.release()
 
 
 if __name__ == "__main__":

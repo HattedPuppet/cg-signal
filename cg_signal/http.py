@@ -443,11 +443,32 @@ def main() -> None:
         except KeyboardInterrupt:
             print("\nStopping CG Signal.")
     finally:
+        primary_error = sys.exc_info()[1]
+        cleanup_error: BaseException | None = None
         if server is not None:
-            server.server_close()
+            try:
+                server.server_close()
+            except BaseException as error:
+                cleanup_error = error
         try:
             if paths.pid_file.read_text(encoding="utf-8").strip() == str(os.getpid()):
                 paths.pid_file.unlink()
-        except (FileNotFoundError, OSError):
+        except FileNotFoundError:
             pass
-        lease.release()
+        except BaseException as error:
+            if cleanup_error is None:
+                cleanup_error = error
+        finally:
+            try:
+                lease.release()
+            except BaseException as error:
+                if cleanup_error is None:
+                    cleanup_error = error
+        if cleanup_error is not None:
+            if primary_error is not None:
+                try:
+                    primary_error.add_note(f"Dashboard cleanup failed: {cleanup_error}")
+                except Exception:
+                    pass
+            else:
+                raise RuntimeError(f"Dashboard cleanup failed: {cleanup_error}") from cleanup_error

@@ -22,6 +22,7 @@ from pathlib import Path
 import shutil
 import sqlite3
 import stat
+import sys
 import uuid
 from typing import Any
 
@@ -804,11 +805,32 @@ def restore_snapshot(
             ) from install_error
         return RestoreResult(live_db, recovery.path if recovery else None)
     finally:
+        primary_error = sys.exc_info()[1]
+        cleanup_error: BaseException | None = None
         try:
             stage.unlink()
         except FileNotFoundError:
             pass
-        lease.release()
+        except BaseException as exc:
+            cleanup_error = exc
+        finally:
+            try:
+                lease.release()
+            except BaseException as exc:
+                if cleanup_error is None:
+                    cleanup_error = exc
+        # A restore failure is the authoritative result.  Cleanup failures
+        # must not mask it, but remain visible as an exception note.  A
+        # cleanup failure on an otherwise successful restore is still an
+        # operational error for the caller.
+        if cleanup_error is not None:
+            if primary_error is not None:
+                try:
+                    primary_error.add_note(f"Restore cleanup failed: {cleanup_error}")
+                except Exception:
+                    pass
+            else:
+                raise RestoreError(f"Unable to clean up restore stage: {cleanup_error}") from cleanup_error
 
 class DatabaseLease:
     """An OS-backed exclusive lease for the live SQLite database.
