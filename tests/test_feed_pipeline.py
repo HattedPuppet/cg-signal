@@ -98,6 +98,17 @@ class FeedIngestionTests(ServiceTestCase):
         self.assertEqual([article["title"] for article in result["articles"]], ["Valid"])
         self.assertEqual(result["diagnostics"]["invalid_date"], 1)
 
+    def test_overflowing_date_does_not_discard_valid_sibling(self):
+        xml = b"""<rss><channel>
+            <item><title>Overflow</title><link>https://example.com/overflow</link><pubDate>0001-01-01T00:00:00+23:59</pubDate></item>
+            <item><title>Valid</title><link>https://example.com/valid</link><pubDate>2026-08-03T00:00:00Z</pubDate></item>
+        </channel></rss>"""
+        with mock.patch.object(self.service.http, "get", return_value=self.feed_response(xml)):
+            result = self.service.fetch_source(source_fixture())
+        self.assertTrue(result["ok"])
+        self.assertEqual([article["title"] for article in result["articles"]], ["Valid"])
+        self.assertEqual(result["diagnostics"]["invalid_date"], 1)
+
     def test_all_unusable_entries_fail_and_reuse_cached_snapshot(self):
         xml = b"""<rss><channel><item>
             <title>Undated</title><link>https://example.com/undated</link>
