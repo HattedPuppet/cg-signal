@@ -43,11 +43,13 @@ python server.py restore .backups\20260812T120000Z-ab12cd34 --confirm
 ```
 
 Restore preview is read-only. A confirmed restore requires the dashboard to
-already be stopped, creates and verifies a `pre-restore` recovery snapshot,
-stages the candidate beside the live database, and verifies it again after
-replacement. If post-install verification fails, the verified recovery
-snapshot is restored atomically. Start the dashboard separately after a
-restore.
+already be stopped. When a live database exists, the command first creates and
+verifies a `pre-restore` recovery snapshot, stages the candidate beside the
+live database, and verifies it again after replacement. If post-install
+verification fails, that verified recovery snapshot is restored atomically.
+When no live database existed, a failed post-install verification removes the
+failed installed database and its SQLite sidecars to restore the original
+absence. Start the dashboard separately after a restore.
 
 Snapshots contain the complete local SQLite archive, including saved state,
 notes, custom source URLs, and full article history. They are private local

@@ -287,6 +287,131 @@ class BackupTests(unittest.TestCase):
                 restore_snapshot(self.paths, candidate)
         self.assertIn("Recovery snapshot retained at", str(raised.exception))
 
+    def test_actual_stage_corruption_rolls_back_existing_live_database(self):
+        repository = self._repository()
+        repository.write_state({"saved": ["old"]})
+        candidate = self._snapshot(Path(self.temporary.name) / "candidate-root")
+        repository.write_state({"saved": ["new"]})
+        live = self.paths.archive_db_file
+        real_replace = backup_module.os.replace
+
+        def corrupt_stage(source: str | os.PathLike[str], destination: str | os.PathLike[str]):
+            source_path = Path(source)
+            if Path(destination) == live and source_path.name.startswith(".cg-signal.db.restore-"):
+                data = bytearray(source_path.read_bytes())
+                data[100] ^= 0xFF
+                source_path.write_bytes(data)
+            return real_replace(source, destination)
+
+        with mock.patch.object(backup_module.os, "replace", side_effect=corrupt_stage):
+            with self.assertRaisesRegex(RestoreError, "rollback succeeded"):
+                restore_snapshot(self.paths, candidate)
+        self.assertEqual(repository.read_state()["saved"], ["new"])
+        recovery_paths = list(self.paths.backup_dir.glob("pre-restore-*/manifest.json"))
+        self.assertEqual(len(recovery_paths), 1)
+        verify_snapshot(recovery_paths[0].parent)
+        self.assertFalse(live.with_name("cg-signal.db-wal").exists())
+        self.assertFalse(live.with_name("cg-signal.db-shm").exists())
+        self.assertEqual(list(self.paths.cache_dir.glob(".*.restore-*")), [])
+        self.assertEqual(list(self.paths.cache_dir.glob(".*.rollback-*")), [])
+
+    def test_actual_stage_corruption_removes_originally_absent_database(self):
+        repository = self._repository()
+        repository.write_state({"saved": ["old"]})
+        candidate = self._snapshot(Path(self.temporary.name) / "candidate-root")
+        live = self.paths.archive_db_file
+        live.unlink()
+        sibling = self.paths.cache_dir / "keep-me.txt"
+        sibling.write_text("unrelated", encoding="utf-8")
+        real_replace = backup_module.os.replace
+
+        def corrupt_stage(source: str | os.PathLike[str], destination: str | os.PathLike[str]):
+            source_path = Path(source)
+            if Path(destination) == live and source_path.name.startswith(".cg-signal.db.restore-"):
+                data = bytearray(source_path.read_bytes())
+                data[100] ^= 0xFF
+                source_path.write_bytes(data)
+            return real_replace(source, destination)
+
+        with mock.patch.object(backup_module.os, "replace", side_effect=corrupt_stage):
+            with self.assertRaisesRegex(RestoreError, "originally absent database and sidecars were removed"):
+                restore_snapshot(self.paths, candidate)
+        self.assertFalse(live.exists())
+        self.assertFalse(live.is_symlink())
+        self.assertFalse(live.with_name("cg-signal.db-wal").exists())
+        self.assertFalse(live.with_name("cg-signal.db-shm").exists())
+        self.assertEqual(sibling.read_text(encoding="utf-8"), "unrelated")
+        self.assertEqual(list(self.paths.backup_dir.glob("pre-restore-*")), [])
+
+    def test_identity_mismatch_refuses_existing_live_rollback_replacement(self):
+        repository = self._repository()
+        repository.write_state({"saved": ["old"]})
+        candidate = self._snapshot(Path(self.temporary.name) / "candidate-root")
+        repository.write_state({"saved": ["new"]})
+        live = self.paths.archive_db_file
+        real_replace = backup_module.os.replace
+
+        def replace_with_unexpected_identity(source: str | os.PathLike[str], destination: str | os.PathLike[str]):
+            source_path = Path(source)
+            result = real_replace(source, destination)
+            if Path(destination) == live and source_path.name.startswith(".cg-signal.db.restore-"):
+                unexpected = live.with_name("unexpected.db")
+                unexpected.write_bytes(b"unexpected")
+                real_replace(unexpected, live)
+            return result
+
+        with mock.patch.object(backup_module.os, "replace", side_effect=replace_with_unexpected_identity):
+            with self.assertRaisesRegex(RestoreError, "rollback failed") as raised:
+                restore_snapshot(self.paths, candidate)
+        self.assertIn("Recovery snapshot retained at", str(raised.exception))
+        self.assertEqual(live.read_bytes(), b"unexpected")
+
+    def test_identity_mismatch_refuses_absent_cleanup(self):
+        repository = self._repository()
+        repository.write_state({"saved": ["old"]})
+        candidate = self._snapshot(Path(self.temporary.name) / "candidate-root")
+        live = self.paths.archive_db_file
+        live.unlink()
+        real_replace = backup_module.os.replace
+
+        def replace_with_unexpected_identity(source: str | os.PathLike[str], destination: str | os.PathLike[str]):
+            source_path = Path(source)
+            result = real_replace(source, destination)
+            if Path(destination) == live and source_path.name.startswith(".cg-signal.db.restore-"):
+                unexpected = live.with_name("unexpected.db")
+                unexpected.write_bytes(b"unexpected")
+                real_replace(unexpected, live)
+            return result
+
+        with mock.patch.object(backup_module.os, "replace", side_effect=replace_with_unexpected_identity):
+            with self.assertRaisesRegex(RestoreError, "failed database may remain"):
+                restore_snapshot(self.paths, candidate)
+        self.assertEqual(live.read_bytes(), b"unexpected")
+        self.assertEqual(list(self.paths.backup_dir.glob("pre-restore-*")), [])
+
+    def test_checksum_consistent_wrong_columns_snapshot_is_rejected_before_recovery(self):
+        candidate = self._snapshot(Path(self.temporary.name) / "candidate-root")
+        database = candidate / "cg-signal.db"
+        connection = sqlite3.connect(database)
+        connection.execute("ALTER TABLE articles ADD COLUMN unexpected TEXT NOT NULL DEFAULT ''")
+        connection.execute("PRAGMA journal_mode=DELETE")
+        connection.commit()
+        page_count = int(connection.execute("PRAGMA page_count").fetchone()[0])
+        connection.close()
+        manifest = self._manifest(candidate)
+        content = database.read_bytes()
+        manifest["database"]["size_bytes"] = len(content)
+        manifest["database"]["sha256"] = hashlib.sha256(content).hexdigest()
+        manifest["sqlite"]["page_count"] = page_count
+        self._rewrite_manifest(candidate, manifest)
+        with self.assertRaises(SnapshotFormatError):
+            verify_snapshot(candidate)
+        before = self.paths.archive_db_file.read_bytes()
+        with self.assertRaises(SnapshotFormatError):
+            restore_snapshot(self.paths, candidate)
+        self.assertEqual(before, self.paths.archive_db_file.read_bytes())
+        self.assertEqual(list(self.paths.backup_dir.glob("pre-restore-*")), [])
+
     def test_restore_over_stale_sidecars_removes_only_wal_shm_and_closes_handles(self):
         repository = self._repository()
         repository.write_state({"saved": ["old"]})
@@ -364,7 +489,7 @@ class BackupTests(unittest.TestCase):
         self.assertRaises(SnapshotVerificationError, verify_snapshot, snapshot)
         self._rewrite_manifest(snapshot, clean)
         tampered = json.loads(json.dumps(clean))
-        tampered["sqlite"]["user_version"] = 1
+        tampered["sqlite"]["user_version"] = 2
         self._rewrite_manifest(snapshot, tampered)
         self.assertRaises(SnapshotFormatError, verify_snapshot, snapshot)
         self._rewrite_manifest(snapshot, clean)

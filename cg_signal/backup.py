@@ -21,10 +21,12 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
+import stat
 import uuid
 from typing import Any
 
-from .config import RuntimePaths, STORAGE_SCHEMA_VERSION
+from .config import RuntimePaths
+from .storage import STORAGE_SCHEMA_VERSION, StorageSchemaError, validate_current_schema
 
 
 APP_NAME = "cg-signal"
@@ -32,13 +34,6 @@ MANIFEST_FORMAT_VERSION = 1
 DATABASE_FILENAME = "cg-signal.db"
 BACKUP_BUSY_TIMEOUT_SECONDS = 5.0
 
-_EXPECTED_TABLES = {
-    "articles",
-    "article_state",
-    "sources",
-    "source_preferences",
-    "metadata",
-}
 _REQUIRED_LOGICAL_KEYS = {
     "articles",
     "saved",
@@ -216,7 +211,6 @@ def _check_integrity(connection: sqlite3.Connection) -> None:
 
 def _validate_schema(
     sqlite_metadata: dict[str, Any],
-    table_counts: dict[str, int],
     logical_counts: dict[str, int],
 ) -> None:
     if sqlite_metadata["user_version"] != STORAGE_SCHEMA_VERSION:
@@ -226,15 +220,6 @@ def _validate_schema(
         )
     if sqlite_metadata["journal_mode"] != "delete":
         raise SnapshotFormatError("SQLite snapshot must use journal_mode=DELETE.")
-    if set(table_counts) != _EXPECTED_TABLES:
-        missing = sorted(_EXPECTED_TABLES - set(table_counts))
-        unexpected = sorted(set(table_counts) - _EXPECTED_TABLES)
-        details: list[str] = []
-        if missing:
-            details.append("missing " + ", ".join(missing))
-        if unexpected:
-            details.append("unexpected " + ", ".join(unexpected))
-        raise SnapshotFormatError("Unsupported SQLite table layout (" + "; ".join(details) + ").")
     if set(logical_counts) != _REQUIRED_LOGICAL_KEYS:
         raise SnapshotFormatError("Logical count summary is incomplete.")
 
@@ -250,9 +235,13 @@ def _collect_database_summary(path: Path, *, read_only: bool) -> tuple[dict[str,
         if read_only:
             connection.execute("PRAGMA query_only=ON")
         sqlite_metadata = _sqlite_metadata(connection)
+        try:
+            validate_current_schema(connection)
+        except StorageSchemaError as exc:
+            raise SnapshotFormatError(str(exc)) from exc
         table_counts = _table_counts(connection)
         logical_counts = _logical_counts(connection)
-        _validate_schema(sqlite_metadata, table_counts, logical_counts)
+        _validate_schema(sqlite_metadata, logical_counts)
         _check_integrity(connection)
         return sqlite_metadata, table_counts, logical_counts
     except sqlite3.Error as exc:
@@ -463,7 +452,8 @@ def _verify_database(path: Path, manifest: dict[str, Any], *, check_sidecars: bo
         raise SnapshotVerificationError(f"SQLite database is missing: {path}")
     if check_sidecars:
         for suffix in ("-wal", "-shm"):
-            if path.with_name(path.name + suffix).exists():
+            sidecar = path.with_name(path.name + suffix)
+            if sidecar.is_symlink() or sidecar.exists():
                 raise SnapshotFormatError(f"Unexpected SQLite sidecar: {path.name + suffix}")
     expected_db = manifest["database"]
     actual_size = path.stat().st_size
@@ -480,9 +470,13 @@ def _verify_database(path: Path, manifest: dict[str, Any], *, check_sidecars: bo
         connection = _db_connect(path, read_only=True)
         connection.execute("PRAGMA query_only=ON")
         sqlite_metadata = _sqlite_metadata(connection)
+        try:
+            validate_current_schema(connection)
+        except StorageSchemaError as exc:
+            raise SnapshotFormatError(str(exc)) from exc
         table_counts = _table_counts(connection)
         logical_counts = _logical_counts(connection)
-        _validate_schema(sqlite_metadata, table_counts, logical_counts)
+        _validate_schema(sqlite_metadata, logical_counts)
         _check_integrity(connection)
     except sqlite3.Error as exc:
         raise SnapshotVerificationError(f"Unable to verify SQLite snapshot: {exc}") from exc
@@ -504,7 +498,10 @@ def _verify_snapshot(
     *,
     expected_snapshot_id: str | None = None,
 ) -> SnapshotVerification:
-    snapshot_dir = Path(snapshot).expanduser().resolve()
+    supplied_dir = Path(snapshot).expanduser()
+    if supplied_dir.is_symlink():
+        raise SnapshotFormatError(f"Snapshot directory must not be a symlink: {supplied_dir}")
+    snapshot_dir = supplied_dir.resolve()
     if not snapshot_dir.is_dir():
         raise SnapshotFormatError(f"Snapshot directory does not exist: {snapshot_dir}")
     _assert_snapshot_entries(snapshot_dir)
@@ -644,6 +641,25 @@ def _remove_safe_sidecars(path: Path) -> None:
             raise RestoreError(f"Unable to remove SQLite sidecar {sidecar}: {exc}") from exc
 
 
+def _regular_file_identity(path: Path) -> tuple[int, int]:
+    """Return the identity of a regular, non-symlink file for rollback safety."""
+
+    try:
+        info = path.lstat()
+    except FileNotFoundError as exc:
+        raise RestoreError(f"Installed SQLite database is missing: {path}") from exc
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        raise RestoreError(f"Refusing to operate on a non-regular SQLite database: {path}")
+    return int(info.st_dev), int(info.st_ino)
+
+
+def _require_file_identity(path: Path, identity: tuple[int, int]) -> None:
+    if _regular_file_identity(path) != identity:
+        raise RestoreError(
+            "The installed SQLite database changed unexpectedly; refusing rollback cleanup."
+        )
+
+
 def _verify_staged_database(path: Path, manifest: dict[str, Any]) -> None:
     # A stage lives beside the live database, so its filename is intentionally
     # not required to be ``cg-signal.db``.  Its bytes and all structural checks
@@ -655,12 +671,17 @@ def _rollback(
     *,
     live_db: Path,
     recovery: SnapshotVerification,
+    installed_identity: tuple[int, int],
 ) -> None:
     rollback_stage = live_db.with_name(f".{live_db.name}.rollback-{_safe_id()}")
     try:
         shutil.copyfile(recovery.database_path, rollback_stage)
         _verify_staged_database(rollback_stage, recovery.manifest)
+        # Never open or inspect the failed installed database.  Confirm that it
+        # is still the exact artifact produced by the initial replacement.
+        _require_file_identity(live_db, installed_identity)
         _remove_safe_sidecars(live_db)
+        _require_file_identity(live_db, installed_identity)
         os.replace(rollback_stage, live_db)
         _verify_database(live_db, recovery.manifest, check_sidecars=True)
     finally:
@@ -670,10 +691,34 @@ def _rollback(
             pass
 
 
+def _remove_failed_install(
+    *,
+    live_db: Path,
+    installed_identity: tuple[int, int],
+) -> None:
+    """Restore the originally absent state after a failed post-install check."""
+
+    _require_file_identity(live_db, installed_identity)
+    _remove_safe_sidecars(live_db)
+    _require_file_identity(live_db, installed_identity)
+    try:
+        live_db.unlink()
+    except FileNotFoundError as exc:
+        raise RestoreError(f"Installed SQLite database disappeared unexpectedly: {live_db}") from exc
+    except OSError as exc:
+        raise RestoreError(f"Unable to remove failed installed SQLite database: {exc}") from exc
+    if live_db.exists() or live_db.is_symlink():
+        raise RestoreError(f"Failed installed SQLite database remains: {live_db}")
+    for suffix in ("-wal", "-shm"):
+        sidecar = live_db.with_name(live_db.name + suffix)
+        if sidecar.exists() or sidecar.is_symlink():
+            raise RestoreError(f"Failed installed SQLite sidecar remains: {sidecar}")
+
+
 def restore_snapshot(
     paths: RuntimePaths,
     snapshot: Path | str,
-) -> Path:
+) -> RestoreResult:
     """Install a previously verified SQLite snapshot after explicit CLI confirmation."""
 
     candidate = _verify_snapshot(snapshot)
@@ -688,8 +733,11 @@ def restore_snapshot(
     live_db = paths.archive_db_file
     recovery: SnapshotVerification | None = None
     stage = live_db.with_name(f".{live_db.name}.restore-{_safe_id()}")
+    installed_identity: tuple[int, int] | None = None
     try:
-        if live_db.exists():
+        # A symlink (including a broken one) is not an absent database.  Let
+        # create_backup reject it before any replacement can follow its target.
+        if live_db.exists() or live_db.is_symlink():
             try:
                 recovery_path = create_backup(paths, reason="pre_restore")
                 recovery = _verify_snapshot(recovery_path)
@@ -701,6 +749,7 @@ def restore_snapshot(
             _verify_staged_database(stage, candidate.manifest)
             _checkpoint_live(live_db)
             _remove_safe_sidecars(live_db)
+            installed_identity = _regular_file_identity(stage)
             os.replace(stage, live_db)
         except RestoreError:
             raise
@@ -709,12 +758,28 @@ def restore_snapshot(
         try:
             _verify_database(live_db, candidate.manifest, check_sidecars=True)
         except Exception as install_error:
-            if recovery is None:
+            if installed_identity is None:
                 raise RestoreError(
-                    f"Post-restore verification failed ({install_error}); rollback unavailable."
+                    f"Post-restore verification failed ({install_error}); installed artifact identity unavailable."
+                ) from install_error
+            if recovery is None:
+                try:
+                    _remove_failed_install(live_db=live_db, installed_identity=installed_identity)
+                except Exception as cleanup_error:
+                    raise RestoreError(
+                        f"Post-restore verification failed ({install_error}); originally absent database "
+                        f"could not be removed ({cleanup_error}); failed database may remain."
+                    ) from install_error
+                raise RestoreError(
+                    f"Post-restore verification failed ({install_error}); originally absent database "
+                    "and sidecars were removed."
                 ) from install_error
             try:
-                _rollback(live_db=live_db, recovery=recovery)
+                _rollback(
+                    live_db=live_db,
+                    recovery=recovery,
+                    installed_identity=installed_identity,
+                )
             except Exception as rollback_error:
                 raise RestoreError(
                     f"Post-restore verification failed ({install_error}); "

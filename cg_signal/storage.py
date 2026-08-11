@@ -31,6 +31,223 @@ from .config import (
 )
 STATE_IMPORT_MARKER = "user_state_json_imported"
 CLASSIFICATION_METADATA_KEY = "article_classification_revision"
+STORAGE_SCHEMA_VERSION = 1
+
+
+class StorageSchemaError(RuntimeError):
+    """The SQLite file is not one of the supported CG Signal schemas."""
+
+
+_APPLICATION_TABLES = {"articles", "article_state", "sources", "source_preferences", "metadata"}
+_FEEDBACK_COLUMNS = {
+    "feedback_source_id": ("TEXT", 1, "''", 0),
+    "feedback_software_tags": ("TEXT", 1, "'[]'", 0),
+    "feedback_topic_tags": ("TEXT", 1, "'[]'", 0),
+}
+
+
+def _column_specs() -> dict[str, dict[str, tuple[str, int, str | None, int]]]:
+    """Return the semantic v1 table signature (column order is irrelevant)."""
+
+    return {
+        "articles": {
+            "id": ("TEXT", 0, None, 1),
+            "title": ("TEXT", 1, None, 0), "url": ("TEXT", 1, None, 0),
+            "summary": ("TEXT", 1, "''", 0), "source": ("TEXT", 1, "''", 0),
+            "source_id": ("TEXT", 1, "''", 0), "published_at": ("TEXT", 1, None, 0),
+            "lane": ("TEXT", 1, "''", 0), "software_group": ("TEXT", 1, "''", 0),
+            "software_tags": ("TEXT", 1, "'[]'", 0), "topic_tags": ("TEXT", 1, "'[]'", 0),
+            "sources_text": ("TEXT", 1, "''", 0), "search_text": ("TEXT", 1, "''", 0),
+            "data_json": ("TEXT", 1, None, 0), "first_seen_at": ("TEXT", 1, None, 0),
+            "last_seen_at": ("TEXT", 1, None, 0),
+        },
+        "article_state": {
+            "article_id": ("TEXT", 0, None, 1),
+            "is_read": ("INTEGER", 1, "0", 0), "is_saved": ("INTEGER", 1, "0", 0),
+            "is_archived": ("INTEGER", 1, "0", 0), "note": ("TEXT", 1, "''", 0),
+            "feedback_value": ("INTEGER", 1, "0", 0),
+            "feedback_source_id": ("TEXT", 1, "''", 0),
+            "feedback_software_tags": ("TEXT", 1, "'[]'", 0),
+            "feedback_topic_tags": ("TEXT", 1, "'[]'", 0),
+            "updated_at": ("TEXT", 1, None, 0),
+        },
+        "sources": {
+            "id": ("TEXT", 0, None, 1), "name": ("TEXT", 1, None, 0),
+            "site": ("TEXT", 1, "''", 0), "feed": ("TEXT", 1, None, 0),
+            "accent": ("TEXT", 1, None, 0), "item_limit": ("INTEGER", 1, "40", 0),
+            "enabled": ("INTEGER", 1, "1", 0), "is_builtin": ("INTEGER", 1, "0", 0),
+            "sort_order": ("INTEGER", 1, "1000", 0), "created_at": ("TEXT", 1, None, 0),
+            "updated_at": ("TEXT", 1, None, 0),
+        },
+        "source_preferences": {
+            "source_id": ("TEXT", 0, None, 1), "muted": ("INTEGER", 1, "0", 0),
+            "reduced": ("INTEGER", 1, "0", 0), "updated_at": ("TEXT", 1, None, 0),
+        },
+        "metadata": {"key": ("TEXT", 0, None, 1), "value": ("TEXT", 1, None, 0)},
+    }
+
+
+def _table_names(connection: sqlite3.Connection) -> set[str]:
+    rows = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
+def _normalized_default(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value).replace(" ", "")
+
+
+def _table_columns(connection: sqlite3.Connection, table: str) -> dict[str, tuple[str, int, str | None, int]]:
+    rows = connection.execute(f'PRAGMA table_xinfo("{table}")').fetchall()
+    columns: dict[str, tuple[str, int, str | None, int]] = {}
+    for row in rows:
+        # table_xinfo exposes generated/hidden columns through the final flag.
+        if len(row) >= 7 and int(row[6]) != 0:
+            raise StorageSchemaError(f"Hidden or generated column in {table}.")
+        name = str(row[1])
+        columns[name] = (str(row[2]).upper(), int(row[3]), _normalized_default(row[4]), int(row[5]))
+    return columns
+
+
+def _index_columns(connection: sqlite3.Connection, name: str) -> list[tuple[str, int]]:
+    rows = connection.execute(f'PRAGMA index_xinfo("{name}")').fetchall()
+    return [(str(row[2]), int(row[3])) for row in rows if int(row[5]) == 1 and row[2] is not None]
+
+
+def _validate_indexes(connection: sqlite3.Connection) -> None:
+    # User-created article indexes have contractual names; SQLite-generated
+    # primary-key/UNIQUE index names do not.  Validate generated indexes by
+    # their PRAGMA origin and key columns instead of depending on names such as
+    # ``sqlite_autoindex_sources_2``.
+    expected_user = {"articles_published_idx", "articles_source_idx"}
+    rows = connection.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_autoindex_%'"
+    ).fetchall()
+    actual_user = {str(row[0]) for row in rows}
+    if actual_user != expected_user or any(not isinstance(row[1], str) for row in rows):
+        raise StorageSchemaError("Required user indexes are missing or unexpected indexes exist.")
+
+    expected_pk = {
+        "articles": "id",
+        "article_state": "article_id",
+        "sources": "id",
+        "source_preferences": "source_id",
+        "metadata": "key",
+    }
+    for table, pk_column in expected_pk.items():
+        index_rows = connection.execute(f'PRAGMA index_list("{table}")').fetchall()
+        if not index_rows:
+            raise StorageSchemaError(f"Indexes for {table} are missing.")
+        pk_rows: list[Any] = []
+        unique_rows: list[Any] = []
+        user_rows: list[Any] = []
+        for row in index_rows:
+            name, unique, origin, partial = str(row[1]), int(row[2]), str(row[3]), int(row[4])
+            if partial:
+                raise StorageSchemaError(f"Partial index is not supported: {name}")
+            if origin == "pk":
+                pk_rows.append(row)
+                if unique != 1 or _index_columns(connection, name) != [(pk_column, 0)]:
+                    raise StorageSchemaError(f"Primary-key index for {table} has wrong semantics.")
+            elif origin == "u":
+                unique_rows.append(row)
+                if table != "sources" or unique != 1 or _index_columns(connection, name) != [("feed", 0)]:
+                    raise StorageSchemaError(f"Unexpected UNIQUE index for {table}.")
+            elif origin == "c":
+                user_rows.append(row)
+                if unique != 0:
+                    raise StorageSchemaError(f"User index {name} must be non-unique.")
+            else:
+                raise StorageSchemaError(f"Unexpected index origin for {table}: {origin}")
+        if len(pk_rows) != 1:
+            raise StorageSchemaError(f"Primary-key index for {table} is missing or duplicated.")
+        if table == "sources":
+            if len(unique_rows) != 1:
+                raise StorageSchemaError("sources.feed uniqueness is missing or duplicated.")
+        elif unique_rows:
+            raise StorageSchemaError(f"Unexpected UNIQUE index for {table}.")
+        expected_names = {
+            "articles": expected_user,
+            "article_state": set(),
+            "sources": set(),
+            "source_preferences": set(),
+            "metadata": set(),
+        }[table]
+        if {str(row[1]) for row in user_rows} != expected_names:
+            raise StorageSchemaError(f"Unexpected user indexes for {table}.")
+        for row in user_rows:
+            name = str(row[1])
+            columns = _index_columns(connection, name)
+            if name == "articles_published_idx" and columns != [("published_at", 1)]:
+                raise StorageSchemaError("articles_published_idx has wrong semantics.")
+            if name == "articles_source_idx" and columns != [("source_id", 0)]:
+                raise StorageSchemaError("articles_source_idx has wrong semantics.")
+
+
+def validate_current_schema(connection: sqlite3.Connection, *, require_version: bool = True) -> None:
+    """Validate the exact application schema without changing the database."""
+
+    version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    if require_version and version != STORAGE_SCHEMA_VERSION:
+        raise StorageSchemaError(f"Unsupported storage schema version {version}.")
+    if _table_names(connection) != _APPLICATION_TABLES:
+        raise StorageSchemaError("Application tables do not match the supported schema.")
+    specs = _column_specs()
+    for table, expected in specs.items():
+        actual = _table_columns(connection, table)
+        if actual != expected:
+            raise StorageSchemaError(f"Columns for {table} do not match the supported schema.")
+        sql_row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone()
+        sql = str(sql_row[0] or "") if sql_row else ""
+        if re.search(r"\bWITHOUT\s+ROWID\b|\bSTRICT\b", sql, re.IGNORECASE) or re.match(r"\s*CREATE\s+VIRTUAL\s+TABLE", sql, re.IGNORECASE):
+            raise StorageSchemaError(f"Unsupported table variant: {table}")
+        if connection.execute(f'PRAGMA foreign_key_list("{table}")').fetchone() is not None:
+            raise StorageSchemaError("Foreign keys are not part of the supported schema.")
+    if connection.execute("SELECT 1 FROM sqlite_master WHERE type IN ('view','trigger') LIMIT 1").fetchone() is not None:
+        raise StorageSchemaError("Views and triggers are not part of the supported schema.")
+    _validate_indexes(connection)
+
+
+def _validate_v0_shape(connection: sqlite3.Connection) -> str:
+    """Classify one of the finite historical shapes before any migration DDL."""
+
+    tables = _table_names(connection)
+    if not tables:
+        return "empty"
+    specs = _column_specs()
+    base_article_state = {name: spec for name, spec in specs["article_state"].items() if name not in _FEEDBACK_COLUMNS}
+    historical_sets = ({"articles", "article_state", "sources", "source_preferences"}, _APPLICATION_TABLES)
+    if tables not in historical_sets:
+        raise StorageSchemaError("Unknown version-0 schema shape.")
+    for table in ("articles", "sources", "source_preferences"):
+        if _table_columns(connection, table) != specs[table]:
+            raise StorageSchemaError(f"Unknown version-0 columns for {table}.")
+    state_columns = _table_columns(connection, "article_state")
+    if tables == _APPLICATION_TABLES:
+        if state_columns == specs["article_state"]:
+            validate_current_schema(connection, require_version=False)
+            return "current"
+        feedback_names = list(_FEEDBACK_COLUMNS)
+        allowed = [
+            {
+                **base_article_state,
+                **{name: specs["article_state"][name] for name in feedback_names[:count]},
+            }
+            for count in (0, 1, 2)
+        ]
+        # The old initializer can have stopped after zero, one, or two ALTERs;
+        # an already-complete three-column shape is handled above.
+        if state_columns not in allowed:
+            raise StorageSchemaError("Unknown version-0 article_state columns.")
+    else:
+        if state_columns != base_article_state:
+            raise StorageSchemaError("Unknown historical article_state columns.")
+    return "prefix"
 
 
 def _now() -> str:
@@ -169,12 +386,13 @@ class SQLiteRepository:
         self._initialized = False
 
     @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
+    def connection(self, *, set_wal: bool = True) -> Iterator[sqlite3.Connection]:
         self.paths.cache_dir.mkdir(parents=True, exist_ok=True)
         with self._lock:
             connection = sqlite3.connect(self.paths.archive_db_file, timeout=10)
             connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA journal_mode=WAL")
+            if set_wal:
+                connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA busy_timeout=10000")
             try:
                 yield connection
@@ -189,81 +407,12 @@ class SQLiteRepository:
         with self._lock:
             if self._initialized and not force:
                 return
-            with self.connection() as connection:
-                connection.executescript(
-                    """
-                    CREATE TABLE IF NOT EXISTS articles (
-                        id TEXT PRIMARY KEY,
-                        title TEXT NOT NULL,
-                        url TEXT NOT NULL,
-                        summary TEXT NOT NULL DEFAULT '',
-                        source TEXT NOT NULL DEFAULT '',
-                        source_id TEXT NOT NULL DEFAULT '',
-                        published_at TEXT NOT NULL,
-                        lane TEXT NOT NULL DEFAULT '',
-                        software_group TEXT NOT NULL DEFAULT '',
-                        software_tags TEXT NOT NULL DEFAULT '[]',
-                        topic_tags TEXT NOT NULL DEFAULT '[]',
-                        sources_text TEXT NOT NULL DEFAULT '',
-                        search_text TEXT NOT NULL DEFAULT '',
-                        data_json TEXT NOT NULL,
-                        first_seen_at TEXT NOT NULL,
-                        last_seen_at TEXT NOT NULL
-                    );
-                    CREATE INDEX IF NOT EXISTS articles_published_idx
-                        ON articles(published_at DESC);
-                    CREATE INDEX IF NOT EXISTS articles_source_idx ON articles(source_id);
-                    CREATE TABLE IF NOT EXISTS article_state (
-                        article_id TEXT PRIMARY KEY,
-                        is_read INTEGER NOT NULL DEFAULT 0,
-                        is_saved INTEGER NOT NULL DEFAULT 0,
-                        is_archived INTEGER NOT NULL DEFAULT 0,
-                        note TEXT NOT NULL DEFAULT '',
-                        feedback_value INTEGER NOT NULL DEFAULT 0,
-                        feedback_source_id TEXT NOT NULL DEFAULT '',
-                        feedback_software_tags TEXT NOT NULL DEFAULT '[]',
-                        feedback_topic_tags TEXT NOT NULL DEFAULT '[]',
-                        updated_at TEXT NOT NULL
-                    );
-                    CREATE TABLE IF NOT EXISTS sources (
-                        id TEXT PRIMARY KEY,
-                        name TEXT NOT NULL,
-                        site TEXT NOT NULL DEFAULT '',
-                        feed TEXT NOT NULL UNIQUE,
-                        accent TEXT NOT NULL,
-                        item_limit INTEGER NOT NULL DEFAULT 40,
-                        enabled INTEGER NOT NULL DEFAULT 1,
-                        is_builtin INTEGER NOT NULL DEFAULT 0,
-                        sort_order INTEGER NOT NULL DEFAULT 1000,
-                        created_at TEXT NOT NULL,
-                        updated_at TEXT NOT NULL
-                    );
-                    CREATE TABLE IF NOT EXISTS source_preferences (
-                        source_id TEXT PRIMARY KEY,
-                        muted INTEGER NOT NULL DEFAULT 0,
-                        reduced INTEGER NOT NULL DEFAULT 0,
-                        updated_at TEXT NOT NULL
-                    );
-                    CREATE TABLE IF NOT EXISTS metadata (
-                        key TEXT PRIMARY KEY,
-                        value TEXT NOT NULL
-                    );
-                    """
-                )
-                # Older databases do not have the feedback context columns.
-                columns = {
-                    row["name"]
-                    for row in connection.execute("PRAGMA table_info(article_state)")
-                }
-                for name, definition in (
-                    ("feedback_source_id", "TEXT NOT NULL DEFAULT ''"),
-                    ("feedback_software_tags", "TEXT NOT NULL DEFAULT '[]'"),
-                    ("feedback_topic_tags", "TEXT NOT NULL DEFAULT '[]'"),
-                ):
-                    if name not in columns:
-                        connection.execute(
-                            f"ALTER TABLE article_state ADD COLUMN {name} {definition}"
-                        )
+            # Inspect and migrate the persisted schema before enabling the
+            # runtime WAL mode.  Rejected version-0 shapes therefore receive
+            # no migration DDL or journal-mode mutation.
+            with self.connection(set_wal=False) as connection:
+                self._ensure_schema(connection)
+                connection.execute("PRAGMA journal_mode=WAL")
                 now = _now()
                 for order, source in enumerate(FEEDS):
                     connection.execute(
@@ -287,6 +436,71 @@ class SQLiteRepository:
                 self._import_legacy_state(connection)
                 self._reclassify_if_needed(connection)
             self._initialized = True
+
+    def _ensure_schema(self, connection: sqlite3.Connection) -> None:
+        """Migrate only known historical states, then stamp schema version 1."""
+
+        version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        if version != 0 and version != STORAGE_SCHEMA_VERSION:
+            raise StorageSchemaError(f"Unsupported storage schema version {version}.")
+        if version == STORAGE_SCHEMA_VERSION:
+            validate_current_schema(connection)
+            return
+        shape = _validate_v0_shape(connection)
+        connection.execute("BEGIN")
+        try:
+            if shape == "empty":
+                connection.execute("""CREATE TABLE articles (
+                    id TEXT PRIMARY KEY, title TEXT NOT NULL, url TEXT NOT NULL,
+                    summary TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '',
+                    source_id TEXT NOT NULL DEFAULT '', published_at TEXT NOT NULL,
+                    lane TEXT NOT NULL DEFAULT '', software_group TEXT NOT NULL DEFAULT '',
+                    software_tags TEXT NOT NULL DEFAULT '[]', topic_tags TEXT NOT NULL DEFAULT '[]',
+                    sources_text TEXT NOT NULL DEFAULT '', search_text TEXT NOT NULL DEFAULT '',
+                    data_json TEXT NOT NULL, first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL
+                )""")
+                connection.execute("CREATE INDEX articles_published_idx ON articles(published_at DESC)")
+                connection.execute("CREATE INDEX articles_source_idx ON articles(source_id)")
+                connection.execute("""CREATE TABLE article_state (
+                    article_id TEXT PRIMARY KEY, is_read INTEGER NOT NULL DEFAULT 0,
+                    is_saved INTEGER NOT NULL DEFAULT 0, is_archived INTEGER NOT NULL DEFAULT 0,
+                    note TEXT NOT NULL DEFAULT '', feedback_value INTEGER NOT NULL DEFAULT 0,
+                    feedback_source_id TEXT NOT NULL DEFAULT '',
+                    feedback_software_tags TEXT NOT NULL DEFAULT '[]',
+                    feedback_topic_tags TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL
+                )""")
+                connection.execute("""CREATE TABLE sources (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL, site TEXT NOT NULL DEFAULT '',
+                    feed TEXT NOT NULL UNIQUE, accent TEXT NOT NULL,
+                    item_limit INTEGER NOT NULL DEFAULT 40, enabled INTEGER NOT NULL DEFAULT 1,
+                    is_builtin INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 1000,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+                )""")
+                connection.execute("""CREATE TABLE source_preferences (
+                    source_id TEXT PRIMARY KEY, muted INTEGER NOT NULL DEFAULT 0,
+                    reduced INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL
+                )""")
+                connection.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+            else:
+                if "metadata" not in _table_names(connection):
+                    connection.execute("CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                columns = _table_columns(connection, "article_state")
+                for name, spec in _FEEDBACK_COLUMNS.items():
+                    if name not in columns:
+                        connection.execute(f"ALTER TABLE article_state ADD COLUMN {name} {spec[0]} NOT NULL DEFAULT {spec[2]}")
+                # Historical four-table files already have the article indexes;
+                # create them only when that known state omitted them.
+                existing = {str(row[1]) for row in connection.execute('PRAGMA index_list("articles")').fetchall()}
+                if "articles_published_idx" not in existing:
+                    connection.execute("CREATE INDEX articles_published_idx ON articles(published_at DESC)")
+                if "articles_source_idx" not in existing:
+                    connection.execute("CREATE INDEX articles_source_idx ON articles(source_id)")
+            connection.execute(f"PRAGMA user_version={STORAGE_SCHEMA_VERSION}")
+            validate_current_schema(connection)
+            connection.commit()
+        except Exception:
+            connection.rollback()
+            raise
 
     def _import_legacy_state(self, connection: sqlite3.Connection) -> None:
         """Import user-state.json exactly once, without ever writing it."""

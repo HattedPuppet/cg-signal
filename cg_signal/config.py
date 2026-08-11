@@ -11,9 +11,6 @@ from pathlib import Path
 FEED_SCHEMA_VERSION = 1
 CLASSIFICATION_REVISION = 4
 SOURCE_CACHE_SCHEMA_VERSION = 2
-# The on-disk SQLite schema is intentionally versioned independently from the
-# public feed payload.  Existing databases are currently schema version 0.
-STORAGE_SCHEMA_VERSION = 0
 
 CACHE_TTL_SECONDS = 15 * 60
 FEED_REFRESH_RETRY_SECONDS = 60
