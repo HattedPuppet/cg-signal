@@ -51,6 +51,99 @@ class ServiceTestCase(unittest.TestCase):
         )
 
 
+class FeedIngestionTests(ServiceTestCase):
+    def feed_response(self, xml: bytes) -> SafeHttpResponse:
+        headers = Message()
+        headers["Content-Type"] = "application/rss+xml"
+        return SafeHttpResponse(200, headers, xml, source_fixture()["feed"])
+
+    def cache_entry(self):
+        return {
+            "feed": source_fixture()["feed"], "etag": '"feed-v2"',
+            "last_modified": "Thu, 30 Jul 2026 00:00:00 GMT", "articles": [cached_article()],
+        }
+
+    def test_valid_entries_are_sorted_before_source_limit(self):
+        xml = b"""<?xml version='1.0'?><rss><channel>
+            <item><title>Oldest</title><link>https://example.com/oldest</link><pubDate>2026-08-01T00:00:00Z</pubDate></item>
+            <item><title>Newest</title><link>https://example.com/newest</link><pubDate>2026-08-03T00:00:00Z</pubDate></item>
+            <item><title>Middle</title><link>https://example.com/middle</link><pubDate>2026-08-02T00:00:00Z</pubDate></item>
+        </channel></rss>"""
+        source = {**source_fixture(), "limit": 2}
+        with mock.patch.object(self.service.http, "get", return_value=self.feed_response(xml)):
+            result = self.service.fetch_source(source)
+        self.assertTrue(result["ok"])
+        self.assertEqual([article["title"] for article in result["articles"]], ["Newest", "Middle"])
+        self.assertEqual(result["diagnostics"]["accepted"], 3)
+
+    def test_invalid_preferred_date_falls_through_to_valid_candidate(self):
+        xml = b"""<rss><channel><item>
+            <title>Fallback date</title><link>https://example.com/fallback</link>
+            <pubDate>not a date</pubDate><published>2026-08-03T00:00:00Z</published>
+        </item></channel></rss>"""
+        with mock.patch.object(self.service.http, "get", return_value=self.feed_response(xml)):
+            result = self.service.fetch_source(source_fixture())
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["articles"][0]["title"], "Fallback date")
+        self.assertEqual(result["diagnostics"]["invalid_date"], 0)
+
+    def test_invalid_sibling_does_not_discard_valid_sibling(self):
+        xml = b"""<rss><channel>
+            <item><title>Invalid</title><link>https://example.com/invalid</link><pubDate>bad</pubDate></item>
+            <item><title>Valid</title><link>https://example.com/valid</link><pubDate>2026-08-03T00:00:00Z</pubDate></item>
+        </channel></rss>"""
+        with mock.patch.object(self.service.http, "get", return_value=self.feed_response(xml)):
+            result = self.service.fetch_source(source_fixture())
+        self.assertTrue(result["ok"])
+        self.assertEqual([article["title"] for article in result["articles"]], ["Valid"])
+        self.assertEqual(result["diagnostics"]["invalid_date"], 1)
+
+    def test_all_unusable_entries_fail_and_reuse_cached_snapshot(self):
+        xml = b"""<rss><channel><item>
+            <title>Undated</title><link>https://example.com/undated</link>
+        </item></channel></rss>"""
+        with mock.patch.object(self.service.http, "get", return_value=self.feed_response(xml)):
+            result = self.service.fetch_source(source_fixture(), self.cache_entry())
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["used_stale_cache"])
+        self.assertEqual(result["articles"][0]["id"], "article-1")
+        self.assertEqual(result["diagnostics"]["missing_date"], 1)
+
+    def test_more_than_one_thousand_entries_fails_explicitly(self):
+        items = b"".join(
+            f"<item><title>Item {index}</title><link>https://example.com/{index}</link>"
+            f"<pubDate>2026-08-03T00:00:00Z</pubDate></item>".encode("ascii")
+            for index in range(1001)
+        )
+        xml = b"<rss><channel>" + items + b"</channel></rss>"
+        with mock.patch.object(self.service.http, "get", return_value=self.feed_response(xml)):
+            result = self.service.fetch_source(source_fixture())
+        self.assertFalse(result["ok"])
+        self.assertIn("more than 1000", result["message"])
+        self.assertEqual(result["diagnostics"]["total"], 1001)
+
+    def test_ingestion_diagnostics_distinguish_rejection_categories(self):
+        xml = b"""<rss><channel>
+            <item><title>Accepted</title><link>https://example.com/accepted</link><pubDate>2026-08-03T00:00:00Z</pubDate></item>
+            <item><title>Missing date</title><link>https://example.com/missing</link></item>
+            <item><title>Invalid date</title><link>https://example.com/invalid</link><pubDate>bad</pubDate></item>
+            <item><link>https://example.com/no-title</link><pubDate>2026-08-03T00:00:00Z</pubDate></item>
+        </channel></rss>"""
+        with mock.patch.object(self.service.http, "get", return_value=self.feed_response(xml)):
+            result = self.service.fetch_source(source_fixture())
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            result["diagnostics"],
+            {
+                "total": 4,
+                "accepted": 1,
+                "missing_date": 1,
+                "invalid_date": 1,
+                "missing_title_or_link": 1,
+            },
+        )
+
+
 class ConditionalFeedRequestTests(ServiceTestCase):
     def cache_entry(self):
         return {

@@ -29,6 +29,7 @@ from .config import (
     FEED_REFRESH_RETRY_SECONDS,
     FEED_SCHEMA_VERSION,
     IMAGE_INDEX_TTL_SECONDS,
+    MAX_FEED_ENTRIES,
     MAX_ITEMS_PER_SOURCE,
     RuntimePaths,
     SOURCE_CACHE_SCHEMA_VERSION,
@@ -113,9 +114,40 @@ def strip_markup(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
-def parse_date(value: str) -> datetime:
-    if not value:
-        return datetime.now(timezone.utc)
+DATE_FIELD_NAMES = ("pubdate", "published", "updated", "date", "created")
+
+
+def _new_feed_diagnostics() -> dict[str, int]:
+    return {
+        "total": 0,
+        "accepted": 0,
+        "missing_date": 0,
+        "invalid_date": 0,
+        "missing_title_or_link": 0,
+    }
+
+
+def _item_date(item: ET.Element) -> tuple[datetime | None, str]:
+    """Return the first valid date candidate and its diagnostic status."""
+
+    saw_value = False
+    for field_name in DATE_FIELD_NAMES:
+        for child in item:
+            if local_name(child.tag) != field_name:
+                continue
+            value = "".join(child.itertext()).strip()
+            if not value:
+                continue
+            saw_value = True
+            parsed = parse_date(value)
+            if parsed is not None:
+                return parsed, "valid"
+    return None, "invalid" if saw_value else "missing"
+
+
+def parse_date(value: str | None) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
     try:
         parsed = email.utils.parsedate_to_datetime(value)
         if parsed.tzinfo is None:
@@ -130,7 +162,7 @@ def parse_date(value: str) -> datetime:
             parsed = parsed.replace(tzinfo=timezone.utc)
         return parsed.astimezone(timezone.utc)
     except ValueError:
-        return datetime.now(timezone.utc)
+        return None
 
 
 def canonical_url(value: str) -> str:
@@ -212,6 +244,12 @@ def extract_page_image(markup: str, base_url: str) -> str:
 
 
 def parse_feed_document(xml_bytes: bytes) -> ET.Element:
+    leading_whitespace = re.match(
+        br"^[\x09\x0a\x0c\x0d\x20]+(?=<\?xml(?:[\x09\x0a\x0c\x0d\x20]|>))",
+        xml_bytes,
+    )
+    if leading_whitespace:
+        xml_bytes = xml_bytes[leading_whitespace.end():]
     try:
         return ET.fromstring(xml_bytes)
     except ET.ParseError as original_error:
@@ -499,6 +537,7 @@ class FeedService:
             }
             for article in cached.get("articles", [])
         ]
+        diagnostics = _new_feed_diagnostics()
         headers = {
             "User-Agent": "CGSignal/1.0 (local personal RSS reader)",
             "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.5",
@@ -522,6 +561,7 @@ class FeedService:
                     "etag": response.headers.get("ETag", cached.get("etag", "")),
                     "last_modified": response.headers.get("Last-Modified", cached.get("last_modified", "")),
                     "not_modified": True, "used_stale_cache": False,
+                    "diagnostics": diagnostics,
                 }
             if not 200 <= response.status < 300:
                 raise SafeHttpError(f"HTTP {response.status}")
@@ -529,18 +569,31 @@ class FeedService:
             etag = response.headers.get("ETag", "")
             last_modified = response.headers.get("Last-Modified", "")
             root = parse_feed_document(xml_bytes)
-            entries = [node for node in root.iter() if local_name(node.tag) in {"item", "entry"}]
+            entries: list[ET.Element] = []
+            for node in root.iter():
+                if local_name(node.tag) not in {"item", "entry"}:
+                    continue
+                diagnostics["total"] += 1
+                if diagnostics["total"] > MAX_FEED_ENTRIES:
+                    raise ValueError(f"Feed contains more than {MAX_FEED_ENTRIES} entries")
+                entries.append(node)
             articles: list[dict[str, Any]] = []
             item_limit = int(source.get("limit", MAX_ITEMS_PER_SOURCE))
-            for item in entries[:item_limit]:
+            for item in entries:
+                published, date_status = _item_date(item)
+                if date_status == "missing":
+                    diagnostics["missing_date"] += 1
+                elif date_status == "invalid":
+                    diagnostics["invalid_date"] += 1
                 title = strip_markup(child_text(item, {"title"}))
                 url = article_link(item)
                 if not title or not url:
+                    diagnostics["missing_title_or_link"] += 1
+                if published is None or not title or not url:
                     continue
                 raw_summary = preferred_child_text(item, ("encoded", "content", "description", "summary"))
                 summary = strip_markup(raw_summary)
                 thumbnail_candidate = first_image(item, raw_summary)
-                published = parse_date(child_text(item, {"pubdate", "published", "updated", "date", "created"}))
                 article_id = hashlib.sha1(
                     f"{source['id']}|{url}".encode("utf-8")
                 ).hexdigest()[:18]
@@ -563,19 +616,26 @@ class FeedService:
                         "_refs": outbound_links(raw_summary, url),
                     }
                 )
+                diagnostics["accepted"] += 1
+            articles.sort(key=lambda article: article["timestamp"], reverse=True)
+            articles = articles[:item_limit]
+            if entries and not diagnostics["accepted"]:
+                raise ValueError("Feed contained no usable dated articles")
             return {
                 "source": source, "articles": articles, "ok": True, "message": "",
                 "duration_ms": round((time.monotonic() - started) * 1000),
                 "etag": etag, "last_modified": last_modified,
                 "not_modified": False, "used_stale_cache": False,
+                "diagnostics": diagnostics,
             }
-        except (SafeHttpError, TimeoutError, ET.ParseError, OSError) as exc:
+        except (SafeHttpError, TimeoutError, ET.ParseError, OSError, ValueError) as exc:
             error = exc
         return {
             "source": source, "articles": cached_articles, "ok": False, "message": str(error),
             "duration_ms": round((time.monotonic() - started) * 1000),
             "etag": cached.get("etag", ""), "last_modified": cached.get("last_modified", ""),
             "not_modified": False, "used_stale_cache": bool(cached_articles),
+            "diagnostics": diagnostics,
         }
 
     def test_source(self, payload: Any) -> dict[str, Any]:
