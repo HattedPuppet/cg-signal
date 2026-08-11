@@ -14,11 +14,21 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import socket
 import secrets
+import sys
 import threading
 import urllib.parse
 import webbrowser
 from typing import Any
 
+from .backup import (
+    BackupError,
+    DatabaseLease,
+    DatabaseLeaseHeldError,
+    create_backup,
+    format_preview,
+    restore_snapshot,
+    verify_snapshot,
+)
 from .config import (
     CLASSIFICATION_REVISION,
     FEED_SCHEMA_VERSION,
@@ -321,36 +331,123 @@ class DashboardServer(ThreadingHTTPServer):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the private CG Signal RSS dashboard.")
-    parser.add_argument("--port", type=int, default=4310)
+    parser.add_argument(
+        "command",
+        nargs="?",
+        choices=("backup", "restore"),
+        help="backup the local SQLite archive or restore a verified snapshot",
+    )
+    parser.add_argument(
+        "snapshot",
+        nargs="?",
+        help="snapshot directory for restore",
+    )
+    parser.add_argument("--destination", help="backup root for a generated snapshot child")
+    parser.add_argument("--confirm", action="store_true", help="apply a restore after previewing it")
+    parser.add_argument("--port", type=int, default=None)
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--print-source-revision", action="store_true")
     arguments = parser.parse_args()
     paths = RuntimePaths.for_root(Path(__file__).resolve().parents[1])
+
     if arguments.print_source_revision:
+        if (
+            arguments.command
+            or arguments.snapshot
+            or arguments.destination
+            or arguments.confirm
+            or arguments.port is not None
+            or arguments.no_browser
+        ):
+            parser.error("--print-source-revision cannot be combined with backup or restore options")
         print(source_revision(paths.root))
         return
+
+    if arguments.command == "backup":
+        if (
+            arguments.snapshot
+            or arguments.confirm
+            or arguments.port is not None
+            or arguments.no_browser
+            or arguments.print_source_revision
+        ):
+            parser.error("backup does not accept restore or serve-only options")
+        try:
+            snapshot_dir = create_backup(paths, arguments.destination, reason="manual")
+        except (BackupError, OSError, sqlite3.Error) as error:
+            print(f"CG Signal backup failed: {error}", file=sys.stderr)
+            raise SystemExit(1) from error
+        print(f"Backup verified: {snapshot_dir}")
+        return
+
+    if arguments.command == "restore":
+        if not arguments.snapshot:
+            parser.error("restore requires a snapshot directory")
+        if (
+            arguments.destination
+            or arguments.port is not None
+            or arguments.no_browser
+            or arguments.print_source_revision
+        ):
+            parser.error("restore does not accept backup or serve-only options")
+        try:
+            # Preview is intentionally read-only and takes no lease.  The
+            # confirmed path verifies again immediately before staging.
+            verified = verify_snapshot(arguments.snapshot)
+            if not arguments.confirm:
+                print(format_preview(verified, paths.archive_db_file))
+                return
+            result = restore_snapshot(paths, verified.path)
+        except (BackupError, OSError, sqlite3.Error) as error:
+            print(f"CG Signal restore failed: {error}", file=sys.stderr)
+            raise SystemExit(1) from error
+        print(f"Restore complete: {result.target}")
+        if result.recovery_snapshot is not None:
+            print(f"Recovery snapshot: {result.recovery_snapshot}")
+        print("The dashboard remains stopped.")
+        return
+
+    if arguments.snapshot or arguments.destination or arguments.confirm:
+        parser.error("backup or restore must be specified before these options")
+
+    # The lease is acquired before constructing DashboardServer and held until
+    # after server_close(), so confirmed restore cannot race startup/shutdown.
+    lease = DatabaseLease(paths.database_lock_file)
+    server: DashboardServer | None = None
     try:
-        server = DashboardServer(("127.0.0.1", arguments.port), DashboardHandler, paths=paths)
-    except OSError as error:
-        raise SystemExit(
-            f"CG Signal could not use 127.0.0.1:{arguments.port}. It may already be running."
-        ) from error
-    paths.cache_dir.mkdir(parents=True, exist_ok=True)
-    paths.pid_file.write_text(str(os.getpid()), encoding="utf-8")
-    url = f"http://127.0.0.1:{arguments.port}"
-    print("\nCG Signal is ready")
-    print(f"Open: {url}")
-    print("Press Ctrl+C to stop.\n")
-    if not arguments.no_browser:
-        threading.Timer(0.7, lambda: webbrowser.open(url)).start()
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\nStopping CG Signal.")
+        try:
+            lease.acquire()
+        except DatabaseLeaseHeldError as error:
+            print(
+                "CG Signal could not acquire the database lease. "
+                "Stop the dashboard with stop-dashboard.ps1, then retry.",
+                file=sys.stderr,
+            )
+            raise SystemExit(1) from error
+        try:
+            server = DashboardServer(("127.0.0.1", arguments.port or 4310), DashboardHandler, paths=paths)
+        except OSError as error:
+            raise SystemExit(
+                f"CG Signal could not use 127.0.0.1:{arguments.port or 4310}. It may already be running."
+            ) from error
+        paths.cache_dir.mkdir(parents=True, exist_ok=True)
+        paths.pid_file.write_text(str(os.getpid()), encoding="utf-8")
+        url = f"http://127.0.0.1:{arguments.port or 4310}"
+        print("\nCG Signal is ready")
+        print(f"Open: {url}")
+        print("Press Ctrl+C to stop.\n")
+        if not arguments.no_browser:
+            threading.Timer(0.7, lambda: webbrowser.open(url)).start()
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            print("\nStopping CG Signal.")
     finally:
-        server.server_close()
+        if server is not None:
+            server.server_close()
         try:
             if paths.pid_file.read_text(encoding="utf-8").strip() == str(os.getpid()):
                 paths.pid_file.unlink()
         except (FileNotFoundError, OSError):
             pass
+        lease.release()

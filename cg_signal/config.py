@@ -11,6 +11,9 @@ from pathlib import Path
 FEED_SCHEMA_VERSION = 1
 CLASSIFICATION_REVISION = 4
 SOURCE_CACHE_SCHEMA_VERSION = 2
+# The on-disk SQLite schema is intentionally versioned independently from the
+# public feed payload.  Existing databases are currently schema version 0.
+STORAGE_SCHEMA_VERSION = 0
 
 CACHE_TTL_SECONDS = 15 * 60
 FEED_REFRESH_RETRY_SECONDS = 60
@@ -168,6 +171,8 @@ class RuntimePaths:
     user_state_file: Path
     archive_db_file: Path
     pid_file: Path
+    backup_dir: Path
+    database_lock_file: Path
 
     @classmethod
     def for_root(cls, root: Path | str) -> "RuntimePaths":
@@ -185,6 +190,8 @@ class RuntimePaths:
             user_state_file=cache_dir / "user-state.json",
             archive_db_file=cache_dir / "cg-signal.db",
             pid_file=cache_dir / "server.pid",
+            backup_dir=project_root / ".backups",
+            database_lock_file=cache_dir / "database.lock",
         )
 
     def with_cache_dir(self, cache_dir: Path | str) -> "RuntimePaths":
@@ -208,6 +215,8 @@ class RuntimePaths:
             user_state_file=generated / "user-state.json",
             archive_db_file=generated / "cg-signal.db",
             pid_file=generated / "server.pid",
+            backup_dir=generated / "backups",
+            database_lock_file=generated / "database.lock",
         )
 
 

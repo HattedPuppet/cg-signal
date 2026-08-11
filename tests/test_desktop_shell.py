@@ -13,6 +13,13 @@ SITE = PROJECT_ROOT / "static"
 
 
 class DesktopShellTests(unittest.TestCase):
+    def test_runtime_paths_include_private_backup_and_database_lease_locations(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            paths = RuntimePaths.for_root(Path(temporary))
+            self.assertEqual(paths.backup_dir, Path(temporary).resolve() / ".backups")
+            self.assertEqual(paths.database_lock_file.parent, paths.cache_dir)
+            self.assertEqual(paths.database_lock_file.name, "database.lock")
+
     def test_domain_module_is_served_as_javascript(self):
         with tempfile.TemporaryDirectory() as temporary:
             paths = RuntimePaths.for_root(PROJECT_ROOT).with_cache_dir(Path(temporary))
