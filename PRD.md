@@ -22,7 +22,7 @@ The product must answer three questions quickly:
 
 1. What deserves attention today?
 2. Why is it relevant to the user's work?
-3. What can safely be ignored, saved for later, or archived?
+3. What is worth saving for later?
 
 ## Product vision
 
@@ -74,8 +74,8 @@ And is actively interested in:
    deduplication remain effective.
 2. **Original source first:** every story opens on the publisher's website.
 3. **Transparent prioritization:** show why an item was selected.
-4. **Quiet by default:** repeated coverage and archived items stay out of the
-   active reading flow.
+4. **Quiet by default:** repeated coverage is grouped into the active reading
+   flow.
 5. **Local by default:** personal state and optional intelligence remain on the
    user's computer.
 6. **Graceful degradation:** cached feeds and browser state keep the dashboard
@@ -104,19 +104,21 @@ And is actively interested in:
   matters such as M&A, earnings, stocks, workforce, funding, closures,
   executives, and legal or company-policy reporting belongs in Business.
 - Support software/context, production-subcategory, information-type, source,
-  search, saved, and archive filters.
-- Default the active feed to the current calendar month; offer a
-  three-calendar-month window and an all-current-feed escape hatch without
+  search and saved filters.
+- Keep **Latest Signal** strictly newest-first with no relevance threshold,
+  result cap, or hidden re-ranking. Default desktop and hosted mobile to
+  Latest. Offer a publication window using the current calendar month, a
+  three-calendar-month window, and an all-current-feed escape hatch without
   deleting older articles. Group the three-month view with month separators so
   recent coverage is easy to scan.
 - Improve bilingual deduplication by requiring a shared event type and
   distinctive entities when English and Japanese titles have little literal
   overlap.
 
-### Latest Signal facets
+### Latest facets
 
-- Present the primary feed in chronological, newest-first order without a
-  relevance threshold, result cap, or hidden re-ranking.
+- Present the primary feed in chronological, newest-first order. Publication
+  window changes directly control which chronological articles are visible.
 - Provide one visible **Categories** selector containing only non-empty groups,
   with live counts that respond to the other active filters.
 - Classify software/context under Unreal Engine, Unity, Blender, Substance 3D,
@@ -144,8 +146,7 @@ And is actively interested in:
   subcategory. Selecting another option replaces the current selection;
   selecting the active option resets that row to its **All** state. Clicking an
   already-active **All** option has no further effect.
-- Keep saved stories available in the Learning Library and remove only
-  archived stories from the active chronological feed.
+- Keep saved stories available in the Learning Library.
 - Do not expose broad inferred subject filters such as Engines, 3D Art, Tools,
   Game Development, or Industry when their classification is unreliable.
 
@@ -159,30 +160,26 @@ And is actively interested in:
   `#software:`, `#topic:`, `#source:`, and `#is:` operators.
 - Support quoted values and exclusions prefixed by `-`.
 - Mark stories published since the previous visit without reordering the feed.
-- Support keyboard triage with J/K, Enter, S, and A while ignoring shortcuts
+- Support keyboard triage with J/K, Enter, and S while ignoring shortcuts
   in text-entry controls.
 
-### Learning Library and archive
+### Learning Library and history
 
 - Save stories into a durable Learning Library grouped by primary software or
   context.
 - Attach searchable local research notes to saved stories.
-- Archive stories out of Latest Signal.
-- Provide a dedicated archive with restore controls.
 - Retain gathered article metadata in a durable local history after articles
   rotate out of their publishers' RSS feeds.
 - Provide paginated full-history search using the same text, hashtag,
   information-type, and source filters as the current feed.
-- Populate the Learning Library and archive views from durable history rather
+- Populate the Learning Library and History views from durable history rather
   than limiting them to the current RSS window.
-- Persist saved, archived, note, feedback, and source-preference state in
-  the local server's data directory, with browser storage as a migration and
-  failure fallback.
+- Persist saved and note state in the local server's data directory,
+  with browser storage as a migration and failure fallback.
 
 ### Source and refresh controls
 
-- Allow a source to be temporarily filtered, reduced in recommendations,
-  muted, or restored.
+- Allow a source to be temporarily filtered, muted, or restored.
 - Make a normal source click isolate that source, a repeated click restore all,
   and Ctrl/Cmd-click combine multiple sources.
 - Provide an interface to add custom RSS or Atom URLs, test a feed before or
@@ -204,14 +201,14 @@ And is actively interested in:
   classification, relevance, and deduplication rules as the desktop app.
 - Refresh the hosted feed every 30 minutes through a scheduled GitHub workflow
   so availability does not depend on the user's PC.
-- Provide Latest Signal, information-type and category filtering, source
-  selection, publication-window filtering, text and hashtag search, and pinned
-  stories.
-- Group mobile stories into Last 24 hours, Last 3 days, and Earlier sections so
-  freshness is clear without read-state tracking.
+- Provide Latest Signal and Pinned views, plus information-type and category
+  filtering, source selection, publication-window filtering, text and hashtag
+  search.
+- Keep mobile stories in one flat newest-first chronology without a separate
+  recency board or read-state tracking.
 - Keep search in the mobile header and expose information type, category, and
   source controls as touch-sized inline choices in the feed, with clear
-  active-state feedback and no required discovery drawer.
+  active-state indication and no required discovery drawer.
 - Keep source management optional: selecting a source is always one tap in the
   feed, while the local manager is reserved for hiding or restoring sources.
 - Combine the compact mobile header and filter drawer into one sticky surface;
@@ -226,22 +223,26 @@ And is actively interested in:
   to a future public feed configuration.
 - Support Android home-screen installation and retain the most recently opened
   feed for temporary offline access.
-- Keep History, Learning Library, saved and archived state, notes, preference
-  feedback, and source management exclusive to the desktop application.
+- Keep History, Learning Library, saved state, and notes exclusive to the
+  desktop application. Mobile pins and source enablement are
+  device-local and do not sync to desktop.
+
+### Feed status and degraded feeds
+
+- Lead directly with search, filters, and stories on desktop and mobile. Keep
+  update status compact and inline instead of using an onboarding or summary
+  hero.
+- Summarize source failures concisely (for example, “12 sources unavailable ·
+  showing cached stories”) and expose the source names through an accessible
+  expandable detail.
 - Export only explicitly allowlisted public RSS-derived fields. Never publish
   `.cache`, the SQLite database, user state, notes, or preference data.
-
-## Feedback model
-
-More/Less feedback and source preferences are deterministic, local signals that
-help tune future recommendations. They never reorder Latest Signal, which stays
-chronological, and they are not a claim about objective article quality.
 
 ## Core user journey
 
 1. Open CG Signal from the Start menu.
-2. Review Latest Signal, narrow it by category, and optionally refine
-   Production techniques.
+2. Review Latest Signal, narrow it by publication window, information type, and
+   category, and optionally refine Production techniques.
 3. Open valuable stories on the original site.
 4. Save evergreen learning material or archive low-priority items.
 5. Use text or hashtag search for deeper exploration and add notes to saved
@@ -285,7 +286,7 @@ analytics:
 ### Near term
 
 - Carefully selected official YouTube RSS sources.
-- Optional local backup and export for the accumulated archive and notes.
+- Optional local backup and export for accumulated article history and notes.
 
 ### Optional intelligence
 
@@ -295,7 +296,5 @@ analytics:
   slower refreshes are meaningful costs even without a subscription.
 ## Open decisions
 
-- Whether archived items should be retained indefinitely or pruned after a
-  configurable period.
 - What local hardware budget is acceptable for optional summarization and
   speech generation.

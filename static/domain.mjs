@@ -243,8 +243,127 @@ export function feedPayloadHasSchema(payload) {
   return payload?.feed_schema_version === FEED_SCHEMA_VERSION;
 }
 
-export function feedPayloadIsStructurallyCompatible(payload) {
-  return feedPayloadHasSchema(payload)
-    && Array.isArray(payload.articles)
-    && payload.articles.every((article) => article && ARTICLE_LANE_VALUES.has(article.lane));
+const MAX_FEED_ARTICLES = 1500;
+const MAX_FEED_SOURCES = 300;
+const MAX_ARTICLE_STRING = 5000;
+const MAX_TAGS = 32;
+const MAX_TAG_LENGTH = 120;
+const MAX_RELATED = 8;
+
+function nonEmptyString(value, maximum = MAX_ARTICLE_STRING) {
+  return typeof value === "string" && value.trim().length > 0 && value.length <= maximum;
 }
+
+function optionalString(value, maximum = MAX_ARTICLE_STRING) {
+  return value === undefined || (typeof value === "string" && value.length <= maximum);
+}
+
+function boundedString(value, maximum = MAX_ARTICLE_STRING) {
+  return typeof value === "string" && value.length <= maximum;
+}
+
+function publicHttpUrl(value, { required = false } = {}) {
+  if (value === undefined || value === "") return !required;
+  if (!nonEmptyString(value, 4096)) return false;
+  try {
+    const parsed = new URL(value);
+    return ["http:", "https:"].includes(parsed.protocol)
+      && !parsed.username
+      && !parsed.password
+      && Boolean(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+const THUMBNAIL_REFERENCE_RE = /^thumbnails\/[0-9a-f]{64}\.(?:jpg|png|webp)$/;
+
+function thumbnailReferenceIsValid(value) {
+  return value === undefined || value === "" || (typeof value === "string" && THUMBNAIL_REFERENCE_RE.test(value));
+}
+
+function boundedStringArray(value, maximum = MAX_TAGS) {
+  return Array.isArray(value)
+    && value.length <= maximum
+    && value.every((item) => nonEmptyString(item, MAX_TAG_LENGTH));
+}
+
+function finiteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function validNestedSource(source) {
+  if (!source || typeof source !== "object" || Array.isArray(source)) return false;
+  return nonEmptyString(source.id, 200)
+    && nonEmptyString(source.name, 300)
+    && optionalString(source.accent, 100)
+    && optionalString(source.site, 4096)
+    && publicHttpUrl(source.site)
+    && (source.ok === undefined || typeof source.ok === "boolean")
+    && (source.count === undefined || finiteNumber(source.count));
+}
+
+function validRelatedArticle(related) {
+  if (!related || typeof related !== "object" || Array.isArray(related)) return false;
+  return nonEmptyString(related.title, MAX_ARTICLE_STRING)
+    && nonEmptyString(related.source, 300)
+    && publicHttpUrl(related.url, { required: true })
+    && nonEmptyString(related.published_at, 128)
+    && optionalString(related.source_id, 200)
+    && optionalString(related.accent, 100);
+}
+
+function validArticle(article) {
+  if (!article || typeof article !== "object" || Array.isArray(article)) return false;
+  const requiredStrings = [
+    "id", "title", "published_at", "source", "source_id", "lane", "software_group",
+  ];
+  if (!requiredStrings.every((field) => nonEmptyString(article[field]))) return false;
+  if (!boundedString(article.summary)) return false;
+  if (!ARTICLE_LANE_VALUES.has(article.lane) || !publicHttpUrl(article.url, { required: true })) return false;
+  if (!["image", "source_site", "topic", "accent"].every((field) => optionalString(article[field]))) return false;
+  if (!thumbnailReferenceIsValid(article.image) || !publicHttpUrl(article.source_site)) return false;
+  for (const field of ["software_tags", "topic_tags", "priority_reasons"]) {
+    if (field in article && !boundedStringArray(article[field])) return false;
+  }
+  if (article.related !== undefined
+    && (!Array.isArray(article.related) || article.related.length > MAX_RELATED || !article.related.every(validRelatedArticle))) {
+    return false;
+  }
+  if (article.sources !== undefined
+    && (!Array.isArray(article.sources) || article.sources.length > MAX_RELATED || !article.sources.every(validNestedSource))) {
+    return false;
+  }
+  for (const field of ["source_count", "cluster_size", "priority_score"]) {
+    if (article[field] !== undefined && !finiteNumber(article[field])) return false;
+  }
+  return true;
+}
+
+export function feedPayloadIsStructurallyCompatible(payload) {
+  if (!feedPayloadHasSchema(payload) || !payload || typeof payload !== "object") return false;
+  if (payload.schema_version !== undefined && payload.schema_version !== FEED_SCHEMA_VERSION) return false;
+  if (!nonEmptyString(payload.generated_at, 128)) return false;
+  if (!Array.isArray(payload.articles) || payload.articles.length > MAX_FEED_ARTICLES) {
+    return false;
+  }
+  if (!Array.isArray(payload.sources) || payload.sources.length > MAX_FEED_SOURCES || !payload.sources.every(validNestedSource)) {
+    return false;
+  }
+  if (payload.unavailable_sources !== undefined
+    && (!Array.isArray(payload.unavailable_sources)
+      || payload.unavailable_sources.length > MAX_FEED_SOURCES
+      || !payload.unavailable_sources.every((item) => nonEmptyString(item, 300)))) {
+    return false;
+  }
+  for (const field of ["classification_revision", "classification_version"]) {
+    if (payload[field] !== undefined && !finiteNumber(payload[field])) return false;
+  }
+  for (const field of ["unique_count", "duplicates_collapsed", "carried_forward_count"]) {
+    if (payload[field] !== undefined && !finiteNumber(payload[field])) return false;
+  }
+  return payload.articles.every(validArticle);
+}
+
+export { validArticle as articleIsRenderSafe };
+export { thumbnailReferenceIsValid };

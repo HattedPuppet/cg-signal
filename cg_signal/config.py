@@ -162,6 +162,8 @@ class RuntimePaths:
     cache_file: Path
     feed_source_cache_file: Path
     image_index_file: Path
+    thumbnail_dir: Path
+    thumbnail_anchor: Path
     user_state_file: Path
     archive_db_file: Path
     pid_file: Path
@@ -177,6 +179,8 @@ class RuntimePaths:
             cache_file=cache_dir / "feed-cache.json",
             feed_source_cache_file=cache_dir / "feed-source-cache.json",
             image_index_file=cache_dir / "image-index.json",
+            thumbnail_dir=cache_dir / "thumbnails",
+            thumbnail_anchor=cache_dir,
             user_state_file=cache_dir / "user-state.json",
             archive_db_file=cache_dir / "cg-signal.db",
             pid_file=cache_dir / "server.pid",
@@ -198,6 +202,8 @@ class RuntimePaths:
             cache_file=generated / "feed-cache.json",
             feed_source_cache_file=generated / "feed-source-cache.json",
             image_index_file=generated / "image-index.json",
+            thumbnail_dir=generated / "thumbnails",
+            thumbnail_anchor=generated,
             user_state_file=generated / "user-state.json",
             archive_db_file=generated / "cg-signal.db",
             pid_file=generated / "server.pid",

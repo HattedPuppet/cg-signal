@@ -1,6 +1,5 @@
 import tempfile
 import unittest
-import urllib.error
 from datetime import datetime, timedelta, timezone
 from email.message import Message
 from pathlib import Path
@@ -8,6 +7,8 @@ from unittest import mock
 
 from cg_signal.config import FEED_SCHEMA_VERSION, RuntimePaths, SOURCE_CACHE_SCHEMA_VERSION
 from cg_signal.feeds import FeedService
+from cg_signal.safe_http import SafeHttpError, SafeHttpResponse
+from cg_signal.thumbnails import canonical_thumbnail_reference, store_thumbnail, validate_thumbnail_bytes
 
 
 def source_fixture():
@@ -35,6 +36,20 @@ class ServiceTestCase(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_rendered_thumbnail_policy_keeps_only_local_paths(self):
+        for remote in (
+            "http://127.0.0.1/pixel.png",
+            "https://192.168.1.2/pixel.png",
+            "https://169.254.169.254/latest/meta-data",
+            "https://cdn.example.test/pixel.png",
+        ):
+            self.assertEqual(canonical_thumbnail_reference(remote), "")
+        self.assertEqual(canonical_thumbnail_reference("/assets/pixel.png"), "")
+        self.assertEqual(
+            canonical_thumbnail_reference("thumbnails/" + "a" * 64 + ".jpg"),
+            "thumbnails/" + "a" * 64 + ".jpg",
+        )
+
 
 class ConditionalFeedRequestTests(ServiceTestCase):
     def cache_entry(self):
@@ -46,24 +61,18 @@ class ConditionalFeedRequestTests(ServiceTestCase):
     def test_304_reuses_cached_articles_and_sends_validators(self):
         headers = Message()
         headers["ETag"] = '"feed-v2"'
-        not_modified = urllib.error.HTTPError(
-            "https://example.com/feed.xml", 304, "Not Modified", headers, None
-        )
-        with mock.patch("cg_signal.feeds.urllib.request.urlopen", side_effect=not_modified) as urlopen:
+        not_modified = SafeHttpResponse(304, headers, b"", "https://example.com/feed.xml")
+        with mock.patch.object(self.service.http, "get", return_value=not_modified) as http_get:
             result = self.service.fetch_source(source_fixture(), self.cache_entry())
-        request = urlopen.call_args.args[0]
-        request_headers = dict(request.header_items())
-        self.assertEqual(request_headers["If-none-match"], '"feed-v2"')
-        self.assertEqual(request_headers["If-modified-since"], "Thu, 30 Jul 2026 00:00:00 GMT")
+        request_headers = http_get.call_args.kwargs["headers"]
+        self.assertEqual(request_headers["If-None-Match"], '"feed-v2"')
+        self.assertEqual(request_headers["If-Modified-Since"], "Thu, 30 Jul 2026 00:00:00 GMT")
         self.assertTrue(result["ok"])
         self.assertTrue(result["not_modified"])
         self.assertEqual(result["articles"][0]["id"], "article-1")
 
     def test_temporary_failure_reuses_the_last_source_snapshot(self):
-        with mock.patch(
-            "cg_signal.feeds.urllib.request.urlopen",
-            side_effect=urllib.error.URLError("temporary outage"),
-        ):
+        with mock.patch.object(self.service.http, "get", side_effect=SafeHttpError("temporary outage")):
             result = self.service.fetch_source(source_fixture(), self.cache_entry())
         self.assertFalse(result["ok"])
         self.assertTrue(result["used_stale_cache"])
@@ -126,6 +135,40 @@ class FeedFallbackSchemaTests(ServiceTestCase):
 
 
 class ThumbnailPipelineTests(ServiceTestCase):
+    def test_rss_candidate_is_fetched_and_stored_as_app_owned_reference(self):
+        article = {**cached_article(), "_thumbnail_candidate": "https://cdn.example/image.jpg"}
+        headers = Message()
+        headers["Content-Type"] = "image/jpeg"
+        response = SafeHttpResponse(200, headers, b"\xff\xd8\xffasset", "https://cdn.example/image.jpg")
+        with mock.patch.object(self.service.http, "get", return_value=response) as get:
+            self.service.enrich_missing_images([article])
+        self.assertRegex(article["image"], r"^thumbnails/[0-9a-f]{64}\.jpg$")
+        self.assertEqual(get.call_count, 1)
+        self.assertIsNotNone(
+            __import__("cg_signal.thumbnails", fromlist=["read_verified_thumbnail"]).read_verified_thumbnail(
+                self.service.paths.thumbnail_dir, article["image"]
+            )
+        )
+
+    def test_page_og_candidate_is_fetched_only_after_rss_candidate_fails(self):
+        article = {**cached_article(), "_thumbnail_candidate": "https://cdn.example/bad.gif"}
+        page_headers = Message()
+        page_headers["Content-Type"] = "text/html; charset=utf-8"
+        image_headers = Message()
+        image_headers["Content-Type"] = "image/png"
+        responses = [
+            SafeHttpResponse(200, Message(), b"GIF89a", "https://cdn.example/bad.gif"),
+            SafeHttpResponse(200, page_headers, b'<meta property="og:image" content="/hero.png">', "https://example.com/final"),
+            SafeHttpResponse(200, image_headers, b"\x89PNG\r\n\x1a\nasset", "https://example.com/hero.png"),
+        ]
+        responses[0].headers["Content-Type"] = "image/gif"
+        with mock.patch.object(self.service.http, "get", side_effect=responses) as get:
+            self.service.enrich_missing_images([article])
+        self.assertRegex(article["image"], r"^thumbnails/[0-9a-f]{64}\.png$")
+        self.assertEqual(get.call_count, 3)
+        self.assertEqual(get.call_args_list[1].args[0], "https://example.com/article")
+        self.assertEqual(get.call_args_list[2].args[0], "https://example.com/hero.png")
+
     def test_refresh_publishes_articles_before_thumbnail_scraping(self):
         source, article = source_fixture(), cached_article()
         source_result = {
@@ -154,12 +197,16 @@ class ThumbnailPipelineTests(ServiceTestCase):
         self.assertEqual(payload["articles"], [article])
 
     def test_completed_thumbnail_worker_updates_only_the_matching_feed(self):
-        article, enriched = cached_article(), {**cached_article(), "image": "https://example.com/preview.jpg"}
+        reference = store_thumbnail(
+            self.service.paths.thumbnail_dir,
+            validate_thumbnail_bytes(b"\xff\xd8\xffasset", "image/jpeg"),
+        )
+        article, enriched = cached_article(), {**cached_article(), "image": reference}
         cached = {"generated_at": "2026-07-30T00:00:00+00:00", "articles": [article]}
         with mock.patch.object(self.service, "read_cache", return_value=cached), mock.patch.object(self.service, "write_cache") as write_cache:
             self.service.update_cached_thumbnail_images([enriched], cached["generated_at"])
         written = write_cache.call_args.args[0]
-        self.assertEqual(written["articles"][0]["image"], "https://example.com/preview.jpg")
+        self.assertEqual(written["articles"][0]["image"], reference)
         self.assertFalse(written["thumbnails_refreshing"])
 
     def test_completed_thumbnail_worker_clears_state_when_no_image_is_found(self):

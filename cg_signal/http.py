@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+import html
+import hmac
 import json
 import mimetypes
 import os
@@ -11,6 +13,7 @@ import sqlite3
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import socket
+import secrets
 import threading
 import urllib.parse
 import webbrowser
@@ -23,6 +26,11 @@ from .config import (
     source_revision,
 )
 from .feeds import FeedService
+from .thumbnails import (
+    EXTENSION_TO_MIME,
+    canonical_thumbnail_reference,
+    read_verified_thumbnail,
+)
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -35,6 +43,82 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, format_string: str, *args: Any) -> None:
         message = format_string % args
         print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
+
+    def end_headers(self) -> None:
+        # These are applied centrally so error responses and static files carry
+        # the same browser-boundary policy as JSON API responses.
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        super().end_headers()
+
+    @property
+    def expected_host(self) -> str:
+        return f"127.0.0.1:{self.dashboard.server_address[1]}"
+
+    def authorize_request(self, path: str, *, mutation: bool = False) -> bool:
+        """Enforce the exact local authority and browser request metadata."""
+
+        if self.headers.get("Host", "").strip() != self.expected_host:
+            self.send_error(421, "Misdirected Request")
+            return False
+        expected_origin = f"http://{self.expected_host}"
+        origin = self.headers.get("Origin")
+        if origin:
+            try:
+                origin_parts = urllib.parse.urlsplit(origin)
+                origin_ok = (
+                    origin_parts.scheme.lower() == "http"
+                    and origin_parts.netloc == self.expected_host
+                    and not origin_parts.path
+                    and not origin_parts.query
+                    and not origin_parts.fragment
+                )
+            except ValueError:
+                origin_ok = False
+            if not origin_ok:
+                self.send_error(403, "Forbidden")
+                return False
+        referer = self.headers.get("Referer")
+        if referer:
+            try:
+                referer_parts = urllib.parse.urlsplit(referer)
+                referer_ok = (
+                    referer_parts.scheme.lower() == "http"
+                    and referer_parts.netloc == self.expected_host
+                )
+            except ValueError:
+                referer_ok = False
+            if not referer_ok:
+                self.send_error(403, "Forbidden")
+                return False
+        fetch_site = self.headers.get("Sec-Fetch-Site")
+        fetch_site_value = fetch_site.strip().lower() if fetch_site else ""
+        is_api = path == "/api" or path.startswith("/api/")
+        allowed_fetch_sites = {"same-origin"} if is_api or mutation else {"same-origin", "none"}
+        if fetch_site_value and fetch_site_value not in allowed_fetch_sites:
+            self.send_error(403, "Forbidden")
+            return False
+        if is_api and path != "/api/health":
+            supplied = self.headers.get("X-CG-Signal-Token", "")
+            if not hmac.compare_digest(supplied, self.dashboard.api_token):
+                self.send_error(403, "Forbidden")
+                return False
+        if mutation:
+            content_type = self.headers.get("Content-Type", "")
+            media_type = content_type.split(";", 1)[0].strip().lower()
+            if media_type != "application/json":
+                self.send_error(415, "Unsupported Media Type")
+                return False
+            if origin:
+                try:
+                    origin_parts = urllib.parse.urlsplit(origin)
+                    if f"{origin_parts.scheme.lower()}://{origin_parts.netloc}" != expected_origin:
+                        raise ValueError
+                except (ValueError, AttributeError):
+                    self.send_error(403, "Forbidden")
+                    return False
+        return True
 
     def send_json(self, payload: dict[str, Any], status: int = 200) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -59,8 +143,36 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
+        if not self.authorize_request(parsed.path):
+            return
         service = self.dashboard.service
         repository = service.repository
+        if parsed.path.startswith("/thumbnails/"):
+            # Asset URLs are deliberately token-free so ``<img>`` requests do
+            # not need custom headers.  The exact canonical path remains
+            # localhost Host-gated and cannot contain encoded aliases/query
+            # strings or traversal segments.
+            reference = parsed.path.lstrip("/")
+            if parsed.query or canonical_thumbnail_reference(reference) != reference:
+                self.send_error(404)
+                return
+            verified = read_verified_thumbnail(
+                self.dashboard.paths.thumbnail_dir,
+                reference,
+                expected_anchor=self.dashboard.paths.thumbnail_anchor,
+            )
+            parsed_reference = reference.rsplit(".", 1)[-1]
+            if verified is None or parsed_reference not in EXTENSION_TO_MIME:
+                self.send_error(404)
+                return
+            body = verified.body
+            self.send_response(200)
+            self.send_header("Content-Type", EXTENSION_TO_MIME[parsed_reference])
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "public, max-age=2592000, immutable")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if parsed.path == "/api/health":
             self.send_json(
                 {
@@ -80,7 +192,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             try:
                 self.send_json(
                     service.feed_for_request(
-                        force=parameters.get("refresh", ["0"])[0] == "1",
+                        # GET is intentionally passive.  Forced refresh has a
+                        # separate POST endpoint so query strings cannot force
+                        # an expensive network operation.
+                        force=False,
                         wait_for_refresh=parameters.get("wait", ["0"])[0] == "1",
                         wait_for_thumbnails=parameters.get("wait_thumbnails", ["0"])[0] == "1",
                     )
@@ -128,6 +243,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         body = candidate.read_bytes()
+        if candidate.name == "index.html":
+            token = html.escape(self.dashboard.api_token, quote=True).encode("ascii")
+            body = body.replace(b"__CG_SIGNAL_API_TOKEN__", token)
         content_type, _ = mimetypes.guess_type(candidate.name)
         if candidate.suffix.lower() == ".mjs":
             content_type = "application/javascript"
@@ -136,13 +254,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", content_type or "application/octet-stream")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Cache-Control", "no-store" if candidate.name == "index.html" else "no-cache")
         self.end_headers()
         self.wfile.write(body)
 
     def do_POST(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
-        supported_paths = {"/api/state", "/api/sources", "/api/sources/test", "/api/sources/toggle"}
+        if not self.authorize_request(parsed.path, mutation=True):
+            return
+        supported_paths = {
+            "/api/feed/refresh", "/api/state", "/api/sources", "/api/sources/test", "/api/sources/toggle",
+        }
         if parsed.path not in supported_paths:
             self.send_error(404)
             return
@@ -151,7 +273,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         try:
             maximum_size = 750_000 if parsed.path == "/api/state" else 50_000
             payload = self.read_json_body(maximum_size)
-            if parsed.path == "/api/state":
+            if parsed.path == "/api/feed/refresh":
+                if payload != {}:
+                    raise ValueError("Feed refresh payload must be an empty object.")
+                self.send_json(service.feed_for_request(force=True))
+            elif parsed.path == "/api/state":
                 self.send_json(repository.write_state(payload))
             elif parsed.path == "/api/sources":
                 source = repository.add_source_config(payload)
@@ -179,9 +305,12 @@ class DashboardServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, address: tuple[str, int], handler: type[BaseHTTPRequestHandler], *, paths: RuntimePaths):
+        if address[0] != "127.0.0.1":
+            raise ValueError("CG Signal only binds to 127.0.0.1.")
         self.paths = paths
         self.service = FeedService(self.paths)
         self.source_revision = source_revision(self.paths.root)
+        self.api_token = secrets.token_urlsafe(32)
         super().__init__(address, handler)
 
     def server_bind(self) -> None:
@@ -192,7 +321,6 @@ class DashboardServer(ThreadingHTTPServer):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run the private CG Signal RSS dashboard.")
-    parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=4310)
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--print-source-revision", action="store_true")
@@ -202,14 +330,14 @@ def main() -> None:
         print(source_revision(paths.root))
         return
     try:
-        server = DashboardServer((arguments.host, arguments.port), DashboardHandler, paths=paths)
+        server = DashboardServer(("127.0.0.1", arguments.port), DashboardHandler, paths=paths)
     except OSError as error:
         raise SystemExit(
-            f"CG Signal could not use {arguments.host}:{arguments.port}. It may already be running."
+            f"CG Signal could not use 127.0.0.1:{arguments.port}. It may already be running."
         ) from error
     paths.cache_dir.mkdir(parents=True, exist_ok=True)
     paths.pid_file.write_text(str(os.getpid()), encoding="utf-8")
-    url = f"http://{arguments.host}:{arguments.port}"
+    url = f"http://127.0.0.1:{arguments.port}"
     print("\nCG Signal is ready")
     print(f"Open: {url}")
     print("Press Ctrl+C to stop.\n")

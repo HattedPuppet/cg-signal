@@ -7,6 +7,7 @@ import {
   articleWithinPublicationWindow,
   matchesSearch as matchesSearchQuery,
   feedPayloadIsStructurallyCompatible,
+  thumbnailReferenceIsValid,
 } from "./domain.mjs";
 
 const storageKeys = {
@@ -45,9 +46,6 @@ const elements = {
   storyList: document.querySelector("#story-list"),
   empty: document.querySelector("#empty-state"),
   clearFilters: document.querySelector("#clear-filters"),
-  storyTotal: document.querySelector("#story-total"),
-  repeatTotal: document.querySelector("#repeat-total"),
-  recentTotal: document.querySelector("#recent-total"),
   updateStatus: document.querySelector("#update-status"),
   connectionDot: document.querySelector("#connection-dot"),
   categoryLists: [...document.querySelectorAll("[data-category-list]")],
@@ -155,6 +153,17 @@ function articleWithinTimeWindow(article) {
   return articleWithinPublicationWindow(article, state.timeWindow);
 }
 
+function safeImageUrl(value) {
+  if (typeof value !== "string" || value === "" || !thumbnailReferenceIsValid(value)) return "#";
+  try {
+    const url = new URL(value, document.baseURI);
+    if (url.origin !== window.location.origin) return "#";
+    return url.href;
+  } catch {
+    return "#";
+  }
+}
+
 function primaryCategory(article) {
   return article.software_group || articleCategories(article)[0];
 }
@@ -180,11 +189,19 @@ function matchesBaseFilters(article) {
   return matchesSearch(article);
 }
 
+function matchesCategory(article) {
+  return state.category === "All" || articleCategories(article).includes(state.category);
+}
+
+function chronologicalArticles(articles) {
+  return [...articles].sort((left, right) => (
+    new Date(right.published_at).getTime() - new Date(left.published_at).getTime()
+    || String(left.id || "").localeCompare(String(right.id || ""))
+  ));
+}
+
 function visibleArticles() {
-  return state.articles.filter((article) => {
-    if (!matchesBaseFilters(article)) return false;
-    return state.category === "All" || articleCategories(article).includes(state.category);
-  });
+  return chronologicalArticles(state.articles.filter((article) => matchesBaseFilters(article) && matchesCategory(article)));
 }
 
 function categoryCounts() {
@@ -266,7 +283,7 @@ function trimSummary(value) {
 function storyMarkup(article) {
   const pinned = state.pinned.has(article.id);
   const category = primaryCategory(article);
-  const imageUrl = safeUrl(article.image);
+  const imageUrl = safeImageUrl(article.image);
   const image = imageUrl === "#" ? "" : `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`;
   const reasons = [...new Set([...(article.software_tags || []), ...(article.topic_tags || [])])]
     .filter((reason) => reason !== category)
@@ -292,33 +309,8 @@ function storyMarkup(article) {
     </article>`;
 }
 
-const RECENCY_SECTIONS = [
-  { key: "day", label: "Last 24 hours" },
-  { key: "three-days", label: "Last 3 days" },
-  { key: "older", label: "Earlier" },
-];
-
-function articleRecencyBucket(article) {
-  const published = new Date(article.published_at).getTime();
-  if (Number.isNaN(published)) return "older";
-  const age = Math.max(0, Date.now() - published);
-  if (age < 24 * 60 * 60 * 1000) return "day";
-  if (age < 3 * 24 * 60 * 60 * 1000) return "three-days";
-  return "older";
-}
-
 function storyListMarkup(articles) {
-  return RECENCY_SECTIONS.map(({ key, label }) => {
-    const sectionArticles = articles.filter((article) => articleRecencyBucket(article) === key);
-    if (!sectionArticles.length) return "";
-    const headingId = "recency-" + key;
-    return [
-      '<section class="recency-section" aria-labelledby="' + headingId + '">',
-      '<div class="recency-section-heading"><h2 id="' + headingId + '">' + escapeHtml(label) + '</h2><span>' + sectionArticles.length + '</span></div>',
-      '<div class="recency-stories">' + sectionArticles.map(storyMarkup).join("") + '</div>',
-      '</section>',
-    ].join("");
-  }).join("");
+  return articles.map(storyMarkup).join("");
 }
 
 function updateLaneCounts() {
@@ -358,9 +350,6 @@ function render() {
   renderSourceManager();
   renderFilterDrawerSummary();
   updateLaneCounts();
-  elements.storyTotal.textContent = state.view === "pinned" ? pinned : enabledArticles.length;
-  elements.repeatTotal.textContent = state.payload.duplicates_collapsed || 0;
-  elements.recentTotal.textContent = enabledArticles.filter((article) => articleRecencyBucket(article) === "day").length;
   elements.pinnedTotal.textContent = pinned;
   elements.feedKicker.textContent = state.view === "pinned" ? "Pinned signal" : "Latest signal";
   elements.feedTitle.textContent = state.view === "pinned" ? "Keep these close" : "What is worth a look";
@@ -377,7 +366,7 @@ function render() {
   elements.storyList.setAttribute("aria-busy", "false");
   elements.clearSearchButtons.forEach((button) => { button.hidden = !state.search.trim(); });
   document.querySelectorAll("[data-view]").forEach((button) => {
-    const active = button.dataset.view === state.view || (button.dataset.view === "latest" && state.view === "latest");
+    const active = button.dataset.view === state.view;
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-current", active ? "page" : "false");
   });
@@ -416,16 +405,41 @@ function feedPayloadIsCompatible(payload) {
 
 function readCachedFeed() {
   try {
-    const payload = JSON.parse(localStorage.getItem(storageKeys.feed) || "null");
-    return feedPayloadIsCompatible(payload) ? payload : null;
+    const raw = localStorage.getItem(storageKeys.feed);
+    if (!raw) return null;
+    const payload = JSON.parse(raw);
+    if (feedPayloadIsCompatible(payload)) return payload;
+    localStorage.removeItem(storageKeys.feed);
+    return null;
   } catch {
+    try { localStorage.removeItem(storageKeys.feed); } catch { /* storage may be unavailable */ }
     return null;
   }
 }
 
 function applyFeed(payload, { store = false } = {}) {
-  state.payload = payload;
-  state.articles = payload.articles;
+  if (!feedPayloadIsCompatible(payload)) throw new Error("The feed payload is not render-safe.");
+  const previousPayload = state.payload;
+  const previousArticles = state.articles;
+  const previousSource = state.source;
+  try {
+    state.payload = payload;
+    state.articles = payload.articles;
+    persistPinned();
+    persistDisabledSources();
+    if (state.disabledSources.has(state.source)) state.source = "All";
+    render();
+  } catch (error) {
+    state.payload = previousPayload;
+    state.articles = previousArticles;
+    state.source = previousSource;
+    try { if (previousPayload) render(); } catch { /* preserve the original failure */ }
+    if (store) {
+      try { localStorage.removeItem(storageKeys.feed); } catch { /* ignore storage errors */ }
+    }
+    throw error;
+  }
+  // Persist only after applying and rendering the candidate successfully.
   if (store) {
     try {
       localStorage.setItem(storageKeys.feed, JSON.stringify(payload));
@@ -433,18 +447,33 @@ function applyFeed(payload, { store = false } = {}) {
       console.warn("CG Signal could not update its offline feed copy.", error);
     }
   }
-  persistPinned();
-  persistDisabledSources();
-  if (state.disabledSources.has(state.source)) state.source = "All";
-  render();
+}
+
+function showUnavailableNotice(names = [], { stale = false, retained = 0 } = {}) {
+  const uniqueNames = [...new Set(names.map((name) => String(name).trim()).filter(Boolean))];
+  const summary = stale
+    ? "Live refresh unavailable · showing cached stories"
+    : `${uniqueNames.length || "Some"} sources unavailable · showing cached stories`;
+  const retainedMessage = retained ? ` · ${retained} retained` : "";
+  const detail = uniqueNames.length
+    ? `<details><summary>Show unavailable sources</summary><span>${uniqueNames.map(escapeHtml).join(", ")}</span></details>`
+    : "";
+  elements.notice.innerHTML = `<strong>${escapeHtml(summary)}${escapeHtml(retainedMessage)}</strong>${detail}`;
+  elements.notice.hidden = false;
 }
 
 async function loadFeed() {
   state.lastFetchAt = Date.now();
-  const cached = readCachedFeed();
+  let cached = readCachedFeed();
   if (!state.payload && cached) {
-    applyFeed(cached);
-    updateConnection(navigator.onLine, true, navigator.onLine);
+    try {
+      applyFeed(cached);
+      updateConnection(navigator.onLine, true, navigator.onLine);
+    } catch (error) {
+      cached = null;
+      try { localStorage.removeItem(storageKeys.feed); } catch { /* ignore storage errors */ }
+      console.warn("CG Signal evicted an unreadable offline feed copy.", error);
+    }
   }
   try {
     const response = await fetch("./feed.json", { cache: "no-store" });
@@ -454,11 +483,7 @@ async function loadFeed() {
     applyFeed(payload, { store: true });
     updateConnection(true);
     if (payload.unavailable_sources?.length) {
-      const retentionMessage = payload.carried_forward_count
-        ? " Recent articles from earlier successful updates are retained."
-        : "";
-      elements.notice.textContent = `Some sources missed the latest update: ${payload.unavailable_sources.join(", ")}.${retentionMessage}`;
-      elements.notice.hidden = false;
+      showUnavailableNotice(payload.unavailable_sources, { retained: payload.carried_forward_count });
     } else {
       elements.notice.hidden = true;
     }
@@ -467,8 +492,7 @@ async function loadFeed() {
     if (fallback?.articles?.length) {
       if (!state.payload) applyFeed(fallback);
       updateConnection(false, true);
-      elements.notice.textContent = "The network is unavailable, so the most recent copy stored on this phone is shown.";
-      elements.notice.hidden = false;
+      showUnavailableNotice([], { stale: true });
     } else {
       elements.storyList.hidden = true;
       elements.empty.hidden = false;
@@ -693,7 +717,7 @@ elements.filterDrawerHandle.addEventListener("pointercancel", () => {
 });
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=20260807").catch(() => {}));
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=20260811-v22").catch(() => {}));
 }
 
 loadFeed();

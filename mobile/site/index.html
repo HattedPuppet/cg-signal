@@ -8,9 +8,9 @@
     <link rel="icon" href="./favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="./icon-180.png" />
     <link rel="manifest" href="./manifest.json" />
-    <link rel="stylesheet" href="./styles.css?v=20260807" />
+    <link rel="stylesheet" href="./styles.css?v=20260811-v22" />
     <title>CG Signal Mobile</title>
-    <script src="./app.js?v=20260807" type="module"></script>
+    <script src="./app.js?v=20260811-v22" type="module"></script>
   </head>
   <body>
     <a class="skip-link" href="#story-list">Skip to stories</a>
@@ -75,22 +75,6 @@
     </header>
 
     <main>
-      <section class="hero" aria-labelledby="hero-title">
-        <div class="hero-grid" aria-hidden="true"></div>
-        <p class="eyebrow"><span></span> Your creative-tech field signal</p>
-        <h1 id="hero-title">Stay current.<br /><em>Keep moving.</em></h1>
-        <p class="hero-copy">A lightweight mobile feed generated from the same trusted CG and game-development sources as your desktop dashboard.</p>
-        <div class="hero-stats">
-          <div><strong id="story-total">—</strong><span>current stories</span></div>
-          <div><strong id="repeat-total">—</strong><span>repeats folded</span></div>
-          <div><strong id="recent-total">—</strong><span>in last 24 hours</span></div>
-        </div>
-        <div class="update-row">
-          <span id="connection-dot" class="connection-dot"></span>
-          <span id="update-status">Gathering the latest signal…</span>
-        </div>
-      </section>
-
       <div id="notice" class="notice" role="status" hidden></div>
 
       <section class="feed-section" aria-labelledby="feed-title">
@@ -98,6 +82,10 @@
           <div>
             <p class="eyebrow"><span></span> <span id="feed-kicker">Latest signal</span></p>
             <h2 id="feed-title">What’s worth a look</h2>
+            <div class="update-row feed-update-row">
+              <span id="connection-dot" class="connection-dot"></span>
+              <span id="update-status">Gathering the latest signal…</span>
+            </div>
           </div>
           <div class="feed-heading-actions">
             <button id="density-toggle" class="density-toggle" type="button" aria-label="Use compact cards" aria-pressed="false" title="Use compact cards"><span aria-hidden="true">↕</span><span>Compact</span></button>
@@ -122,7 +110,7 @@
         <span aria-hidden="true">◎</span>
         <div>
           <strong>Public feed, private research</strong>
-          <p>This mobile edition contains public RSS excerpts only. Pins stay on this phone; notes, desktop history, and preference tuning remain on your PC.</p>
+          <p>This mobile edition contains public RSS excerpts only. Pins stay on this phone; notes and desktop history remain on your PC.</p>
         </div>
       </section>
     </main>

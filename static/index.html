@@ -8,6 +8,7 @@
       content="A private local dashboard for CG and game-development news."
     />
     <meta name="theme-color" content="#161a16" />
+    <meta name="cg-signal-api-token" content="__CG_SIGNAL_API_TOKEN__" />
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="alternate icon" href="/favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="/icon-180.png" />
@@ -39,11 +40,6 @@
             <span>History</span>
             <strong id="history-count">—</strong>
           </button>
-          <button class="nav-item" type="button" data-view="archived">
-            <span class="nav-symbol archive-symbol" aria-hidden="true">⌄</span>
-            <span>Archived</span>
-            <strong id="archived-count">0</strong>
-          </button>
         </nav>
 
         <div class="sidebar-section">
@@ -51,7 +47,7 @@
             <h2>Sources</h2>
             <div class="section-actions">
               <button id="manage-sources" class="text-button" type="button" aria-haspopup="dialog" aria-expanded="false">Manage</button>
-              <button id="reset-sources" class="text-button" type="button" title="Restore every source and clear source tuning">Reset</button>
+              <button id="reset-sources" class="text-button" type="button" title="Restore every source and clear source filters">Reset</button>
             </div>
           </div>
           <p class="source-filter-hint">Click to isolate · Ctrl-click to combine</p>
@@ -66,7 +62,7 @@
           <span class="privacy-mark" aria-hidden="true">◎</span>
           <div>
             <strong>Private by design</strong>
-            <p>No account. No tracking. Saving and archiving stay on this computer.</p>
+            <p>No account. No tracking. Your library and notes stay on this computer.</p>
           </div>
         </div>
 
@@ -78,10 +74,15 @@
         </div>
       </aside>
 
+      <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-controls="desktop-sidebar" aria-expanded="true" aria-label="Hide navigation panel" title="Hide navigation panel">
+        <span class="sidebar-toggle-icon" data-sidebar-toggle-icon aria-hidden="true">‹</span>
+      </button>
+
       <main class="main-panel">
         <header class="topbar">
-          <button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-controls="desktop-sidebar" aria-expanded="true" aria-label="Hide navigation panel" title="Hide navigation panel">
-            <span class="sidebar-toggle-lines" aria-hidden="true"><i></i><i></i><i></i></span>
+          <button id="home-button" class="icon-text-button home-button" type="button" aria-label="Return to Latest Signal">
+            <span aria-hidden="true">⌂</span>
+            <span class="button-label">Home</span>
           </button>
           <div class="search-wrap">
             <label class="search-box" for="search-input">
@@ -120,43 +121,23 @@
           </div>
         </header>
 
-        <section class="hero" aria-labelledby="hero-title">
-          <div class="hero-grid-lines" aria-hidden="true"></div>
-          <div class="hero-copy">
-            <p class="eyebrow"><span></span> Curated across trusted sources</p>
-            <h1 id="hero-title">The craft,<br /><em>without the noise.</em></h1>
-            <p class="hero-description">
-              Fresh CG and game-development stories, organized around your tools with repeated coverage quietly folded away.
-            </p>
-          </div>
-
-          <div class="hero-aside">
-            <p class="today-label">Today’s board</p>
-            <div class="hero-stat-grid">
-              <div class="hero-stat primary-stat">
-                <strong id="hero-unique">—</strong>
-                <span>stories in focus</span>
-              </div>
-              <div class="hero-stat">
-                <strong id="hero-collapsed">—</strong>
-                <span>repeats folded</span>
-              </div>
-              <div class="hero-stat wide-stat">
-                <div class="source-orbit" id="source-orbit" aria-label="Feed source status"></div>
-                <span id="last-updated">Gathering the latest signal…</span>
-              </div>
-            </div>
-          </div>
-        </section>
-
         <section class="feed-toolbar" aria-label="Story filters">
           <div class="filter-groups">
             <div class="feed-primary-row">
-              <div class="lane-filters" role="group" aria-label="Filter by information type">
+              <div class="lane-filters" role="group" aria-label="Filter Latest Signal by information type">
                 <button class="lane-button is-active" type="button" data-lane="All">All <strong>—</strong></button>
                 <button class="lane-button" type="button" data-lane="Tech &amp; Development">Tech &amp; development <strong>—</strong></button>
                 <button class="lane-button" type="button" data-lane="Industry">Industry <strong>—</strong></button>
                 <button class="lane-button" type="button" data-lane="Business">Business <strong>—</strong></button>
+              </div>
+
+              <div class="time-window-row">
+                <span class="software-filter-label">Publication window</span>
+                <div class="time-window-filters" role="group" aria-label="Filter by publication window">
+                  <button class="time-window-button is-active" type="button" data-time-window="month" aria-pressed="true">This month</button>
+                  <button class="time-window-button" type="button" data-time-window="quarter" aria-pressed="false">Last 3 months</button>
+                  <button class="time-window-button" type="button" data-time-window="all" aria-pressed="false">All current</button>
+                </div>
               </div>
 
               <div class="result-summary">
@@ -164,15 +145,8 @@
                 <span id="new-since" class="new-since-count" hidden></span>
                 <span class="divider"></span>
                 <span id="sort-label">Newest first</span>
-              </div>
-            </div>
-
-            <div class="time-window-row">
-              <span class="software-filter-label">Publication window</span>
-              <div class="time-window-filters" role="group" aria-label="Filter by publication window">
-                <button class="time-window-button is-active" type="button" data-time-window="month" aria-pressed="true">This month</button>
-                <button class="time-window-button" type="button" data-time-window="quarter" aria-pressed="false">Last 3 months</button>
-                <button class="time-window-button" type="button" data-time-window="all" aria-pressed="false">All current</button>
+                <span class="divider"></span>
+                <span id="last-updated" class="feed-update-status">Gathering the latest signal…</span>
               </div>
             </div>
 
@@ -214,7 +188,7 @@
         <footer class="main-footer">
           <p>Built for quiet research. Articles always open on the original publisher’s website.</p>
           <div class="footer-actions">
-            <span class="shortcut-legend"><kbd>J</kbd>/<kbd>K</kbd> move · <kbd>Enter</kbd> open · <kbd>S</kbd> save · <kbd>A</kbd> archive</span>
+            <span class="shortcut-legend"><kbd>J</kbd>/<kbd>K</kbd> move · <kbd>Enter</kbd> open · <kbd>S</kbd> save</span>
           </div>
         </footer>
       </main>

@@ -29,11 +29,16 @@ class DesktopShellTests(unittest.TestCase):
                 thread.join(timeout=5)
                 server.server_close()
 
-    def test_search_lives_in_the_sticky_header(self):
+    def test_search_lives_in_the_sticky_header_above_filters(self):
         html = (SITE / "index.html").read_text(encoding="utf-8")
         self.assertEqual(html.count('id="search-input"'), 1)
         self.assertEqual(html.count('class="search-wrap"'), 1)
+        self.assertNotIn('class="feed-search-row"', html)
+        self.assertIn('id="home-button"', html)
+        self.assertLess(html.index('id="home-button"'), html.index('class="search-wrap"'))
         self.assertLess(html.index('class="search-wrap"'), html.index('class="topbar-actions"'))
+        self.assertLess(html.index('class="topbar"'), html.index('class="feed-toolbar"'))
+        self.assertLess(html.index('class="feed-toolbar"'), html.index('id="stories"'))
         self.assertIn('id="scroll-top-button"', html)
         self.assertNotIn('id="density-toggle"', html)
         self.assertIn('id="sidebar-toggle"', html)
@@ -42,7 +47,10 @@ class DesktopShellTests(unittest.TestCase):
         self.assertNotIn('class="brand-row"', html)
         self.assertNotIn('class="local-pill"', html)
         self.assertLess(html.index('id="sidebar-toggle"'), html.index('class="search-wrap"'))
-        self.assertIn('class="sidebar-toggle-lines"', html)
+        self.assertLess(html.index('id="sidebar-toggle"'), html.index('<main class="main-panel">'))
+        self.assertIn('class="sidebar-toggle-icon"', html)
+        self.assertIn('elements.home.addEventListener("click"', (SITE / "app.js").read_text(encoding="utf-8"))
+        self.assertIn('window.scrollTo({ top: 0, behavior: "auto" })', (SITE / "app.js").read_text(encoding="utf-8"))
 
     def test_first_article_jump_is_instant_and_persistent(self):
         javascript = (SITE / "app.js").read_text(encoding="utf-8")
@@ -62,6 +70,22 @@ class DesktopShellTests(unittest.TestCase):
         self.assertIn('document.addEventListener("pointerdown"', javascript)
         self.assertIn('document.addEventListener("focusin"', javascript)
 
+    def test_desktop_filters_follow_search_without_a_board(self):
+        html = (SITE / "index.html").read_text(encoding="utf-8")
+        styles = (SITE / "styles.css").read_text(encoding="utf-8")
+        javascript = (SITE / "app.js").read_text(encoding="utf-8")
+        self.assertNotIn('class="hero"', html)
+        self.assertNotIn('id="hero-unique"', html)
+        self.assertNotIn('id="source-orbit"', html)
+        self.assertNotIn("heroUnique", javascript)
+        self.assertNotIn("sourceOrbit", javascript)
+        self.assertNotIn(".hero {", styles)
+        self.assertIn(".feed-toolbar {", styles)
+        self.assertIn("position: sticky", styles)
+        self.assertIn("backdrop-filter: blur(16px)", styles)
+        self.assertIn("padding: 2px 2px 18px", styles)
+        self.assertIn('id="last-updated" class="feed-update-status"', html)
+
     def test_brief_read_and_density_features_are_removed_from_desktop(self):
         html = (SITE / "index.html").read_text(encoding="utf-8")
         javascript = (SITE / "app.js").read_text(encoding="utf-8")
@@ -78,6 +102,17 @@ class DesktopShellTests(unittest.TestCase):
         self.assertIn("sidebarOpen", javascript)
         self.assertIn("setSidebarOpen", javascript)
 
+    def test_learning_library_is_the_only_user_saving_feature(self):
+        html = (SITE / "index.html").read_text(encoding="utf-8")
+        javascript = (SITE / "app.js").read_text(encoding="utf-8")
+        self.assertIn('data-view="saved"', html)
+        self.assertIn("Learning library", html)
+        self.assertNotIn('data-view="archived"', html)
+        self.assertNotIn("data-archive-id", javascript)
+        self.assertNotIn('key === "a"', javascript)
+        self.assertIn('archived: []', javascript)
+        self.assertIn('localStorage.removeItem("cg-signal:archived")', javascript)
+
     def test_latest_signal_has_a_recent_publication_window(self):
         html = (SITE / "index.html").read_text(encoding="utf-8")
         javascript = (SITE / "app.js").read_text(encoding="utf-8")
@@ -85,10 +120,46 @@ class DesktopShellTests(unittest.TestCase):
         self.assertIn('data-time-window="month"', html)
         self.assertIn('data-time-window="quarter"', html)
         self.assertIn('data-time-window="all"', html)
+        lane_group = html.index('class="lane-filters"')
+        window_group = html.index('class="time-window-row"')
+        result_summary = html.index('class="result-summary"')
+        self.assertLess(lane_group, window_group)
+        self.assertLess(window_group, result_summary)
         self.assertIn('timeWindow: "cg-signal:time-window"', javascript)
         self.assertIn("function articleWithinTimeWindow(article)", javascript)
         self.assertIn("function articleMonthLabel(article)", javascript)
         self.assertIn(".month-divider", styles)
+
+    def test_latest_signal_is_the_default_chronological_view(self):
+        html = (SITE / "index.html").read_text(encoding="utf-8")
+        javascript = (SITE / "app.js").read_text(encoding="utf-8")
+        styles = (SITE / "styles.css").read_text(encoding="utf-8")
+        self.assertIn('data-view="all"', html)
+        self.assertIn('view: "all"', javascript)
+        self.assertNotIn("feedback", javascript.lower())
+        self.assertNotIn("reduced", javascript.lower())
+        self.assertNotIn("is-returning", styles)
+
+    def test_sidebar_handle_tracks_drawer_boundary_at_both_breakpoints(self):
+        javascript = (SITE / "app.js").read_text(encoding="utf-8")
+        styles = (SITE / "styles.css").read_text(encoding="utf-8")
+        self.assertIn("data-sidebar-toggle-icon", javascript)
+        self.assertIn("state.sidebarOpen ? \"‹\" : \"›\"", javascript)
+        self.assertIn("--sidebar-width: 258px", styles)
+        self.assertIn("@media (max-width: 850px)", styles)
+        self.assertIn(".app-shell.sidebar-closed .sidebar", styles)
+        self.assertIn("left: calc(var(--sidebar-width) - 1px)", styles)
+        self.assertIn("width: var(--sidebar-width)", styles)
+        self.assertIn("body.night .sidebar-toggle", styles)
+        self.assertIn("background: var(--sidebar);", styles)
+        self.assertIn("transition: left 220ms ease", styles)
+
+    def test_warnings_have_a_concise_summary_and_expandable_detail(self):
+        html = (SITE / "index.html").read_text(encoding="utf-8")
+        javascript = (SITE / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="notice"', html)
+        self.assertIn("sources unavailable · showing cached stories", javascript)
+        self.assertIn("Show unavailable sources", javascript)
 
     def test_obsolete_or_invalid_persisted_lane_defaults_to_all(self):
         javascript = (SITE / "app.js").read_text(encoding="utf-8")

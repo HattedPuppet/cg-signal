@@ -13,20 +13,31 @@ import {
   matchesSearch as matchesSearchQuery,
   articleWithinPublicationWindow,
   feedPayloadIsStructurallyCompatible,
+  thumbnailReferenceIsValid,
 } from "./domain.mjs";
+
+const apiToken = document.querySelector('meta[name="cg-signal-api-token"]')?.content || "";
+
+async function apiFetch(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+  headers.set("X-CG-Signal-Token", apiToken);
+  return fetch(url, {
+    cache: "no-store",
+    ...options,
+    headers,
+  });
+}
 
 const storageKeys = {
   saved: "cg-signal:saved",
-  archived: "cg-signal:archived",
+  archiveRemoval: "cg-signal:archive-feature-removed",
   theme: "cg-signal:theme",
   layout: "cg-signal:layout",
   lane: "cg-signal:lane",
   software: "cg-signal:software",
   topics: "cg-signal:topics",
   notes: "cg-signal:notes",
-  feedback: "cg-signal:feedback",
   mutedSources: "cg-signal:muted-sources",
-  reducedSources: "cg-signal:reduced-sources",
   lastVisit: "cg-signal:last-visit",
   stateDirty: "cg-signal:state-dirty",
   stateMigrated: "cg-signal:state-migrated",
@@ -58,11 +69,8 @@ const state = {
   view: "all",
   search: "",
   saved: readSet(storageKeys.saved),
-  archived: readSet(storageKeys.archived),
   notes: readObject(storageKeys.notes),
-  feedback: readFeedback(storageKeys.feedback),
   mutedSources: readSet(storageKeys.mutedSources),
-  reducedSources: readSet(storageKeys.reducedSources),
   layout: localStorage.getItem(storageKeys.layout) || "grid",
   timeWindow: Object.prototype.hasOwnProperty.call(TIME_WINDOW_LABELS, localStorage.getItem(storageKeys.timeWindow))
     ? localStorage.getItem(storageKeys.timeWindow)
@@ -94,7 +102,6 @@ const elements = {
   stories: document.querySelector("#stories"),
   empty: document.querySelector("#empty-state"),
   sourceFilters: document.querySelector("#source-filters"),
-  sourceOrbit: document.querySelector("#source-orbit"),
   softwareFilterGroup: document.querySelector("#software-filter-group"),
   softwareFilters: document.querySelector("#software-filters"),
   topicFilterGroup: document.querySelector("#topic-filter-group"),
@@ -103,11 +110,9 @@ const elements = {
   newSince: document.querySelector("#new-since"),
   allCount: document.querySelector("#all-count"),
   savedCount: document.querySelector("#saved-count"),
-  archivedCount: document.querySelector("#archived-count"),
   historyCount: document.querySelector("#history-count"),
-  heroUnique: document.querySelector("#hero-unique"),
-  heroCollapsed: document.querySelector("#hero-collapsed"),
   lastUpdated: document.querySelector("#last-updated"),
+  home: document.querySelector("#home-button"),
   search: document.querySelector("#search-input"),
   searchHelp: document.querySelector("#search-help"),
   scrollTop: document.querySelector("#scroll-top-button"),
@@ -162,25 +167,6 @@ function readObject(key) {
   }
 }
 
-function normalizeFeedbackItem(item) {
-  return {
-    ...item,
-    software_tags: [...new Set((item.software_tags || []).map(normalizeSoftwareCategory).filter(Boolean))],
-  };
-}
-
-function readFeedback(key) {
-  try {
-    const value = JSON.parse(localStorage.getItem(key) || "[]");
-    return new Map((Array.isArray(value) ? value : [])
-      .filter((item) => item?.id)
-      .map(normalizeFeedbackItem)
-      .map((item) => [item.id, item]));
-  } catch {
-    return new Map();
-  }
-}
-
 function parseStoredDate(value) {
   if (!value) return null;
   const date = new Date(value);
@@ -220,26 +206,21 @@ function saveSet(key, value) {
 
 function cacheUserState() {
   saveSet(storageKeys.saved, state.saved);
-  saveSet(storageKeys.archived, state.archived);
   localStorage.setItem(storageKeys.notes, JSON.stringify(state.notes));
-  localStorage.setItem(storageKeys.feedback, JSON.stringify([...state.feedback.values()].slice(-500)));
   saveSet(storageKeys.mutedSources, state.mutedSources);
-  saveSet(storageKeys.reducedSources, state.reducedSources);
 }
 
 async function persistUserState() {
   cacheUserState();
   try {
-    const response = await fetch("/api/state", {
+    const response = await apiFetch("/api/state", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         saved: [...state.saved],
-        archived: [...state.archived],
+        archived: [],
         notes: state.notes,
-        feedback: [...state.feedback.values()],
         muted_sources: [...state.mutedSources],
-        reduced_sources: [...state.reducedSources],
       }),
     });
     if (!response.ok) throw new Error(`State save failed (${response.status})`);
@@ -259,25 +240,21 @@ function queueUserStateSave() {
 
 async function loadUserState() {
   try {
-    const response = await fetch("/api/state", { cache: "no-store" });
+    const response = await apiFetch("/api/state");
     if (!response.ok) throw new Error(`State request failed (${response.status})`);
     const stored = await response.json();
     const mergeLocal = localStorage.getItem(storageKeys.stateMigrated) !== "1"
       || localStorage.getItem(storageKeys.stateDirty) === "1";
     state.saved = new Set(mergeLocal ? [...state.saved, ...(stored.saved || [])] : (stored.saved || []));
-    state.archived = new Set(mergeLocal ? [...state.archived, ...(stored.archived || [])] : (stored.archived || []));
     state.notes = mergeLocal ? { ...(stored.notes || {}), ...state.notes } : (stored.notes || {});
-    state.feedback = new Map((mergeLocal
-      ? [...(stored.feedback || []), ...state.feedback.values()]
-      : (stored.feedback || [])).map(normalizeFeedbackItem).map((item) => [item.id, item]));
     state.mutedSources = new Set(mergeLocal
       ? [...state.mutedSources, ...(stored.muted_sources || [])]
       : (stored.muted_sources || []));
-    state.reducedSources = new Set(mergeLocal
-      ? [...state.reducedSources, ...(stored.reduced_sources || [])]
-      : (stored.reduced_sources || []));
-    state.mutedSources.forEach((id) => state.reducedSources.delete(id));
-    if (mergeLocal) await persistUserState();
+    const needsArchiveRemoval = localStorage.getItem(storageKeys.archiveRemoval) !== "1"
+      || (stored.archived || []).length > 0;
+    localStorage.removeItem("cg-signal:archived");
+    if (mergeLocal || needsArchiveRemoval) await persistUserState();
+    localStorage.setItem(storageKeys.archiveRemoval, "1");
     localStorage.setItem(storageKeys.stateMigrated, "1");
     cacheUserState();
   } catch (error) {
@@ -329,13 +306,20 @@ function trimSummary(value = "") {
   return clean.length > 230 ? `${clean.slice(0, 227).trim()}…` : clean;
 }
 
-function priorityScore(article) {
-  return Number(article.priority_score || 0);
+function chronologicalSort(left, right) {
+  return new Date(right.published_at).getTime() - new Date(left.published_at).getTime()
+    || String(left.id || "").localeCompare(String(right.id || ""));
 }
 
-function prioritySort(left, right) {
-  return priorityScore(right) - priorityScore(left)
-    || new Date(right.published_at).getTime() - new Date(left.published_at).getTime();
+function safeImageUrl(value = "") {
+  if (typeof value !== "string" || value === "" || !thumbnailReferenceIsValid(value)) return "#";
+  try {
+    const url = new URL(value, document.baseURI);
+    if (url.origin !== window.location.origin) return "#";
+    return url.href;
+  } catch {
+    return "#";
+  }
 }
 
 function articleWithinTimeWindow(article) {
@@ -371,10 +355,7 @@ function matchesSearch(article, query) {
     isStatus: (item, value) => ({
       saved: state.saved.has(item.id),
       library: state.saved.has(item.id),
-      archived: state.archived.has(item.id),
       new: articleIsNew(item),
-      liked: state.feedback.get(item.id)?.value === 1,
-      reduced: state.feedback.get(item.id)?.value === -1,
     })[value] || false,
   });
 }
@@ -385,9 +366,8 @@ function latestPool() {
     if (!articleWithinTimeWindow(article)) return false;
     if (!matchesSource(article)) return false;
     if (state.lane !== "All" && (article.lane || "Tech & Development") !== state.lane) return false;
-    if (state.archived.has(article.id)) return false;
     return matchesSearch(article, query);
-  });
+  }).sort(chronologicalSort);
 }
 
 function productionTopicsActive() {
@@ -411,13 +391,11 @@ function applyFacetFilters(articles) {
 }
 
 function usesArchiveView() {
-  return state.view === "history" || state.view === "saved" || state.view === "archived";
+  return state.view === "history" || state.view === "saved";
 }
 
 function archiveViewQuery() {
-  const status = state.view === "saved"
-    ? "#is:saved"
-    : state.view === "archived" ? "#is:archived" : "";
+  const status = state.view === "saved" ? "#is:saved" : "";
   return [state.search.trim(), status].filter(Boolean).join(" ");
 }
 
@@ -451,7 +429,7 @@ async function loadArchive({ append = false } = {}) {
   if (sourceIds.length) parameters.set("sources", sourceIds.join(","));
   if (state.sessionCutoff) parameters.set("new_after", state.sessionCutoff.toISOString());
   try {
-    const response = await fetch(`/api/archive?${parameters}`, { cache: "no-store" });
+    const response = await apiFetch(`/api/archive?${parameters}`);
     const payload = await response.json();
     if (!response.ok || payload.error) throw new Error(payload.detail || payload.error || `Archive request failed (${response.status})`);
     if (requestId !== state.archiveRequestId) return;
@@ -481,7 +459,6 @@ function filteredArticles() {
   if (usesArchiveView()) {
     return state.archiveArticles.filter((article) => {
       if (state.view === "saved" && !state.saved.has(article.id)) return false;
-      if (state.view === "archived" && !state.archived.has(article.id)) return false;
       return true;
     });
   }
@@ -490,12 +467,8 @@ function filteredArticles() {
   return state.articles.filter((article) => {
     if (!matchesSource(article)) return false;
     if (state.lane !== "All" && (article.lane || "Tech & Development") !== state.lane) return false;
-    if (state.view === "archived") {
-      if (!state.archived.has(article.id)) return false;
-    } else if (state.view === "saved") {
+    if (state.view === "saved") {
       if (!state.saved.has(article.id)) return false;
-    } else {
-      if (state.archived.has(article.id)) return false;
     }
     return matchesSearch(article, query);
   });
@@ -531,27 +504,16 @@ function relatedCoverage(article) {
     </details>`;
 }
 
-function feedbackControls(article) {
-  const current = state.feedback.get(article.id)?.value || 0;
-  return `
-    <div class="feedback-controls" role="group" aria-label="Tune recommendations from this story">
-      <button class="feedback-button${current === 1 ? " is-active" : ""}" type="button" data-feedback-id="${escapeHtml(article.id)}" data-feedback-value="1" aria-label="More like this" aria-pressed="${current === 1}" title="More like this">↑</button>
-      <button class="feedback-button${current === -1 ? " is-active is-negative" : ""}" type="button" data-feedback-id="${escapeHtml(article.id)}" data-feedback-value="-1" aria-label="Less like this" aria-pressed="${current === -1}" title="Less like this">↓</button>
-    </div>`;
-}
-
 function sourcePreferenceMenu(article) {
   const sourceId = article.source_id || article.sources?.[0]?.id || "";
   if (!sourceId) return "";
   const muted = state.mutedSources.has(sourceId);
-  const reduced = state.reducedSources.has(sourceId);
   return `
     <details class="source-menu">
-      <summary aria-label="Source preferences for ${escapeHtml(article.source)}" title="Source preferences">•••</summary>
+      <summary aria-label="Source actions for ${escapeHtml(article.source)}" title="Source actions">•••</summary>
       <div class="source-menu-panel">
         <strong>${escapeHtml(article.source)}</strong>
-        <button type="button" data-source-action="${muted || reduced ? "restore" : "reduce"}" data-preference-source="${escapeHtml(sourceId)}">${muted ? "Restore this source" : reduced ? "Restore normal priority" : "Show less from this source"}</button>
-        ${muted ? "" : `<button type="button" data-source-action="mute" data-preference-source="${escapeHtml(sourceId)}">Mute this source</button>`}
+        <button type="button" data-source-action="${muted ? "restore" : "mute"}" data-preference-source="${escapeHtml(sourceId)}">${muted ? "Restore this source" : "Mute this source"}</button>
       </div>
     </details>`;
 }
@@ -567,8 +529,7 @@ function libraryNote(article) {
 
 function storyCard(article) {
   const saved = state.saved.has(article.id);
-  const archived = state.archived.has(article.id);
-  const imageUrl = safeUrl(article.image);
+  const imageUrl = safeImageUrl(article.image);
   const image = imageUrl === "#" ? "" : `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`;
   const coverage = article.source_count > 1 ? `${article.source_count} sources` : "Single source";
   const lane = article.lane || "Tech & Development";
@@ -586,7 +547,7 @@ function storyCard(article) {
     ? `<div class="story-reasons">${reasons.map((reason) => `<span>${escapeHtml(reason)}</span>`).join("")}</div>`
     : "";
   return `
-    <article class="story-card${archived ? " is-archived" : ""}${state.keyboardArticleId === article.id ? " is-keyboard-active" : ""}" data-id="${escapeHtml(article.id)}" tabindex="-1" style="--story-accent:${escapeHtml(article.accent)}">
+    <article class="story-card${state.keyboardArticleId === article.id ? " is-keyboard-active" : ""}" data-id="${escapeHtml(article.id)}" tabindex="-1" style="--story-accent:${escapeHtml(article.accent)}">
       <div class="story-visual${image ? "" : " image-failed"}" data-category="${escapeHtml(category)}">
         ${image}
         <div class="visual-overlay"></div>
@@ -609,8 +570,6 @@ function storyCard(article) {
         <div class="story-footer">
           <div class="source-stack">${sourceStack(article)}<span class="coverage-label">${coverage}</span></div>
           <div class="card-actions">
-            ${feedbackControls(article)}
-            <button class="archive-button${archived ? " is-archived" : ""}" type="button" data-archive-id="${escapeHtml(article.id)}" aria-label="${archived ? "Restore from archive" : "Archive story"}" aria-pressed="${archived}">${archived ? "↥" : "⌄"}</button>
             <button class="save-button${saved ? " is-saved" : ""}" type="button" data-save-id="${escapeHtml(article.id)}" aria-label="${saved ? "Remove from saved" : "Save story"}" aria-pressed="${saved}">${saved ? "★" : "☆"}</button>
             ${sourcePreferenceMenu(article)}
           </div>
@@ -722,11 +681,10 @@ function renderFacetButtons(element, kind, allLabel, allCount, categories, count
 }
 
 function renderFacetFilters(pool) {
-  const isLatestView = state.view === "all";
-  const showTopics = isLatestView && productionTopicsActive();
-  elements.softwareFilterGroup.hidden = !isLatestView;
+  const showTopics = state.view === "all" && productionTopicsActive();
+  elements.softwareFilterGroup.hidden = state.view !== "all";
   elements.topicFilterGroup.hidden = !showTopics;
-  if (!isLatestView) return;
+  if (state.view !== "all") return;
 
   if (!showTopics && state.topics.size) {
     state.topics.clear();
@@ -766,12 +724,9 @@ function renderFacetFilters(pool) {
 
 function render() {
   if (!state.payload) return;
-  elements.heroUnique.textContent = state.articles.filter(articleWithinTimeWindow).length;
   const pool = state.view === "all" ? latestPool() : [];
   renderFacetFilters(pool);
-  const visible = state.view === "all"
-    ? applyFacetFilters(pool)
-    : filteredArticles();
+  const visible = filteredArticles();
   elements.grid.classList.toggle("is-list", state.layout === "list");
   elements.grid.classList.toggle("is-library", state.view === "saved");
   elements.grid.classList.remove("loading-grid");
@@ -788,7 +743,6 @@ function render() {
   elements.grid.hidden = visible.length === 0 && !initialArchiveLoad;
   const emptyCopy = {
     saved: ["Your learning library is empty", "Save a story, then add a note so useful techniques remain easy to find."],
-    archived: ["The archive is empty", "Archived stories stay out of your active feed and can be restored here."],
     history: ["No articles match", "Try a broader search or restore your source filters."],
   }[state.view] || ["No signal here yet", "Try another category, clear your source filters, or refresh the feeds."];
   elements.empty.querySelector("h2").textContent = emptyCopy[0];
@@ -798,13 +752,12 @@ function render() {
   const newCount = usesArchiveView() ? 0 : visible.filter(articleIsNew).length;
   elements.newSince.textContent = state.sessionCutoff && newCount ? `${newCount} new` : "";
   elements.newSince.hidden = !(state.sessionCutoff && newCount);
-  elements.allCount.textContent = state.articles.filter((article) => !state.archived.has(article.id) && articleWithinTimeWindow(article)).length;
+  const latestCount = state.articles.filter(articleWithinTimeWindow).length;
+  elements.allCount.textContent = latestCount;
   elements.savedCount.textContent = state.saved.size;
-  elements.archivedCount.textContent = state.archived.size;
   elements.historyCount.textContent = state.payload.archive_count ?? state.archiveTotal ?? "—";
   elements.sortLabel.textContent = {
     saved: "Learning library",
-    archived: "Recently archived",
     history: "Full history",
     all: `${TIME_WINDOW_LABELS[state.timeWindow]} · newest first`,
   }[state.view] || "Newest first";
@@ -840,23 +793,16 @@ function renderSources(sources) {
   elements.sourceFilters.innerHTML = sources
     .map((source) => {
       const muted = state.mutedSources.has(source.id);
-      const reduced = state.reducedSources.has(source.id);
       const active = state.activeSources.has(source.id) && !muted;
-      const status = muted ? "Muted — click to restore" : reduced ? "Reduced" : active ? "Included" : "Filtered out";
+      const status = muted ? "Muted — click to restore" : active ? "Included" : "Filtered out";
       return `
-        <button class="source-button${active ? "" : " is-muted"}${muted ? " is-source-muted" : ""}${reduced ? " is-reduced" : ""}" type="button" data-source-id="${escapeHtml(source.id)}" style="--source-accent:${escapeHtml(source.accent)}" aria-pressed="${active}" title="${escapeHtml(status)}">
+        <button class="source-button${active ? "" : " is-muted"}${muted ? " is-source-muted" : ""}" type="button" data-source-id="${escapeHtml(source.id)}" style="--source-accent:${escapeHtml(source.accent)}" aria-pressed="${active}" title="${escapeHtml(status)}">
           <span class="source-dot"></span>
           <span>${escapeHtml(source.name)}</span>
-          ${muted ? '<em aria-hidden="true">muted</em>' : reduced ? '<em aria-hidden="true">less</em>' : ""}
+          ${muted ? '<em aria-hidden="true">muted</em>' : ""}
           <strong>${sourceCount(source.id)}</strong>
         </button>`;
     })
-    .join("");
-  elements.sourceOrbit.innerHTML = sources
-    .map(
-      (source) =>
-        `<i class="${source.ok ? "" : "is-offline"}" title="${escapeHtml(`${source.name}: ${source.ok ? "connected" : "unavailable"}`)}" style="--source-accent:${escapeHtml(source.accent)}"></i>`,
-    )
     .join("");
 }
 
@@ -873,8 +819,6 @@ function updateDashboard(payload, { background = false } = {}) {
   }
   state.knownSourceIds = new Set((payload.sources || []).map((source) => source.id));
   state.knownArticleIds = new Set(state.articles.map((article) => article.id));
-  elements.heroUnique.textContent = payload.unique_count ?? state.articles.length;
-  elements.heroCollapsed.textContent = payload.duplicates_collapsed ?? 0;
   elements.lastUpdated.textContent = payload.generated_at
     ? `Updated ${relativeTime(payload.generated_at)}${payload.cached ? " · local cache" : ""}${payload.refreshing ? " · refreshing" : ""}${payload.thumbnails_refreshing ? " · loading images" : ""}`
     : "Update time unavailable";
@@ -938,10 +882,16 @@ function showWarnings(payload) {
     elements.notice.hidden = true;
     return;
   }
-  const lead = payload.stale
-    ? "Live refresh was unavailable, so the most recent local copy is shown."
-    : "Some sources could not be refreshed; the rest of the board is current.";
-  elements.notice.textContent = `${lead} ${warnings.map((item) => item.split(":")[0]).join(", ")}`;
+  const names = [...new Set(warnings
+    .map((item) => String(item).split(":", 1)[0].trim())
+    .filter(Boolean))];
+  const summary = payload.stale
+    ? "Live refresh unavailable · showing cached stories"
+    : `${names.length || "Some"} sources unavailable · showing cached stories`;
+  const detail = names.length
+    ? `<details><summary>Show unavailable sources</summary><span>${names.map(escapeHtml).join(", ")}</span></details>`
+    : "";
+  elements.notice.innerHTML = `<strong>${escapeHtml(summary)}</strong>${detail}`;
   elements.notice.hidden = false;
 }
 
@@ -968,14 +918,17 @@ async function loadFeed(
     elements.stories.setAttribute("aria-busy", "true");
   }
   try {
-    const query = force
-      ? "?refresh=1"
-      : waitForRefresh
-        ? "?wait=1"
-        : waitForThumbnails
-          ? "?wait_thumbnails=1"
-          : "";
-    const response = await fetch(`/api/feed${query}`, { cache: "no-store" });
+    const query = waitForRefresh
+      ? "?wait=1"
+      : waitForThumbnails
+        ? "?wait_thumbnails=1"
+        : "";
+    const response = await apiFetch(
+      force ? "/api/feed/refresh" : `/api/feed${query}`,
+      force
+        ? { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }
+        : {},
+    );
     if (!response.ok) throw new Error(`Feed request failed (${response.status})`);
     const payload = await response.json();
     if (payload.error) throw new Error(payload.detail || payload.error);
@@ -1003,7 +956,7 @@ async function loadFeed(
 }
 
 async function requestJson(url, options = {}) {
-  const response = await fetch(url, {
+  const response = await apiFetch(url, {
     cache: "no-store",
     ...options,
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
@@ -1081,6 +1034,8 @@ function setSidebarOpen(open, { focus = false } = {}) {
   const label = state.sidebarOpen ? "Hide navigation panel" : "Show navigation panel";
   elements.sidebarToggle.setAttribute("aria-label", label);
   elements.sidebarToggle.title = label;
+  const icon = elements.sidebarToggle.querySelector("[data-sidebar-toggle-icon]");
+  if (icon) icon.textContent = state.sidebarOpen ? "‹" : "›";
   if (focus) elements.sidebarToggle.focus();
 }
 
@@ -1090,12 +1045,12 @@ function sidebarInteractionIsInternal(target) {
 }
 
 document.addEventListener("pointerdown", (event) => {
-  if (!state.sidebarOpen || !window.matchMedia("(min-width: 851px)").matches) return;
+  if (!state.sidebarOpen) return;
   if (!sidebarInteractionIsInternal(event.target)) setSidebarOpen(false);
 });
 
 document.addEventListener("focusin", (event) => {
-  if (!state.sidebarOpen || !window.matchMedia("(min-width: 851px)").matches) return;
+  if (!state.sidebarOpen) return;
   if (!sidebarInteractionIsInternal(event.target)) setSidebarOpen(false);
 });
 
@@ -1143,34 +1098,10 @@ async function toggleConfiguredSource(sourceId, enabled, button) {
   }
 }
 
-function setFeedback(articleId, requestedValue) {
-  const article = [...state.articles, ...state.archiveArticles].find((item) => item.id === articleId);
-  if (!article) return;
-  const current = state.feedback.get(articleId)?.value || 0;
-  if (current === requestedValue) {
-    state.feedback.delete(articleId);
-  } else {
-    state.feedback.set(articleId, {
-      id: articleId,
-      value: requestedValue,
-      source_id: article.source_id || "",
-      software_tags: articleSoftwareCategories(article),
-      topic_tags: articleTopics(article),
-    });
-  }
-  queueUserStateSave();
-  render();
-}
-
 function setSourcePreference(sourceId, action) {
   if (action === "mute") {
     state.mutedSources.add(sourceId);
-    state.reducedSources.delete(sourceId);
-  } else if (action === "reduce") {
-    state.reducedSources.add(sourceId);
-    state.mutedSources.delete(sourceId);
   } else {
-    state.reducedSources.delete(sourceId);
     state.mutedSources.delete(sourceId);
     state.activeSources.add(sourceId);
   }
@@ -1224,14 +1155,6 @@ document.addEventListener("click", (event) => {
     return;
   }
 
-  const resetFeedback = event.target.closest("[data-reset-feedback]");
-  if (resetFeedback) {
-    state.feedback.clear();
-    queueUserStateSave();
-    render();
-    return;
-  }
-
   const searchToken = event.target.closest("[data-search-token]");
   if (searchToken) {
     const token = searchToken.dataset.searchToken;
@@ -1263,12 +1186,6 @@ document.addEventListener("click", (event) => {
     return;
   }
 
-  const feedbackButton = event.target.closest("[data-feedback-id]");
-  if (feedbackButton) {
-    setFeedback(feedbackButton.dataset.feedbackId, Number(feedbackButton.dataset.feedbackValue));
-    return;
-  }
-
   const preferenceButton = event.target.closest("[data-source-action]");
   if (preferenceButton) {
     setSourcePreference(preferenceButton.dataset.preferenceSource, preferenceButton.dataset.sourceAction);
@@ -1286,23 +1203,11 @@ document.addEventListener("click", (event) => {
     return;
   }
 
-  const archiveButton = event.target.closest("[data-archive-id]");
-  if (archiveButton) {
-    const id = archiveButton.dataset.archiveId;
-    const wasArchived = state.archived.has(id);
-    wasArchived ? state.archived.delete(id) : state.archived.add(id);
-    if (state.view === "archived" && wasArchived) state.archiveTotal = Math.max(0, state.archiveTotal - 1);
-    queueUserStateSave();
-    render();
-    return;
-  }
-
   const sourceButton = event.target.closest("[data-source-id]");
   if (sourceButton) {
     const id = sourceButton.dataset.sourceId;
     if (state.mutedSources.has(id)) {
       state.mutedSources.delete(id);
-      state.reducedSources.delete(id);
       queueUserStateSave();
     }
     if (event.ctrlKey || event.metaKey) {
@@ -1467,10 +1372,15 @@ elements.scrollTop.addEventListener("click", () => {
   firstArticle.scrollIntoView({ behavior: "auto", block: "center" });
 });
 
+elements.home.addEventListener("click", () => {
+  state.view = "all";
+  render();
+  window.scrollTo({ top: 0, behavior: "auto" });
+});
+
 document.querySelector("#reset-sources").addEventListener("click", () => {
   state.activeSources = new Set((state.payload.sources || []).map((source) => source.id));
   state.mutedSources.clear();
-  state.reducedSources.clear();
   queueUserStateSave();
   renderSources(state.payload.sources || []);
   if (usesArchiveView()) loadArchive();
@@ -1511,7 +1421,7 @@ document.addEventListener("keydown", (event) => {
     render();
   } else if (event.key === "Escape" && !elements.sourceManagerPanel.hidden) {
     closeSourceManager();
-  } else if (event.key === "Escape" && state.sidebarOpen && window.matchMedia("(min-width: 851px)").matches) {
+  } else if (event.key === "Escape" && state.sidebarOpen) {
     setSidebarOpen(false, { focus: true });
   }
 
@@ -1531,13 +1441,6 @@ document.addEventListener("keydown", (event) => {
     const wasSaved = state.saved.has(state.keyboardArticleId);
     wasSaved ? state.saved.delete(state.keyboardArticleId) : state.saved.add(state.keyboardArticleId);
     if (state.view === "saved" && wasSaved) state.archiveTotal = Math.max(0, state.archiveTotal - 1);
-    queueUserStateSave();
-    render();
-  } else if (key === "a") {
-    event.preventDefault();
-    const wasArchived = state.archived.has(state.keyboardArticleId);
-    wasArchived ? state.archived.delete(state.keyboardArticleId) : state.archived.add(state.keyboardArticleId);
-    if (state.view === "archived" && wasArchived) state.archiveTotal = Math.max(0, state.archiveTotal - 1);
     queueUserStateSave();
     render();
   }
