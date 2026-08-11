@@ -40,6 +40,12 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
+      - name: Install browser test dependencies
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Run browser smoke tests
+        run: npm run test:browser
       - name: Run client domain tests
         run: |
           node --test tests/client/*.test.mjs
