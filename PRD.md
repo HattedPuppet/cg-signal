@@ -254,6 +254,10 @@ And is actively interested in:
 - No paid APIs or recurring SaaS dependency.
 - Feed metadata, preview-image cache, SQLite article history, source
   configuration, and user state remain under the local project directory.
+- SQLite snapshots contain the complete local archive, including notes and
+  custom source URLs, and must never be synced or published. Snapshot
+  manifests contain only structural metadata, checksums, and row counts;
+  checksums detect corruption but are not authentication or encryption.
 - The hosted mobile artifact may contain current public RSS metadata and
   excerpts, but no personal state or long-term archive.
 - Optional future models must be opt-in, local, and removable without breaking
@@ -286,7 +290,8 @@ analytics:
 ### Near term
 
 - Carefully selected official YouTube RSS sources.
-- Optional local backup and export for accumulated article history and notes.
+- Verified local SQLite backup and restore for accumulated article history and
+  notes. Snapshots are atomic, integrity/count checked, and remain local.
 
 ### Optional intelligence
 

@@ -31,10 +31,505 @@ from .config import (
 )
 STATE_IMPORT_MARKER = "user_state_json_imported"
 CLASSIFICATION_METADATA_KEY = "article_classification_revision"
+STORAGE_SCHEMA_VERSION = 1
+
+
+class StorageSchemaError(RuntimeError):
+    """The SQLite file is not one of the supported CG Signal schemas."""
+
+
+_APPLICATION_TABLES = {"articles", "article_state", "sources", "source_preferences", "metadata"}
+_HISTORICAL_TABLES = {"articles", "article_state", "sources", "metadata"}
+_FEEDBACK_COLUMNS = {
+    "feedback_source_id": ("TEXT", 1, "''", 0),
+    "feedback_software_tags": ("TEXT", 1, "'[]'", 0),
+    "feedback_topic_tags": ("TEXT", 1, "'[]'", 0),
+}
+
+# These statements are the owned on-disk schema contract.  The tokenizer below
+# deliberately compares persisted sqlite_schema.sql tokens rather than using a
+# fragile forbidden-word blacklist.  Whitespace/comments and a non-persisted
+# IF NOT EXISTS are normalized; all other tokens remain exact.
+_DDL_ARTICLES = (
+    "CREATE TABLE articles (id TEXT PRIMARY KEY, title TEXT NOT NULL, url TEXT NOT NULL, "
+    "summary TEXT NOT NULL DEFAULT '', source TEXT NOT NULL DEFAULT '', source_id TEXT NOT NULL DEFAULT '', "
+    "published_at TEXT NOT NULL, lane TEXT NOT NULL DEFAULT '', software_group TEXT NOT NULL DEFAULT '', "
+    "software_tags TEXT NOT NULL DEFAULT '[]', topic_tags TEXT NOT NULL DEFAULT '[]', "
+    "sources_text TEXT NOT NULL DEFAULT '', search_text TEXT NOT NULL DEFAULT '', data_json TEXT NOT NULL, "
+    "first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL)"
+)
+_DDL_ARTICLE_STATE_BASE = (
+    "CREATE TABLE article_state (article_id TEXT PRIMARY KEY, is_read INTEGER NOT NULL DEFAULT 0, "
+    "is_saved INTEGER NOT NULL DEFAULT 0, is_archived INTEGER NOT NULL DEFAULT 0, "
+    "note TEXT NOT NULL DEFAULT '', feedback_value INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)"
+)
+_DDL_FEEDBACK = (
+    "feedback_source_id TEXT NOT NULL DEFAULT '', "
+    "feedback_software_tags TEXT NOT NULL DEFAULT '[]', "
+    "feedback_topic_tags TEXT NOT NULL DEFAULT '[]'"
+)
+_DDL_ARTICLE_STATE_NEW = (
+    "CREATE TABLE article_state (article_id TEXT PRIMARY KEY, is_read INTEGER NOT NULL DEFAULT 0, "
+    "is_saved INTEGER NOT NULL DEFAULT 0, is_archived INTEGER NOT NULL DEFAULT 0, "
+    "note TEXT NOT NULL DEFAULT '', feedback_value INTEGER NOT NULL DEFAULT 0, "
+    "feedback_source_id TEXT NOT NULL DEFAULT '', feedback_software_tags TEXT NOT NULL DEFAULT '[]', "
+    "feedback_topic_tags TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL)"
+)
+_DDL_SOURCES = (
+    "CREATE TABLE sources (id TEXT PRIMARY KEY, name TEXT NOT NULL, site TEXT NOT NULL DEFAULT '', "
+    "feed TEXT NOT NULL UNIQUE, accent TEXT NOT NULL, item_limit INTEGER NOT NULL DEFAULT 40, "
+    "enabled INTEGER NOT NULL DEFAULT 1, is_builtin INTEGER NOT NULL DEFAULT 0, "
+    "sort_order INTEGER NOT NULL DEFAULT 1000, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
+)
+_DDL_SOURCE_PREFERENCES = (
+    "CREATE TABLE source_preferences (source_id TEXT PRIMARY KEY, muted INTEGER NOT NULL DEFAULT 0, "
+    "reduced INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)"
+)
+_DDL_METADATA = "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+_DDL_ARTICLES_PUBLISHED_INDEX = "CREATE INDEX articles_published_idx ON articles(published_at DESC)"
+_DDL_ARTICLES_SOURCE_INDEX = "CREATE INDEX articles_source_idx ON articles(source_id)"
+
+
+def _tokenize_ddl(sql: str) -> tuple[str, ...]:
+    """Tokenize one persisted DDL statement without applying SQL semantics."""
+
+    tokens: list[str] = []
+    index = 0
+    length = len(sql)
+    while index < length:
+        character = sql[index]
+        if character.isspace():
+            index += 1
+            continue
+        if sql.startswith("--", index):
+            newline = sql.find("\n", index + 2)
+            index = length if newline < 0 else newline + 1
+            continue
+        if sql.startswith("/*", index):
+            end = sql.find("*/", index + 2)
+            if end < 0:
+                raise StorageSchemaError("Malformed DDL comment.")
+            index = end + 2
+            continue
+        if character in "'\"`[":
+            opener = character
+            closer = "]" if opener == "[" else opener
+            start = index
+            index += 1
+            closed = False
+            while index < length:
+                if sql[index] == closer:
+                    if index + 1 < length and sql[index + 1] == closer and closer != "]":
+                        index += 2
+                        continue
+                    if closer == "]" and index + 1 < length and sql[index + 1] == "]":
+                        index += 2
+                        continue
+                    index += 1
+                    closed = True
+                    break
+                index += 1
+            if not closed:
+                raise StorageSchemaError("Malformed quoted DDL token.")
+            tokens.append(sql[start:index])
+            continue
+        if character.isascii() and (character.isalpha() or character == "_"):
+            start = index
+            index += 1
+            while index < length:
+                next_character = sql[index]
+                if not next_character.isascii() or not (
+                    next_character.isalnum() or next_character in "_$"
+                ):
+                    break
+                index += 1
+            tokens.append(sql[start:index].upper())
+            continue
+        if character.isascii() and (character.isdigit() or (character == "." and index + 1 < length and sql[index + 1].isdigit())):
+            start = index
+            index += 1
+            while index < length and (sql[index].isascii() and (sql[index].isalnum() or sql[index] in ".xX+-")):
+                index += 1
+            tokens.append(sql[start:index])
+            continue
+        if character == ";":
+            tokens.append(character)
+            index += 1
+            continue
+        if character.isascii() and character in "(),.*=+-/%<>!|&~?:":
+            tokens.append(character)
+            index += 1
+            continue
+        raise StorageSchemaError(f"Malformed or unknown DDL token: {character!r}")
+
+    if tokens and tokens[-1] == ";":
+        tokens.pop()
+        if tokens and tokens[-1] == ";":
+            raise StorageSchemaError("Only one terminal DDL semicolon is allowed.")
+    if ";" in tokens:
+        raise StorageSchemaError("Only a terminal DDL semicolon is allowed.")
+    normalized: list[str] = []
+    index = 0
+    while index < len(tokens):
+        if index + 2 < len(tokens) and tokens[index:index + 3] == ["IF", "NOT", "EXISTS"]:
+            index += 3
+            continue
+        normalized.append(tokens[index])
+        index += 1
+    return tuple(normalized)
+
+
+def _historical_state_ddl(feedback_count: int) -> str:
+    if not 0 <= feedback_count <= 2:
+        raise ValueError("Historical feedback count must be between zero and two.")
+    if not feedback_count:
+        return _DDL_ARTICLE_STATE_BASE
+    feedback = _DDL_FEEDBACK.split(", ")[:feedback_count]
+    return _DDL_ARTICLE_STATE_BASE[:-1] + ", " + ", ".join(feedback) + ")"
+
+
+def _schema_signature(shape: str) -> dict[tuple[str, str, str], str]:
+    if shape == "empty":
+        return {}
+    if shape == "historical":
+        tables = {
+            ("table", "articles", "articles"): _DDL_ARTICLES,
+            ("table", "article_state", "article_state"): _DDL_ARTICLE_STATE_BASE,
+            ("table", "sources", "sources"): _DDL_SOURCES,
+            ("table", "metadata", "metadata"): _DDL_METADATA,
+        }
+    else:
+        state = _DDL_ARTICLE_STATE_NEW if shape in {"current_new", "current"} else _DDL_ARTICLE_STATE_BASE
+        if shape.startswith("prefix"):
+            state = _historical_state_ddl(int(shape[-1]))
+        tables = {
+            ("table", "articles", "articles"): _DDL_ARTICLES,
+            ("table", "article_state", "article_state"): state,
+            ("table", "sources", "sources"): _DDL_SOURCES,
+            ("table", "source_preferences", "source_preferences"): _DDL_SOURCE_PREFERENCES,
+            ("table", "metadata", "metadata"): _DDL_METADATA,
+        }
+    return {
+        **tables,
+        ("index", "articles_published_idx", "articles"): _DDL_ARTICLES_PUBLISHED_INDEX,
+        ("index", "articles_source_idx", "articles"): _DDL_ARTICLES_SOURCE_INDEX,
+    }
+
+
+def _column_specs() -> dict[str, dict[str, tuple[str, int, str | None, int]]]:
+    """Return the semantic v1 table signature (column order is irrelevant)."""
+
+    return {
+        "articles": {
+            "id": ("TEXT", 0, None, 1),
+            "title": ("TEXT", 1, None, 0), "url": ("TEXT", 1, None, 0),
+            "summary": ("TEXT", 1, "''", 0), "source": ("TEXT", 1, "''", 0),
+            "source_id": ("TEXT", 1, "''", 0), "published_at": ("TEXT", 1, None, 0),
+            "lane": ("TEXT", 1, "''", 0), "software_group": ("TEXT", 1, "''", 0),
+            "software_tags": ("TEXT", 1, "'[]'", 0), "topic_tags": ("TEXT", 1, "'[]'", 0),
+            "sources_text": ("TEXT", 1, "''", 0), "search_text": ("TEXT", 1, "''", 0),
+            "data_json": ("TEXT", 1, None, 0), "first_seen_at": ("TEXT", 1, None, 0),
+            "last_seen_at": ("TEXT", 1, None, 0),
+        },
+        "article_state": {
+            "article_id": ("TEXT", 0, None, 1),
+            "is_read": ("INTEGER", 1, "0", 0), "is_saved": ("INTEGER", 1, "0", 0),
+            "is_archived": ("INTEGER", 1, "0", 0), "note": ("TEXT", 1, "''", 0),
+            "feedback_value": ("INTEGER", 1, "0", 0),
+            "feedback_source_id": ("TEXT", 1, "''", 0),
+            "feedback_software_tags": ("TEXT", 1, "'[]'", 0),
+            "feedback_topic_tags": ("TEXT", 1, "'[]'", 0),
+            "updated_at": ("TEXT", 1, None, 0),
+        },
+        "sources": {
+            "id": ("TEXT", 0, None, 1), "name": ("TEXT", 1, None, 0),
+            "site": ("TEXT", 1, "''", 0), "feed": ("TEXT", 1, None, 0),
+            "accent": ("TEXT", 1, None, 0), "item_limit": ("INTEGER", 1, "40", 0),
+            "enabled": ("INTEGER", 1, "1", 0), "is_builtin": ("INTEGER", 1, "0", 0),
+            "sort_order": ("INTEGER", 1, "1000", 0), "created_at": ("TEXT", 1, None, 0),
+            "updated_at": ("TEXT", 1, None, 0),
+        },
+        "source_preferences": {
+            "source_id": ("TEXT", 0, None, 1), "muted": ("INTEGER", 1, "0", 0),
+            "reduced": ("INTEGER", 1, "0", 0), "updated_at": ("TEXT", 1, None, 0),
+        },
+        "metadata": {"key": ("TEXT", 0, None, 1), "value": ("TEXT", 1, None, 0)},
+    }
+
+
+def _table_names(connection: sqlite3.Connection) -> set[str]:
+    rows = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+    ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
+def _schema_inventory(connection: sqlite3.Connection) -> set[tuple[str, str, str]]:
+    rows = connection.execute(
+        "SELECT type, name, tbl_name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'"
+    ).fetchall()
+    return {(str(row[0]), str(row[1]), str(row[2])) for row in rows}
+
+
+def _validate_schema_signature(connection: sqlite3.Connection, shape: str) -> None:
+    actual = _schema_inventory(connection)
+    candidates = [_schema_signature(shape)]
+    if shape == "current":
+        migrated = _schema_signature("current")
+        migrated[("table", "article_state", "article_state")] = (
+            _DDL_ARTICLE_STATE_BASE[:-1] + ", " + _DDL_FEEDBACK + ")"
+        )
+        candidates.append(migrated)
+    for expected in candidates:
+        if actual != set(expected):
+            continue
+        try:
+            for object_key, expected_sql in expected.items():
+                actual_sql = connection.execute(
+                    "SELECT sql FROM sqlite_schema WHERE type = ? AND name = ? AND tbl_name = ?",
+                    object_key,
+                ).fetchone()
+                if actual_sql is None or not isinstance(actual_sql[0], str):
+                    raise StorageSchemaError(f"Missing persisted DDL for {object_key[1]}.")
+                if _tokenize_ddl(actual_sql[0]) != _tokenize_ddl(expected_sql):
+                    raise StorageSchemaError(f"Persisted DDL for {object_key[1]} is not supported.")
+            return
+        except StorageSchemaError:
+            continue
+    raise StorageSchemaError("SQLite persisted DDL is not supported.")
+
+
+def _normalized_default(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value).replace(" ", "")
+
+
+def _table_columns(connection: sqlite3.Connection, table: str) -> dict[str, tuple[str, int, str | None, int]]:
+    rows = connection.execute(f'PRAGMA table_xinfo("{table}")').fetchall()
+    columns: dict[str, tuple[str, int, str | None, int]] = {}
+    for row in rows:
+        # table_xinfo exposes generated/hidden columns through the final flag.
+        if len(row) >= 7 and int(row[6]) != 0:
+            raise StorageSchemaError(f"Hidden or generated column in {table}.")
+        name = str(row[1])
+        columns[name] = (str(row[2]).upper(), int(row[3]), _normalized_default(row[4]), int(row[5]))
+    return columns
+
+
+def _index_columns(connection: sqlite3.Connection, name: str) -> list[tuple[str, int]]:
+    rows = connection.execute(f'PRAGMA index_xinfo("{name}")').fetchall()
+    return [(str(row[2]), int(row[3])) for row in rows if int(row[5]) == 1 and row[2] is not None]
+
+
+def _validate_indexes(
+    connection: sqlite3.Connection,
+    *,
+    tables: set[str] | None = None,
+) -> None:
+    # User-created article indexes have contractual names; SQLite-generated
+    # primary-key/UNIQUE index names do not.  Validate generated indexes by
+    # their PRAGMA origin and key columns instead of depending on names such as
+    # ``sqlite_autoindex_sources_2``.
+    expected_user = {"articles_published_idx", "articles_source_idx"}
+    rows = connection.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_autoindex_%'"
+    ).fetchall()
+    actual_user = {str(row[0]) for row in rows}
+    if actual_user != expected_user or any(not isinstance(row[1], str) for row in rows):
+        raise StorageSchemaError("Required user indexes are missing or unexpected indexes exist.")
+
+    expected_pk = {
+        "articles": "id",
+        "article_state": "article_id",
+        "sources": "id",
+        "source_preferences": "source_id",
+        "metadata": "key",
+    }
+    if tables is not None:
+        expected_pk = {table: column for table, column in expected_pk.items() if table in tables}
+    for table, pk_column in expected_pk.items():
+        index_rows = connection.execute(f'PRAGMA index_list("{table}")').fetchall()
+        if not index_rows:
+            raise StorageSchemaError(f"Indexes for {table} are missing.")
+        pk_rows: list[Any] = []
+        unique_rows: list[Any] = []
+        user_rows: list[Any] = []
+        for row in index_rows:
+            name, unique, origin, partial = str(row[1]), int(row[2]), str(row[3]), int(row[4])
+            if partial:
+                raise StorageSchemaError(f"Partial index is not supported: {name}")
+            if origin == "pk":
+                pk_rows.append(row)
+                if unique != 1 or _index_columns(connection, name) != [(pk_column, 0)]:
+                    raise StorageSchemaError(f"Primary-key index for {table} has wrong semantics.")
+            elif origin == "u":
+                unique_rows.append(row)
+                if table != "sources" or unique != 1 or _index_columns(connection, name) != [("feed", 0)]:
+                    raise StorageSchemaError(f"Unexpected UNIQUE index for {table}.")
+            elif origin == "c":
+                user_rows.append(row)
+                if unique != 0:
+                    raise StorageSchemaError(f"User index {name} must be non-unique.")
+            else:
+                raise StorageSchemaError(f"Unexpected index origin for {table}: {origin}")
+        if len(pk_rows) != 1:
+            raise StorageSchemaError(f"Primary-key index for {table} is missing or duplicated.")
+        if table == "sources":
+            if len(unique_rows) != 1:
+                raise StorageSchemaError("sources.feed uniqueness is missing or duplicated.")
+        elif unique_rows:
+            raise StorageSchemaError(f"Unexpected UNIQUE index for {table}.")
+        expected_names = {
+            "articles": expected_user,
+            "article_state": set(),
+            "sources": set(),
+            "source_preferences": set(),
+            "metadata": set(),
+        }[table]
+        if {str(row[1]) for row in user_rows} != expected_names:
+            raise StorageSchemaError(f"Unexpected user indexes for {table}.")
+        for row in user_rows:
+            name = str(row[1])
+            columns = _index_columns(connection, name)
+            if name == "articles_published_idx" and columns != [("published_at", 1)]:
+                raise StorageSchemaError("articles_published_idx has wrong semantics.")
+            if name == "articles_source_idx" and columns != [("source_id", 0)]:
+                raise StorageSchemaError("articles_source_idx has wrong semantics.")
+
+
+def validate_current_schema(connection: sqlite3.Connection, *, require_version: bool = True) -> None:
+    """Validate the exact application schema without changing the database."""
+
+    version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    if require_version and version != STORAGE_SCHEMA_VERSION:
+        raise StorageSchemaError(f"Unsupported storage schema version {version}.")
+    if _table_names(connection) != _APPLICATION_TABLES:
+        raise StorageSchemaError("Application tables do not match the supported schema.")
+    _validate_schema_signature(connection, "current")
+    specs = _column_specs()
+    for table, expected in specs.items():
+        actual = _table_columns(connection, table)
+        if actual != expected:
+            raise StorageSchemaError(f"Columns for {table} do not match the supported schema.")
+        sql_row = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone()
+        if connection.execute(f'PRAGMA foreign_key_list("{table}")').fetchone() is not None:
+            raise StorageSchemaError("Foreign keys are not part of the supported schema.")
+    if connection.execute("SELECT 1 FROM sqlite_master WHERE type IN ('view','trigger') LIMIT 1").fetchone() is not None:
+        raise StorageSchemaError("Views and triggers are not part of the supported schema.")
+    _validate_indexes(connection)
+
+
+def _validate_v0_shape(connection: sqlite3.Connection) -> str:
+    """Classify one of the finite historical shapes before any migration DDL."""
+
+    tables = _table_names(connection)
+    if not tables:
+        if _schema_inventory(connection):
+            raise StorageSchemaError("Unknown version-0 schema objects.")
+        return "empty"
+    specs = _column_specs()
+    base_article_state = {name: spec for name, spec in specs["article_state"].items() if name not in _FEEDBACK_COLUMNS}
+    historical_sets = (_HISTORICAL_TABLES, _APPLICATION_TABLES)
+    if tables not in historical_sets:
+        raise StorageSchemaError("Unknown version-0 schema shape.")
+    for table in ("articles", "sources"):
+        if _table_columns(connection, table) != specs[table]:
+            raise StorageSchemaError(f"Unknown version-0 columns for {table}.")
+    state_columns = _table_columns(connection, "article_state")
+    if tables == _HISTORICAL_TABLES:
+        if state_columns != base_article_state:
+            raise StorageSchemaError("Unknown historical article_state columns.")
+        _validate_schema_signature(connection, "historical")
+        _validate_indexes(connection, tables=_HISTORICAL_TABLES)
+        return "historical"
+    if tables == _APPLICATION_TABLES:
+        if state_columns == specs["article_state"]:
+            _validate_schema_signature(connection, "current")
+            _validate_indexes(connection)
+            return "current"
+        feedback_names = list(_FEEDBACK_COLUMNS)
+        allowed = [
+            {
+                **base_article_state,
+                **{name: specs["article_state"][name] for name in feedback_names[:count]},
+            }
+            for count in (0, 1, 2)
+        ]
+        # The old initializer can have stopped after zero, one, or two ALTERs;
+        # an already-complete three-column shape is handled above.
+        if state_columns not in allowed:
+            raise StorageSchemaError("Unknown version-0 article_state columns.")
+        count = next(
+            count for count in (0, 1, 2)
+            if state_columns == {
+                **base_article_state,
+                **{name: specs["article_state"][name] for name in feedback_names[:count]},
+            }
+        )
+        _validate_schema_signature(connection, f"prefix{count}")
+        _validate_indexes(connection)
+        return "prefix"
+    raise StorageSchemaError("Unknown version-0 schema shape.")
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def migrate_storage_schema(connection: sqlite3.Connection) -> None:
+    """Migrate a known v0 database to v1 without owning runtime maintenance.
+
+    The caller owns the connection and remains responsible for closing it and
+    selecting journal mode.  This API performs schema DDL only, under its own
+    transaction, and stamps ``user_version`` only after exact v1 validation.
+    """
+
+    if connection.in_transaction:
+        raise StorageSchemaError("Storage schema migration requires no active transaction.")
+    version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+    if version == STORAGE_SCHEMA_VERSION:
+        validate_current_schema(connection)
+        return
+    if version != 0:
+        raise StorageSchemaError(f"Unsupported storage schema version {version}.")
+    shape = _validate_v0_shape(connection)
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        if shape == "empty":
+            connection.execute(_DDL_ARTICLES)
+            connection.execute(_DDL_ARTICLES_PUBLISHED_INDEX)
+            connection.execute(_DDL_ARTICLES_SOURCE_INDEX)
+            connection.execute(_DDL_ARTICLE_STATE_NEW)
+            connection.execute(_DDL_SOURCES)
+            connection.execute(_DDL_SOURCE_PREFERENCES)
+            connection.execute(_DDL_METADATA)
+        elif shape == "historical":
+            connection.execute(_DDL_SOURCE_PREFERENCES)
+            for name, definition in _FEEDBACK_COLUMNS.items():
+                connection.execute(
+                    f"ALTER TABLE article_state ADD COLUMN {name} {definition[0]} NOT NULL DEFAULT {definition[2]}"
+                )
+        elif shape.startswith("prefix"):
+            columns = _table_columns(connection, "article_state")
+            for name, definition in _FEEDBACK_COLUMNS.items():
+                if name not in columns:
+                    connection.execute(
+                        f"ALTER TABLE article_state ADD COLUMN {name} {definition[0]} NOT NULL DEFAULT {definition[2]}"
+                    )
+        elif shape == "current":
+            pass
+        else:
+            raise StorageSchemaError(f"Unknown migration shape: {shape}")
+        validate_current_schema(connection, require_version=False)
+        connection.execute(f"PRAGMA user_version={STORAGE_SCHEMA_VERSION}")
+        validate_current_schema(connection)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
 
 
 def normalize_string_list(values: Any, limit: int, max_length: int = 80) -> list[str]:
@@ -169,12 +664,13 @@ class SQLiteRepository:
         self._initialized = False
 
     @contextmanager
-    def connection(self) -> Iterator[sqlite3.Connection]:
+    def connection(self, *, set_wal: bool = True) -> Iterator[sqlite3.Connection]:
         self.paths.cache_dir.mkdir(parents=True, exist_ok=True)
         with self._lock:
             connection = sqlite3.connect(self.paths.archive_db_file, timeout=10)
             connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA journal_mode=WAL")
+            if set_wal:
+                connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA busy_timeout=10000")
             try:
                 yield connection
@@ -189,81 +685,12 @@ class SQLiteRepository:
         with self._lock:
             if self._initialized and not force:
                 return
-            with self.connection() as connection:
-                connection.executescript(
-                    """
-                    CREATE TABLE IF NOT EXISTS articles (
-                        id TEXT PRIMARY KEY,
-                        title TEXT NOT NULL,
-                        url TEXT NOT NULL,
-                        summary TEXT NOT NULL DEFAULT '',
-                        source TEXT NOT NULL DEFAULT '',
-                        source_id TEXT NOT NULL DEFAULT '',
-                        published_at TEXT NOT NULL,
-                        lane TEXT NOT NULL DEFAULT '',
-                        software_group TEXT NOT NULL DEFAULT '',
-                        software_tags TEXT NOT NULL DEFAULT '[]',
-                        topic_tags TEXT NOT NULL DEFAULT '[]',
-                        sources_text TEXT NOT NULL DEFAULT '',
-                        search_text TEXT NOT NULL DEFAULT '',
-                        data_json TEXT NOT NULL,
-                        first_seen_at TEXT NOT NULL,
-                        last_seen_at TEXT NOT NULL
-                    );
-                    CREATE INDEX IF NOT EXISTS articles_published_idx
-                        ON articles(published_at DESC);
-                    CREATE INDEX IF NOT EXISTS articles_source_idx ON articles(source_id);
-                    CREATE TABLE IF NOT EXISTS article_state (
-                        article_id TEXT PRIMARY KEY,
-                        is_read INTEGER NOT NULL DEFAULT 0,
-                        is_saved INTEGER NOT NULL DEFAULT 0,
-                        is_archived INTEGER NOT NULL DEFAULT 0,
-                        note TEXT NOT NULL DEFAULT '',
-                        feedback_value INTEGER NOT NULL DEFAULT 0,
-                        feedback_source_id TEXT NOT NULL DEFAULT '',
-                        feedback_software_tags TEXT NOT NULL DEFAULT '[]',
-                        feedback_topic_tags TEXT NOT NULL DEFAULT '[]',
-                        updated_at TEXT NOT NULL
-                    );
-                    CREATE TABLE IF NOT EXISTS sources (
-                        id TEXT PRIMARY KEY,
-                        name TEXT NOT NULL,
-                        site TEXT NOT NULL DEFAULT '',
-                        feed TEXT NOT NULL UNIQUE,
-                        accent TEXT NOT NULL,
-                        item_limit INTEGER NOT NULL DEFAULT 40,
-                        enabled INTEGER NOT NULL DEFAULT 1,
-                        is_builtin INTEGER NOT NULL DEFAULT 0,
-                        sort_order INTEGER NOT NULL DEFAULT 1000,
-                        created_at TEXT NOT NULL,
-                        updated_at TEXT NOT NULL
-                    );
-                    CREATE TABLE IF NOT EXISTS source_preferences (
-                        source_id TEXT PRIMARY KEY,
-                        muted INTEGER NOT NULL DEFAULT 0,
-                        reduced INTEGER NOT NULL DEFAULT 0,
-                        updated_at TEXT NOT NULL
-                    );
-                    CREATE TABLE IF NOT EXISTS metadata (
-                        key TEXT PRIMARY KEY,
-                        value TEXT NOT NULL
-                    );
-                    """
-                )
-                # Older databases do not have the feedback context columns.
-                columns = {
-                    row["name"]
-                    for row in connection.execute("PRAGMA table_info(article_state)")
-                }
-                for name, definition in (
-                    ("feedback_source_id", "TEXT NOT NULL DEFAULT ''"),
-                    ("feedback_software_tags", "TEXT NOT NULL DEFAULT '[]'"),
-                    ("feedback_topic_tags", "TEXT NOT NULL DEFAULT '[]'"),
-                ):
-                    if name not in columns:
-                        connection.execute(
-                            f"ALTER TABLE article_state ADD COLUMN {name} {definition}"
-                        )
+            # Inspect and migrate the persisted schema before enabling the
+            # runtime WAL mode.  Rejected version-0 shapes therefore receive
+            # no migration DDL or journal-mode mutation.
+            with self.connection(set_wal=False) as connection:
+                migrate_storage_schema(connection)
+                connection.execute("PRAGMA journal_mode=WAL")
                 now = _now()
                 for order, source in enumerate(FEEDS):
                     connection.execute(
