@@ -70,6 +70,8 @@ const state = {
   topics: readFilterSet(storageKeys.topics),
   view: "all",
   search: "",
+  userStateStatus: "loading",
+  userStateError: null,
   saved: new Set(),
   mutedSources: new Set(),
   layout: localStorage.getItem(storageKeys.layout) || "grid",
@@ -119,6 +121,7 @@ const elements = {
   refresh: document.querySelector("#refresh-button"),
   layout: document.querySelector("#layout-toggle"),
   notice: document.querySelector("#notice"),
+  userStateStatus: document.querySelector("#user-state-status"),
   sortLabel: document.querySelector("#sort-label"),
   manageSources: document.querySelector("#manage-sources"),
   sourceManagerPanel: document.querySelector("#source-manager-panel"),
@@ -183,6 +186,7 @@ function chooseSingleFilter(selected, value) {
 }
 
 async function persistUserState() {
+  if (state.userStateStatus !== "ready") return;
   try {
     const response = await apiFetch("/api/state", {
       method: "POST",
@@ -200,18 +204,59 @@ async function persistUserState() {
 
 function queueUserStateSave() {
   window.clearTimeout(stateSaveTimer);
+  stateSaveTimer = null;
+  if (state.userStateStatus !== "ready") return;
   stateSaveTimer = window.setTimeout(persistUserState, 140);
 }
 
 async function loadUserState() {
+  state.userStateStatus = "loading";
+  state.userStateError = null;
+  window.clearTimeout(stateSaveTimer);
+  stateSaveTimer = null;
+  renderUserStateControls();
   try {
     const response = await apiFetch("/api/state");
     if (!response.ok) throw new Error(`State request failed (${response.status})`);
     const stored = await response.json();
     state.saved = new Set(Array.isArray(stored.saved) ? stored.saved : []);
     state.mutedSources = new Set(Array.isArray(stored.muted_sources) ? stored.muted_sources : []);
+    state.userStateStatus = "ready";
+    state.userStateError = null;
+    if (state.payload) {
+      renderSources(state.payload.sources || []);
+      render();
+    }
+    else renderUserStateControls();
   } catch (error) {
+    state.userStateStatus = "error";
+    state.userStateError = error;
     console.warn("CG Signal could not load local state.", error);
+    renderUserStateControls();
+  }
+}
+
+function userStateReady() {
+  return state.userStateStatus === "ready";
+}
+
+function renderUserStateControls() {
+  const unavailable = !userStateReady();
+  document.querySelectorAll("[data-save-id], [data-source-action], #reset-sources, [data-view='saved']").forEach((control) => {
+    control.disabled = unavailable;
+    control.setAttribute("aria-disabled", String(unavailable));
+  });
+  if (!elements.userStateStatus) return;
+  elements.userStateStatus.setAttribute("aria-busy", String(state.userStateStatus === "loading"));
+  if (state.userStateStatus === "loading") {
+    elements.userStateStatus.hidden = false;
+    elements.userStateStatus.innerHTML = "<strong>Loading saved stories and source preferences…</strong>";
+  } else if (state.userStateStatus === "error") {
+    elements.userStateStatus.hidden = false;
+    elements.userStateStatus.innerHTML = "<strong>Saved stories and source preferences are unavailable.</strong> <span>Retry to enable saving and source controls.</span> <button type=\"button\" data-retry-user-state>Retry</button>";
+  } else {
+    elements.userStateStatus.hidden = true;
+    elements.userStateStatus.textContent = "";
   }
 }
 
@@ -460,18 +505,20 @@ function sourcePreferenceMenu(article) {
   const sourceId = article.source_id || article.sources?.[0]?.id || "";
   if (!sourceId) return "";
   const muted = state.mutedSources.has(sourceId);
+  const stateUnavailable = !userStateReady();
   return `
     <details class="source-menu">
       <summary aria-label="Source actions for ${escapeHtml(article.source)}" title="Source actions">•••</summary>
       <div class="source-menu-panel">
         <strong>${escapeHtml(article.source)}</strong>
-        <button type="button" data-source-action="${muted ? "restore" : "mute"}" data-preference-source="${escapeHtml(sourceId)}">${muted ? "Restore this source" : "Mute this source"}</button>
+        <button type="button" data-source-action="${muted ? "restore" : "mute"}" data-preference-source="${escapeHtml(sourceId)}" ${stateUnavailable ? "disabled" : ""} aria-disabled="${stateUnavailable}">${muted ? "Restore this source" : "Mute this source"}</button>
       </div>
     </details>`;
 }
 
 function storyCard(article) {
   const saved = state.saved.has(article.id);
+  const stateUnavailable = !userStateReady();
   const imageUrl = safeImageUrl(article.image);
   const image = imageUrl === "#" ? "" : `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`;
   const coverage = article.source_count > 1 ? `${article.source_count} sources` : "Single source";
@@ -512,7 +559,7 @@ function storyCard(article) {
         <div class="story-footer">
           <div class="source-stack">${sourceStack(article)}<span class="coverage-label">${coverage}</span></div>
           <div class="card-actions">
-            <button class="save-button${saved ? " is-saved" : ""}" type="button" data-save-id="${escapeHtml(article.id)}" aria-label="${saved ? "Remove from saved" : "Save story"}" aria-pressed="${saved}">${saved ? "★" : "☆"}</button>
+            <button class="save-button${saved ? " is-saved" : ""}" type="button" data-save-id="${escapeHtml(article.id)}" aria-label="${saved ? "Remove from saved" : "Save story"}" aria-pressed="${saved}" ${stateUnavailable ? "disabled" : ""} aria-disabled="${stateUnavailable}">${saved ? "★" : "☆"}</button>
             ${sourcePreferenceMenu(article)}
           </div>
         </div>
@@ -665,7 +712,10 @@ function renderFacetFilters(pool) {
 }
 
 function render() {
-  if (!state.payload) return;
+  if (!state.payload) {
+    renderUserStateControls();
+    return;
+  }
   const pool = state.view === "all" ? latestPool() : [];
   renderFacetFilters(pool);
   const visible = filteredArticles();
@@ -725,6 +775,7 @@ function render() {
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-pressed", String(active));
   });
+  renderUserStateControls();
 }
 
 function sourceCount(sourceId) {
@@ -735,10 +786,11 @@ function renderSources(sources) {
   elements.sourceFilters.innerHTML = sources
     .map((source) => {
       const muted = state.mutedSources.has(source.id);
+      const stateUnavailable = muted && !userStateReady();
       const active = state.activeSources.has(source.id) && !muted;
       const status = muted ? "Muted — click to restore" : active ? "Included" : "Filtered out";
       return `
-        <button class="source-button${active ? "" : " is-muted"}${muted ? " is-source-muted" : ""}" type="button" data-source-id="${escapeHtml(source.id)}" style="--source-accent:${escapeHtml(source.accent)}" aria-pressed="${active}" title="${escapeHtml(status)}">
+        <button class="source-button${active ? "" : " is-muted"}${muted ? " is-source-muted" : ""}" type="button" data-source-id="${escapeHtml(source.id)}" style="--source-accent:${escapeHtml(source.accent)}" aria-pressed="${active}" aria-disabled="${stateUnavailable}" ${stateUnavailable ? "disabled" : ""} title="${escapeHtml(status)}">
           <span class="source-dot"></span>
           <span>${escapeHtml(source.name)}</span>
           ${muted ? '<em aria-hidden="true">muted</em>' : ""}
@@ -1041,6 +1093,7 @@ async function toggleConfiguredSource(sourceId, enabled, button) {
 }
 
 function setSourcePreference(sourceId, action) {
+  if (!userStateReady()) return;
   if (action === "mute") {
     state.mutedSources.add(sourceId);
   } else {
@@ -1085,6 +1138,12 @@ document.addEventListener("visibilitychange", () => {
 });
 
 document.addEventListener("click", (event) => {
+  const retryUserState = event.target.closest("[data-retry-user-state]");
+  if (retryUserState) {
+    loadUserState();
+    return;
+  }
+
   const timeWindowButton = event.target.closest(".time-window-button[data-time-window]");
   if (timeWindowButton) {
     state.timeWindow = Object.prototype.hasOwnProperty.call(TIME_WINDOW_LABELS, timeWindowButton.dataset.timeWindow)
@@ -1136,6 +1195,7 @@ document.addEventListener("click", (event) => {
 
   const saveButton = event.target.closest("[data-save-id]");
   if (saveButton) {
+    if (!userStateReady()) return;
     const id = saveButton.dataset.saveId;
     const wasSaved = state.saved.has(id);
     wasSaved ? state.saved.delete(id) : state.saved.add(id);
@@ -1147,7 +1207,7 @@ document.addEventListener("click", (event) => {
   const sourceButton = event.target.closest("[data-source-id]");
   if (sourceButton) {
     const id = sourceButton.dataset.sourceId;
-    if (state.mutedSources.has(id)) {
+    if (state.mutedSources.has(id) && userStateReady()) {
       state.mutedSources.delete(id);
       queueUserStateSave();
     }
@@ -1308,6 +1368,7 @@ elements.home.addEventListener("click", () => {
 });
 
 document.querySelector("#reset-sources").addEventListener("click", () => {
+  if (!userStateReady()) return;
   state.activeSources = new Set((state.payload.sources || []).map((source) => source.id));
   state.mutedSources.clear();
   queueUserStateSave();
@@ -1367,6 +1428,7 @@ document.addEventListener("keydown", (event) => {
     elements.grid.querySelector(`[data-id="${CSS.escape(state.keyboardArticleId)}"] .story-title a`)?.click();
   } else if (key === "s") {
     event.preventDefault();
+    if (!userStateReady()) return;
     const wasSaved = state.saved.has(state.keyboardArticleId);
     wasSaved ? state.saved.delete(state.keyboardArticleId) : state.saved.add(state.keyboardArticleId);
     queueUserStateSave();

@@ -12,6 +12,7 @@ import sys
 import tempfile
 import threading
 from typing import Any
+import urllib.parse
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -38,6 +39,19 @@ def _load_mobile_builder() -> Any:
 
 
 class QuietDashboardHandler(DashboardHandler):
+    def do_GET(self) -> None:
+        parsed = urllib.parse.urlsplit(self.path)
+        if parsed.path in {"", "/", "/index.html"} and urllib.parse.parse_qs(parsed.query).get("state_fault") == ["1"]:
+            if not getattr(self.dashboard, "_fault_state_seeded", False):
+                self.dashboard.service.repository.write_state(
+                    {
+                        "saved": ["smoke-blender-article"],
+                        "muted_sources": ["smoke-unreal-source"],
+                    }
+                )
+                self.dashboard._fault_state_seeded = True
+        super().do_GET()
+
     def log_message(self, format_string: str, *args: Any) -> None:  # noqa: ARG002
         return
 

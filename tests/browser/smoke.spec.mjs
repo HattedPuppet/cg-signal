@@ -162,6 +162,64 @@ test("desktop dashboard serves and persists the fixture workflow", async ({ page
   await expectCleanBrowser(guards);
 });
 
+test("desktop state controls wait for authoritative recovery", async ({ page }) => {
+  const guards = await installBrowserGuards(page);
+  const statePosts = [];
+  let abortedInitialStateGet = false;
+  page.on("request", (request) => {
+    if (request.url().endsWith("/api/state") && request.method() === "POST") {
+      statePosts.push(request.postDataJSON());
+    }
+  });
+  await page.route("**/api/state", async (route) => {
+    if (!abortedInitialStateGet && route.request().method() === "GET") {
+      abortedInitialStateGet = true;
+      await route.abort();
+      return;
+    }
+    await route.continue();
+  });
+  await page.goto(`${fixtureUrls.desktop_url}?state_fault=1`, { waitUntil: "domcontentloaded" });
+
+  await expect(page.locator("#user-state-status")).toContainText("Retry");
+  await expect(page.locator('[data-id="smoke-unreal-article"] [data-save-id]')).toBeDisabled();
+  await expect(page.locator("#reset-sources")).toBeDisabled();
+  await page.locator('[data-id="smoke-unreal-article"] .source-menu summary').click();
+  await expect(page.locator('[data-id="smoke-unreal-article"] [data-source-action]')).toBeDisabled();
+  await page.keyboard.press("j");
+  await page.keyboard.press("s");
+  await page.locator('[data-id="smoke-unreal-article"] [data-save-id]').dispatchEvent("click");
+  await page.locator('[data-id="smoke-unreal-article"] [data-source-action]').dispatchEvent("click");
+  await page.locator("#reset-sources").dispatchEvent("click");
+  await expect.poll(() => statePosts.length).toBe(0);
+
+  await page.locator("[data-retry-user-state]").click();
+  await expect(page.locator("#user-state-status")).toBeHidden();
+  await expect(page.locator('[data-id="smoke-blender-article"] [data-save-id]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator('[data-source-id="smoke-unreal-source"]')).toHaveClass(/is-source-muted/);
+
+  // The muted source is intentionally absent from Latest Signal. Restore it
+  // through the recovered state UI, add a saved story, then mute it again so
+  // the final merged write proves both seeded values survived the recovery.
+  const restorePost = page.waitForRequest(
+    (request) => request.url().endsWith("/api/state") && request.method() === "POST",
+  );
+  await page.locator('[data-source-id="smoke-unreal-source"]').dispatchEvent("click");
+  await restorePost;
+  await expect(page.locator('[data-id="smoke-unreal-article"] [data-save-id]')).toBeVisible();
+  const statePost = page.waitForRequest(
+    (request) => request.url().endsWith("/api/state") && request.method() === "POST",
+  );
+  await page.locator('[data-id="smoke-unreal-article"] [data-save-id]').click();
+  await page.locator('[data-id="smoke-unreal-article"] .source-menu summary').click();
+  await page.locator('[data-id="smoke-unreal-article"] [data-source-action="mute"]').click();
+  expect((await statePost).postDataJSON()).toMatchObject({
+    saved: expect.arrayContaining(["smoke-blender-article", "smoke-unreal-article"]),
+    muted_sources: ["smoke-unreal-source"],
+  });
+  await expectCleanBrowser(guards);
+});
+
 test("mobile feed survives an offline reload through its service worker", async ({ browser }) => {
   const context = await browser.newContext({ ...PIXEL_7, serviceWorkers: "allow" });
   const page = await context.newPage();

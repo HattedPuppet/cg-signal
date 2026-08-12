@@ -204,6 +204,33 @@ class DesktopShellTests(unittest.TestCase):
         self.assertIn("syncAfterThumbnailRefresh(payload)", javascript)
         self.assertIn("?wait_thumbnails=1", javascript)
 
+    def test_user_state_controls_require_authoritative_recovery(self):
+        html = (SITE / "index.html").read_text(encoding="utf-8")
+        javascript = (SITE / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="user-state-status"', html)
+        self.assertIn('userStateStatus: "loading"', javascript)
+        self.assertIn('state.userStateStatus = "error"', javascript)
+        self.assertIn('state.userStateStatus = "ready"', javascript)
+        self.assertIn('data-retry-user-state', javascript)
+        self.assertIn('if (state.userStateStatus !== "ready") return;', javascript)
+        self.assertIn('[data-save-id], [data-source-action], #reset-sources, [data-view=\'saved\']', javascript)
+        self.assertIn('if (!userStateReady()) return;', javascript)
+
+    def test_schema_transition_warning_is_documented(self):
+        readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+        prd = (PROJECT_ROOT / "PRD.md").read_text(encoding="utf-8")
+        for document in (readme, prd):
+            lowered = document.lower()
+            self.assertIn("schema 1", lowered)
+            self.assertIn("schema 2", lowered)
+            self.assertIn("in place", lowered)
+            self.assertIn("saved ids", lowered)
+            self.assertIn("muted sources", lowered)
+            self.assertIn("permanently discards", lowered)
+        self.assertIn("old schema 1 binary rejects a schema 2 database", readme.lower())
+        self.assertIn("format 1 snapshot", readme.lower())
+        self.assertIn("cannot include changes made after upgrade", readme.lower())
+
     def test_thumbnail_wait_rearms_after_a_server_timeout(self):
         javascript = (SITE / "app.js").read_text(encoding="utf-8")
         self.assertIn("thumbnailRefreshRetryTimer", javascript)

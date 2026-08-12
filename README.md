@@ -28,6 +28,15 @@ python server.py
 
 Desktop history can be captured as a verified, atomic SQLite snapshot. A
 manual snapshot is written beneath `.backups/` (or to an explicit destination).
+On first launch after this update, CG Signal automatically migrates the live
+schema 1 database to schema 2 in place. The migration preserves articles,
+history, saved IDs, configured sources, muted sources, and the state timestamp,
+but permanently discards notes, reactions, read/manual archive flags, feedback
+context, reduced-source state, and other non-saved state. New backups normalize
+schema 1 only in a temporary copy before publishing a schema 2 snapshot, so
+those discarded fields are omitted. An old schema 1 binary rejects a schema 2 database;
+downgrade requires a separately retained pre-upgrade schema 1
+database or format 1 snapshot and cannot include changes made after upgrade.
 Published schema 1 snapshots are normalized to schema 2 in the temporary
 snapshot copy; the live database remains unchanged during backup:
 

@@ -175,6 +175,14 @@ And is actively interested in:
   than limiting them to the current RSS window.
 - Persist saved IDs and muted-source preferences in the local server's data
   directory; SQLite is authoritative.
+- On first launch after the schema transition, migrate the live schema 1
+  database to schema 2 in place while preserving articles, history, saved IDs,
+  configured sources, muted sources, and the state timestamp. It permanently discards
+  notes, reactions, read/manual archive flags, feedback context,
+  reduced-source state, and other non-saved state. New backups normalize schema
+  1 in a temporary copy and publish schema 2; downgrade requires a separately
+  retained pre-upgrade schema 1 database or format 1 snapshot and cannot carry
+  post-upgrade changes.
 
 ### Source and refresh controls
 
