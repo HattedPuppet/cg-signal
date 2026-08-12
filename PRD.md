@@ -50,8 +50,8 @@ And is actively interested in:
   breakdowns related to the user's tools.
 - Keep industry and business reporting available without letting it dominate
   technical research.
-- Preserve useful material through saving and archiving.
-- Make accumulated learning searchable through notes and structured queries.
+- Preserve useful material through saving and durable history.
+- Make accumulated learning searchable through structured queries.
 - Keep personal data private and local, require no account inside CG Signal,
   and remain free of ongoing API or SaaS costs.
 - Make ranking understandable rather than presenting a black-box feed.
@@ -64,7 +64,7 @@ And is actively interested in:
 - Building a general-purpose social-media reader.
 - Ingesting paid APIs such as the X API.
 - Requiring cloud hosting for the desktop application or storing personal
-  research state in a hosted service.
+  state in a hosted service.
 - Requiring an account inside the reader, advertising, or behavioral tracking.
 - Automatically publishing, messaging, or sharing content externally.
 
@@ -78,7 +78,7 @@ And is actively interested in:
    flow.
 5. **Local by default:** personal state and optional intelligence remain on the
    user's computer.
-6. **Graceful degradation:** cached feeds and browser state keep the dashboard
+6. **Graceful degradation:** cached feeds keep the dashboard
    useful during temporary source or local-server failures.
 
 ## Current functional requirements
@@ -155,7 +155,7 @@ And is actively interested in:
 - Keep desktop search in the sticky topbar and provide a persistent fast jump
   to the first visible article.
 - Search article titles, summaries, sources, classifications, related coverage,
-  relevance reasons, and personal research notes.
+  and relevance reasons.
 - Support AND-combined hashtags for common software plus structured
   `#software:`, `#topic:`, `#source:`, and `#is:` operators.
 - Support quoted values and exclusions prefixed by `-`.
@@ -167,15 +167,24 @@ And is actively interested in:
 
 - Save stories into a durable Learning Library grouped by primary software or
   context.
-- Attach searchable local research notes to saved stories.
 - Retain gathered article metadata in a durable local history after articles
   rotate out of their publishers' RSS feeds.
 - Provide paginated full-history search using the same text, hashtag,
   information-type, and source filters as the current feed.
 - Populate the Learning Library and History views from durable history rather
   than limiting them to the current RSS window.
-- Persist saved and note state in the local server's data directory,
-  with browser storage as a migration and failure fallback.
+- Persist saved IDs and muted-source preferences in the local server's data
+  directory; SQLite is authoritative.
+- On first launch after the schema transition, migrate the live schema 1
+  database to schema 2 in place while preserving articles, history, saved IDs,
+  configured sources, muted sources, and the state timestamp. It permanently discards
+  notes, reactions, read/manual archive flags, feedback context,
+  reduced-source state, and other non-saved state. New backups publish manifest format 2
+  with schema 2 databases. Exact legacy format 1/schema 1 snapshots
+  remain accepted and are staged and verified before migration. Backing up a
+  live schema 1 database normalizes a temporary copy to format 2/schema 2 and
+  discards obsolete fields; downgrade requires a separately retained pre-upgrade
+  schema 1 database or format 1 snapshot and cannot carry post-upgrade changes.
 
 ### Source and refresh controls
 
@@ -205,7 +214,7 @@ And is actively interested in:
   filtering, source selection, publication-window filtering, text and hashtag
   search.
 - Keep mobile stories in one flat newest-first chronology without a separate
-  recency board or read-state tracking.
+  recency board.
 - Keep search in the mobile header and expose information type, category, and
   source controls as touch-sized inline choices in the feed, with clear
   active-state indication and no required discovery drawer.
@@ -223,7 +232,7 @@ And is actively interested in:
   to a future public feed configuration.
 - Support Android home-screen installation and retain the most recently opened
   feed for temporary offline access.
-- Keep History, Learning Library, saved state, and notes exclusive to the
+- Keep History, Learning Library, and saved state exclusive to the
   desktop application. Mobile pins and source enablement are
   device-local and do not sync to desktop.
 
@@ -236,7 +245,7 @@ And is actively interested in:
   showing cached stories”) and expose the source names through an accessible
   expandable detail.
 - Export only explicitly allowlisted public RSS-derived fields. Never publish
-  `.cache`, the SQLite database, user state, notes, or preference data.
+  `.cache`, the SQLite database, or desktop state.
 
 ## Core user journey
 
@@ -244,22 +253,21 @@ And is actively interested in:
 2. Review Latest Signal, narrow it by publication window, information type, and
    category, and optionally refine Production techniques.
 3. Open valuable stories on the original site.
-4. Save evergreen learning material or archive low-priority items.
-5. Use text or hashtag search for deeper exploration and add notes to saved
-   learning material.
+4. Save evergreen learning material.
+5. Use text or hashtag search for deeper exploration.
 
 ## Privacy, cost, and data constraints
 
 - No telemetry, advertising, or external user profile.
 - No paid APIs or recurring SaaS dependency.
 - Feed metadata, preview-image cache, SQLite article history, source
-  configuration, and user state remain under the local project directory.
-- SQLite snapshots contain the complete local archive, including notes and
-  custom source URLs, and must never be synced or published. Snapshot
+  configuration, and saved/muted state remain under the local project directory.
+- SQLite snapshots contain the complete local history and custom source URLs,
+  and must never be synced or published. Snapshot
   manifests contain only structural metadata, checksums, and row counts;
   checksums detect corruption but are not authentication or encryption.
 - The hosted mobile artifact may contain current public RSS metadata and
-  excerpts, but no personal state or long-term archive.
+  excerpts, but no personal state or long-term history.
 - Optional future models must be opt-in, local, and removable without breaking
   the core feed.
 
@@ -271,7 +279,7 @@ analytics:
 - Duplicate announcements rarely require opening more than one card.
 - Latest Signal stays chronological while categories and contextual production
   subcategories reliably narrow it without duplicating cards.
-- Saved material and notes remain retrievable and searchable after browser restarts.
+- Saved material remains retrievable after browser restarts.
 - Historical articles remain searchable after the live RSS feed has rotated.
 - Feed failures do not prevent access to the last successful feed.
 - The dashboard remains useful when all optional intelligence features are off.
@@ -279,7 +287,7 @@ analytics:
 ## Quality requirements
 
 - Software and production-topic classification, relevance, state normalization,
-  feed parsing, thumbnail discovery, source configuration, archive search, and
+  feed parsing, thumbnail discovery, source configuration, history search, and
   deduplication behavior must have automated regression tests.
 - State writes must be bounded, validated, and atomic.
 - Controls must have accessible names and keyboard-focus behavior.
@@ -290,8 +298,8 @@ analytics:
 ### Near term
 
 - Carefully selected official YouTube RSS sources.
-- Verified local SQLite backup and restore for accumulated article history and
-  notes. Snapshots are atomic, integrity/count checked, and remain local.
+- Verified local SQLite backup and restore for accumulated article history.
+  Snapshots are atomic, integrity/count checked, and remain local.
 
 ### Optional intelligence
 

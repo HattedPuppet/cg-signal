@@ -30,7 +30,7 @@
             <span>Latest signal</span>
             <strong id="all-count">—</strong>
           </button>
-          <button class="nav-item" type="button" data-view="saved">
+          <button class="nav-item" type="button" data-view="saved" disabled aria-disabled="true">
             <span class="nav-symbol" aria-hidden="true">☆</span>
             <span>Learning library</span>
             <strong id="saved-count">0</strong>
@@ -47,7 +47,7 @@
             <h2>Sources</h2>
             <div class="section-actions">
               <button id="manage-sources" class="text-button" type="button" aria-haspopup="dialog" aria-expanded="false">Manage</button>
-              <button id="reset-sources" class="text-button" type="button" title="Restore every source and clear source filters">Reset</button>
+              <button id="reset-sources" class="text-button" type="button" title="Restore every source and clear source filters" disabled aria-disabled="true">Reset</button>
             </div>
           </div>
           <p class="source-filter-hint">Click to isolate · Ctrl-click to combine</p>
@@ -58,11 +58,11 @@
           </div>
         </div>
 
-        <div class="sidebar-note">
+        <div class="sidebar-privacy">
           <span class="privacy-mark" aria-hidden="true">◎</span>
           <div>
             <strong>Private by design</strong>
-            <p>No account. No tracking. Your library and notes stay on this computer.</p>
+            <p>No account. No tracking. Your saved stories stay on this computer.</p>
           </div>
         </div>
 
@@ -168,6 +168,9 @@
         </section>
 
         <div id="notice" class="notice" role="status" hidden></div>
+        <div id="user-state-status" class="user-state-status" role="status" aria-live="polite" aria-busy="true">
+          <strong>Loading saved stories and source preferences…</strong>
+        </div>
 
         <section id="stories" class="stories-section" aria-live="polite" aria-busy="true">
           <div id="story-grid" class="story-grid loading-grid">

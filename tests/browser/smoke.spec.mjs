@@ -113,6 +113,18 @@ async function expectCleanBrowser(guards) {
   expect(guards.pageErrors.map((error) => error.stack || error.message), "page errors").toEqual([]);
 }
 
+async function readDesktopState(page) {
+  return page.evaluate(async () => {
+    const token = document.querySelector('meta[name="cg-signal-api-token"]').content;
+    const response = await fetch("/api/state", {
+      headers: { "X-CG-Signal-Token": token },
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`State read failed (${response.status})`);
+    return response.json();
+  });
+}
+
 test.beforeAll(async () => {
   fixtureUrls = await startFixtureServers();
 });
@@ -124,6 +136,10 @@ test.afterAll(async () => {
 test("desktop dashboard serves and persists the fixture workflow", async ({ page }) => {
   const guards = await installBrowserGuards(page);
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript(() => {
+    localStorage.setItem("cg-signal:legacy-state", "must be removed");
+    localStorage.setItem("cg-signal:theme", "paper");
+  });
   await page.goto(fixtureUrls.desktop_url, { waitUntil: "domcontentloaded" });
 
   const token = await page.locator('meta[name="cg-signal-api-token"]').getAttribute("content");
@@ -132,6 +148,7 @@ test("desktop dashboard serves and persists the fixture workflow", async ({ page
   await expect(page.locator("#stories")).toHaveAttribute("aria-busy", "false");
   await expect(page.locator("#story-grid .story-card")).toHaveCount(2);
   await expect(page.locator("#story-grid .skeleton-card")).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem("cg-signal:legacy-state"))).toBeNull();
 
   const cards = page.locator("#story-grid .story-card");
   await page.locator("#search-input").fill("Unreal");
@@ -153,7 +170,137 @@ test("desktop dashboard serves and persists the fixture workflow", async ({ page
   await page.locator('[data-view="saved"]').click();
   await expect(page.locator("#stories")).toHaveAttribute("aria-busy", "false");
   await expect(page.locator('[data-id="smoke-blender-article"]')).toContainText("Blender Lighting Workflow");
-  await expect(page.locator('textarea[data-note-id="smoke-blender-article"]')).toBeVisible();
+  await expect(page.locator('textarea[data-note-id="smoke-blender-article"]')).toHaveCount(0);
+  await expectCleanBrowser(guards);
+});
+
+test("desktop state controls wait for authoritative recovery", async ({ page }) => {
+  const guards = await installBrowserGuards(page);
+  const statePosts = [];
+  let abortedInitialStateGet = false;
+  page.on("request", (request) => {
+    if (request.url().endsWith("/api/state") && request.method() === "POST") {
+      statePosts.push(request.postDataJSON());
+    }
+  });
+  await page.route("**/api/state", async (route) => {
+    if (!abortedInitialStateGet && route.request().method() === "GET") {
+      abortedInitialStateGet = true;
+      await route.abort();
+      return;
+    }
+    await route.continue();
+  });
+  await page.goto(`${fixtureUrls.desktop_url}?state_fault=1`, { waitUntil: "domcontentloaded" });
+
+  await expect(page.locator("#user-state-status")).toContainText("Retry");
+  await expect(page.locator('[data-id="smoke-unreal-article"] [data-save-id]')).toBeDisabled();
+  await expect(page.locator("#reset-sources")).toBeDisabled();
+  await page.locator('[data-id="smoke-unreal-article"] .source-menu summary').click();
+  await expect(page.locator('[data-id="smoke-unreal-article"] [data-source-action]')).toBeDisabled();
+  await page.keyboard.press("j");
+  await page.keyboard.press("s");
+  await page.locator('[data-id="smoke-unreal-article"] [data-save-id]').dispatchEvent("click");
+  await page.locator('[data-id="smoke-unreal-article"] [data-source-action]').dispatchEvent("click");
+  await page.locator("#reset-sources").dispatchEvent("click");
+  await expect.poll(() => statePosts.length).toBe(0);
+
+  await page.locator("[data-retry-user-state]").click();
+  await expect(page.locator("#user-state-status")).toBeHidden();
+  await expect(page.locator('[data-id="smoke-blender-article"] [data-save-id]')).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator('[data-source-id="smoke-unreal-source"]')).toHaveClass(/is-source-muted/);
+
+  // The muted source is intentionally absent from Latest Signal. Restore it
+  // through the recovered state UI, add a saved story, then mute it again so
+  // the final merged write proves both seeded values survived the recovery.
+  const restorePost = page.waitForRequest(
+    (request) => request.url().endsWith("/api/state") && request.method() === "POST",
+  );
+  await page.locator('[data-source-id="smoke-unreal-source"]').dispatchEvent("click");
+  await restorePost;
+  await expect(page.locator('[data-id="smoke-unreal-article"] [data-save-id]')).toBeVisible();
+  const statePost = page.waitForRequest(
+    (request) => request.url().endsWith("/api/state") && request.method() === "POST",
+  );
+  await page.locator('[data-id="smoke-unreal-article"] [data-save-id]').click();
+  await page.locator('[data-id="smoke-unreal-article"] .source-menu summary').click();
+  await page.locator('[data-id="smoke-unreal-article"] [data-source-action="mute"]').click();
+  expect((await statePost).postDataJSON()).toMatchObject({
+    saved: expect.arrayContaining(["smoke-blender-article", "smoke-unreal-article"]),
+    muted_sources: ["smoke-unreal-source"],
+  });
+  await expectCleanBrowser(guards);
+});
+
+test("desktop state writes serialize and coalesce the latest generation", async ({ page }) => {
+  const guards = await installBrowserGuards(page);
+  const postBodies = [];
+  let heldFirstPost = null;
+  await page.route("**/api/state", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    postBodies.push(route.request().postDataJSON());
+    if (!heldFirstPost) {
+      heldFirstPost = route;
+      return;
+    }
+    await route.continue();
+  });
+  await page.goto(`${fixtureUrls.desktop_url}?state_control=1`, { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#user-state-status")).toBeHidden();
+  await expect(page.locator("#story-grid .story-card")).toHaveCount(2);
+
+  await page.locator('[data-id="smoke-unreal-article"] [data-save-id]').click();
+  await expect.poll(() => postBodies.length).toBe(1);
+  await page.locator('[data-id="smoke-blender-article"] [data-save-id]').click();
+  await page.locator('[data-id="smoke-unreal-article"] .source-menu summary').click();
+  await page.locator('[data-id="smoke-unreal-article"] [data-source-action="mute"]').click();
+  await page.waitForTimeout(350);
+  expect(postBodies).toHaveLength(1);
+
+  await heldFirstPost.continue();
+  await expect.poll(() => postBodies.length).toBe(2);
+  expect(postBodies[1]).toEqual({
+    saved: ["smoke-unreal-article"],
+    muted_sources: ["smoke-unreal-source"],
+  });
+  await expect.poll(async () => (await readDesktopState(page)).saved).toEqual(["smoke-unreal-article"]);
+  expect(await readDesktopState(page)).toMatchObject({ muted_sources: ["smoke-unreal-source"] });
+  await expectCleanBrowser(guards);
+});
+
+test("desktop state save failure keeps latest state for accessible retry", async ({ page }) => {
+  const guards = await installBrowserGuards(page);
+  let abortedPost = false;
+  await page.route("**/api/state", async (route) => {
+    if (!abortedPost && route.request().method() === "POST") {
+      abortedPost = true;
+      await route.abort("failed");
+      return;
+    }
+    await route.continue();
+  });
+  await page.goto(`${fixtureUrls.desktop_url}?state_failure=1`, { waitUntil: "domcontentloaded" });
+  await expect(page.locator("#user-state-status")).toBeHidden();
+  await page.locator('[data-id="smoke-unreal-article"] [data-save-id]').click();
+  await expect(page.locator("#user-state-status")).toContainText("Changes not saved");
+  await expect(page.locator("[data-retry-user-state-save]")).toBeVisible();
+  expect(await readDesktopState(page)).toMatchObject({
+    saved: ["smoke-blender-article"],
+    muted_sources: [],
+  });
+
+  await page.locator("[data-retry-user-state-save]").click();
+  await expect(page.locator("#user-state-status")).toBeHidden();
+  expect(await readDesktopState(page)).toMatchObject({
+    saved: ["smoke-blender-article", "smoke-unreal-article"],
+    muted_sources: [],
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator("#user-state-status")).toBeHidden();
+  await expect(page.locator('[data-id="smoke-unreal-article"] [data-save-id]')).toHaveAttribute("aria-pressed", "true");
   await expectCleanBrowser(guards);
 });
 

@@ -223,7 +223,7 @@ class FeedFallbackSchemaTests(ServiceTestCase):
             mock.patch.object(self.service, "read_feed_source_cache", return_value={}),
             mock.patch.object(self.service, "fetch_source", return_value=failure),
             mock.patch.object(self.service, "update_feed_source_cache"),
-            mock.patch.object(self.service.repository, "archive_article_count", return_value=0),
+            mock.patch.object(self.service.repository, "history_article_count", return_value=0),
             mock.patch.object(self.service, "write_cache") as write_cache,
         ):
             result = self.service.refresh_feed(incompatible)
@@ -287,7 +287,7 @@ class ThumbnailPipelineTests(ServiceTestCase):
             mock.patch.object(self.service, "update_feed_source_cache"),
             mock.patch.object(self.service, "apply_cached_images", return_value=[article]),
             mock.patch("cg_signal.feeds.cluster_articles", return_value=[article]),
-            mock.patch.object(self.service.repository, "archive_articles", return_value=1),
+            mock.patch.object(self.service.repository, "record_articles", return_value=1),
             mock.patch.object(self.service, "write_cache") as write_cache,
             mock.patch.object(self.service, "schedule_thumbnail_enrichment", return_value=True) as schedule,
             mock.patch.object(self.service, "enrich_missing_images") as enrich,

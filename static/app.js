@@ -29,21 +29,23 @@ async function apiFetch(url, options = {}) {
 }
 
 const storageKeys = {
-  saved: "cg-signal:saved",
-  archiveRemoval: "cg-signal:archive-feature-removed",
   theme: "cg-signal:theme",
   layout: "cg-signal:layout",
   lane: "cg-signal:lane",
   software: "cg-signal:software",
   topics: "cg-signal:topics",
-  notes: "cg-signal:notes",
-  mutedSources: "cg-signal:muted-sources",
   lastVisit: "cg-signal:last-visit",
-  stateDirty: "cg-signal:state-dirty",
-  stateMigrated: "cg-signal:state-migrated",
   timeWindow: "cg-signal:time-window",
   sidebar: "cg-signal:sidebar",
 };
+
+const presentationStorageKeys = new Set(Object.values(storageKeys));
+for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+  const key = localStorage.key(index);
+  if (key?.startsWith("cg-signal:") && !presentationStorageKeys.has(key)) {
+    localStorage.removeItem(key);
+  }
+}
 
 const TIME_WINDOW_LABELS = {
   month: "This month",
@@ -56,11 +58,11 @@ const storedLane = localStorage.getItem(storageKeys.lane);
 const state = {
   payload: null,
   articles: [],
-  archiveArticles: [],
-  archiveTotal: 0,
-  archiveHasMore: false,
-  archiveLoading: false,
-  archiveRequestId: 0,
+  historyArticles: [],
+  historyTotal: 0,
+  historyHasMore: false,
+  historyLoading: false,
+  historyRequestId: 0,
   managedSources: [],
   activeSources: new Set(),
   lane: LANE_VALUES.has(storedLane) ? storedLane : "All",
@@ -68,9 +70,12 @@ const state = {
   topics: readFilterSet(storageKeys.topics),
   view: "all",
   search: "",
-  saved: readSet(storageKeys.saved),
-  notes: readObject(storageKeys.notes),
-  mutedSources: readSet(storageKeys.mutedSources),
+  userStateStatus: "loading",
+  userStateError: null,
+  userStateSaveStatus: "idle",
+  userStateSaveError: null,
+  saved: new Set(),
+  mutedSources: new Set(),
   layout: localStorage.getItem(storageKeys.layout) || "grid",
   timeWindow: Object.prototype.hasOwnProperty.call(TIME_WINDOW_LABELS, localStorage.getItem(storageKeys.timeWindow))
     ? localStorage.getItem(storageKeys.timeWindow)
@@ -86,13 +91,17 @@ const state = {
 };
 
 let stateSaveTimer = null;
-let noteSaveTimer = null;
+let stateSaveInFlight = false;
+let stateSaveGeneration = 0;
+let stateSaveCommittedGeneration = 0;
+let stateSaveDirty = false;
+let stateSaveSnapshot = null;
 let backgroundRefreshTimer = null;
 let feedRefreshWaitPending = false;
 let thumbnailRefreshWaitPending = false;
 let thumbnailRefreshRetryTimer = null;
 let thumbnailRefreshRetryDelay = 750;
-let archiveSearchTimer = null;
+let historySearchTimer = null;
 const THUMBNAIL_REFRESH_RETRY_MAX_MS = 10_000;
 
 const elements = {
@@ -119,6 +128,7 @@ const elements = {
   refresh: document.querySelector("#refresh-button"),
   layout: document.querySelector("#layout-toggle"),
   notice: document.querySelector("#notice"),
+  userStateStatus: document.querySelector("#user-state-status"),
   sortLabel: document.querySelector("#sort-label"),
   manageSources: document.querySelector("#manage-sources"),
   sourceManagerPanel: document.querySelector("#source-manager-panel"),
@@ -148,24 +158,6 @@ const sourceShortNames = {
   "unreal-engine": "UE",
   "blender-developers": "BL",
 };
-
-function readSet(key) {
-  try {
-    const value = JSON.parse(localStorage.getItem(key) || "[]");
-    return new Set(Array.isArray(value) ? value : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function readObject(key) {
-  try {
-    const value = JSON.parse(localStorage.getItem(key) || "{}");
-    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  } catch {
-    return {};
-  }
-}
 
 function parseStoredDate(value) {
   if (!value) return null;
@@ -200,65 +192,146 @@ function chooseSingleFilter(selected, value) {
   selected.add(value);
 }
 
-function saveSet(key, value) {
-  localStorage.setItem(key, JSON.stringify([...value].slice(-1500)));
+function userStateSnapshot() {
+  return {
+    saved: [...state.saved],
+    muted_sources: [...state.mutedSources],
+  };
 }
 
-function cacheUserState() {
-  saveSet(storageKeys.saved, state.saved);
-  localStorage.setItem(storageKeys.notes, JSON.stringify(state.notes));
-  saveSet(storageKeys.mutedSources, state.mutedSources);
+function userStateMutationAllowed() {
+  return userStateReady() && state.userStateSaveStatus !== "error";
+}
+
+function scheduleUserStateWrite(delay = 140) {
+  window.clearTimeout(stateSaveTimer);
+  stateSaveTimer = window.setTimeout(() => {
+    stateSaveTimer = null;
+    persistUserState();
+  }, delay);
 }
 
 async function persistUserState() {
-  cacheUserState();
+  if (!userStateReady() || stateSaveInFlight || !stateSaveDirty || !stateSaveSnapshot) return;
+  stateSaveInFlight = true;
+  const generation = stateSaveGeneration;
+  const snapshot = stateSaveSnapshot;
+  state.userStateSaveStatus = "saving";
+  state.userStateSaveError = null;
+  renderUserStateControls();
   try {
     const response = await apiFetch("/api/state", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        saved: [...state.saved],
-        archived: [],
-        notes: state.notes,
-        muted_sources: [...state.mutedSources],
-      }),
+      body: JSON.stringify(snapshot),
     });
     if (!response.ok) throw new Error(`State save failed (${response.status})`);
-    localStorage.setItem(storageKeys.stateDirty, "0");
-    localStorage.setItem(storageKeys.stateMigrated, "1");
+    if (stateSaveGeneration === generation) {
+      stateSaveCommittedGeneration = generation;
+      stateSaveDirty = false;
+      stateSaveSnapshot = null;
+      state.userStateSaveStatus = "idle";
+      state.userStateSaveError = null;
+    } else {
+      state.userStateSaveStatus = "pending";
+    }
   } catch (error) {
-    console.warn("CG Signal kept the latest state in this browser.", error);
+    state.userStateSaveError = error;
+    state.userStateSaveStatus = "error";
+    // Keep the latest generation and snapshot. Retry must send exactly this
+    // optimistic state, without rehydrating from an older server response.
+    console.warn("CG Signal could not save local state.", error);
+  } finally {
+    stateSaveInFlight = false;
+    renderUserStateControls();
+    if (stateSaveDirty && state.userStateSaveStatus !== "error") {
+      scheduleUserStateWrite(0);
+    }
   }
 }
 
 function queueUserStateSave() {
-  cacheUserState();
-  localStorage.setItem(storageKeys.stateDirty, "1");
   window.clearTimeout(stateSaveTimer);
-  stateSaveTimer = window.setTimeout(persistUserState, 140);
+  stateSaveTimer = null;
+  if (!userStateMutationAllowed()) return;
+  stateSaveGeneration += 1;
+  stateSaveDirty = stateSaveGeneration !== stateSaveCommittedGeneration;
+  stateSaveSnapshot = userStateSnapshot();
+  state.userStateSaveStatus = "pending";
+  state.userStateSaveError = null;
+  renderUserStateControls();
+  scheduleUserStateWrite();
+}
+
+function retryUserStateSave() {
+  if (!userStateReady() || stateSaveInFlight || !stateSaveDirty || !stateSaveSnapshot) return;
+  state.userStateSaveStatus = "pending";
+  state.userStateSaveError = null;
+  renderUserStateControls();
+  persistUserState();
 }
 
 async function loadUserState() {
+  state.userStateStatus = "loading";
+  state.userStateError = null;
+  window.clearTimeout(stateSaveTimer);
+  stateSaveTimer = null;
+  renderUserStateControls();
   try {
     const response = await apiFetch("/api/state");
     if (!response.ok) throw new Error(`State request failed (${response.status})`);
     const stored = await response.json();
-    const mergeLocal = localStorage.getItem(storageKeys.stateMigrated) !== "1"
-      || localStorage.getItem(storageKeys.stateDirty) === "1";
-    state.saved = new Set(mergeLocal ? [...state.saved, ...(stored.saved || [])] : (stored.saved || []));
-    state.notes = mergeLocal ? { ...(stored.notes || {}), ...state.notes } : (stored.notes || {});
-    state.mutedSources = new Set(mergeLocal
-      ? [...state.mutedSources, ...(stored.muted_sources || [])]
-      : (stored.muted_sources || []));
-    const needsArchiveRemoval = localStorage.getItem(storageKeys.archiveRemoval) !== "1"
-      || (stored.archived || []).length > 0;
-    localStorage.removeItem("cg-signal:archived");
-    if (mergeLocal || needsArchiveRemoval) await persistUserState();
-    localStorage.setItem(storageKeys.archiveRemoval, "1");
-    localStorage.setItem(storageKeys.stateMigrated, "1");
-    cacheUserState();
+    state.saved = new Set(Array.isArray(stored.saved) ? stored.saved : []);
+    state.mutedSources = new Set(Array.isArray(stored.muted_sources) ? stored.muted_sources : []);
+    state.userStateStatus = "ready";
+    state.userStateError = null;
+    if (state.payload) {
+      renderSources(state.payload.sources || []);
+      render();
+    }
+    else renderUserStateControls();
   } catch (error) {
-    console.warn("CG Signal is using browser state until the local store is available.", error);
+    state.userStateStatus = "error";
+    state.userStateError = error;
+    console.warn("CG Signal could not load local state.", error);
+    renderUserStateControls();
+  }
+}
+
+function userStateReady() {
+  return state.userStateStatus === "ready";
+}
+
+function renderUserStateControls() {
+  const unavailable = !userStateMutationAllowed();
+  document.querySelectorAll("[data-save-id], [data-source-action]").forEach((control) => {
+    control.disabled = unavailable;
+    control.setAttribute("aria-disabled", String(unavailable));
+  });
+  document.querySelectorAll("#reset-sources, [data-view='saved']").forEach((control) => {
+    const feedUnavailable = !state.payload;
+    const disabled = unavailable || feedUnavailable;
+    control.disabled = disabled;
+    control.setAttribute("aria-disabled", String(disabled));
+  });
+  if (!elements.userStateStatus) return;
+  const saving = state.userStateSaveStatus === "pending" || state.userStateSaveStatus === "saving";
+  elements.userStateStatus.setAttribute("aria-busy", String(state.userStateStatus === "loading" || saving));
+  if (state.userStateStatus === "loading") {
+    elements.userStateStatus.hidden = false;
+    elements.userStateStatus.innerHTML = "<strong>Loading saved stories and source preferences…</strong>";
+  } else if (state.userStateStatus === "error") {
+    elements.userStateStatus.hidden = false;
+    elements.userStateStatus.innerHTML = "<strong>Saved stories and source preferences are unavailable.</strong> <span>Retry to enable saving and source controls.</span> <button type=\"button\" data-retry-user-state>Retry</button>";
+  } else if (state.userStateSaveStatus === "error") {
+    elements.userStateStatus.hidden = false;
+    elements.userStateStatus.innerHTML = "<strong>Changes not saved.</strong> <span>Your latest saved/source changes are still local.</span> <button type=\"button\" data-retry-user-state-save>Retry save</button>";
+  } else if (saving) {
+    elements.userStateStatus.hidden = false;
+    elements.userStateStatus.innerHTML = "<strong>Saving changes…</strong>";
+  } else {
+    elements.userStateStatus.hidden = true;
+    elements.userStateStatus.textContent = "";
   }
 }
 
@@ -351,7 +424,6 @@ function articleIsNew(article) {
 
 function matchesSearch(article, query) {
   return matchesSearchQuery(article, query, {
-    extraText: state.notes[article.id] || "",
     isStatus: (item, value) => ({
       saved: state.saved.has(item.id),
       library: state.saved.has(item.id),
@@ -390,16 +462,16 @@ function applyFacetFilters(articles) {
   return articles.filter((article) => matchesSoftware(article) && matchesTopics(article));
 }
 
-function usesArchiveView() {
+function usesHistoryView() {
   return state.view === "history" || state.view === "saved";
 }
 
-function archiveViewQuery() {
+function historyViewQuery() {
   const status = state.view === "saved" ? "#is:saved" : "";
   return [state.search.trim(), status].filter(Boolean).join(" ");
 }
 
-function archiveSourceFilter() {
+function historySourceFilter() {
   const enabledIds = (state.payload?.sources || []).map((source) => source.id);
   const selectedIds = enabledIds.filter(
     (sourceId) => state.activeSources.has(sourceId) && !state.mutedSources.has(sourceId),
@@ -408,44 +480,44 @@ function archiveSourceFilter() {
   return selectedIds.length ? selectedIds : ["__none__"];
 }
 
-async function loadArchive({ append = false } = {}) {
-  if (!state.payload || !usesArchiveView()) return;
-  const requestId = ++state.archiveRequestId;
-  const offset = append ? state.archiveArticles.length : 0;
+async function loadHistory({ append = false } = {}) {
+  if (!state.payload || !usesHistoryView()) return;
+  const requestId = ++state.historyRequestId;
+  const offset = append ? state.historyArticles.length : 0;
   if (!append) {
-    state.archiveArticles = [];
-    state.archiveTotal = 0;
-    state.archiveHasMore = false;
+    state.historyArticles = [];
+    state.historyTotal = 0;
+    state.historyHasMore = false;
   }
-  state.archiveLoading = true;
+  state.historyLoading = true;
   render();
   const parameters = new URLSearchParams({
-    q: archiveViewQuery(),
+    q: historyViewQuery(),
     lane: state.lane,
     limit: "60",
     offset: String(offset),
   });
-  const sourceIds = archiveSourceFilter();
+  const sourceIds = historySourceFilter();
   if (sourceIds.length) parameters.set("sources", sourceIds.join(","));
   if (state.sessionCutoff) parameters.set("new_after", state.sessionCutoff.toISOString());
   try {
-    const response = await apiFetch(`/api/archive?${parameters}`);
+    const response = await apiFetch(`/api/history?${parameters}`);
     const payload = await response.json();
-    if (!response.ok || payload.error) throw new Error(payload.detail || payload.error || `Archive request failed (${response.status})`);
-    if (requestId !== state.archiveRequestId) return;
-    state.archiveArticles = append
-      ? [...state.archiveArticles, ...(payload.articles || [])]
+    if (!response.ok || payload.error) throw new Error(payload.detail || payload.error || `History request failed (${response.status})`);
+    if (requestId !== state.historyRequestId) return;
+    state.historyArticles = append
+      ? [...state.historyArticles, ...(payload.articles || [])]
       : (payload.articles || []);
-    state.archiveTotal = payload.total || 0;
-    state.archiveHasMore = Boolean(payload.has_more);
-    if (elements.historyCount) elements.historyCount.textContent = payload.archive_count ?? state.archiveTotal;
+    state.historyTotal = payload.total || 0;
+    state.historyHasMore = Boolean(payload.has_more);
+    if (elements.historyCount) elements.historyCount.textContent = payload.history_count ?? state.historyTotal;
   } catch (error) {
-    if (requestId !== state.archiveRequestId) return;
+    if (requestId !== state.historyRequestId) return;
     elements.notice.textContent = `Article history could not be searched. ${error.message}`;
     elements.notice.hidden = false;
   } finally {
-    if (requestId === state.archiveRequestId) {
-      state.archiveLoading = false;
+    if (requestId === state.historyRequestId) {
+      state.historyLoading = false;
       render();
     }
   }
@@ -456,8 +528,8 @@ function filteredArticles() {
     return applyFacetFilters(latestPool());
   }
 
-  if (usesArchiveView()) {
-    return state.archiveArticles.filter((article) => {
+  if (usesHistoryView()) {
+    return state.historyArticles.filter((article) => {
       if (state.view === "saved" && !state.saved.has(article.id)) return false;
       return true;
     });
@@ -508,27 +580,20 @@ function sourcePreferenceMenu(article) {
   const sourceId = article.source_id || article.sources?.[0]?.id || "";
   if (!sourceId) return "";
   const muted = state.mutedSources.has(sourceId);
+  const stateUnavailable = !userStateMutationAllowed();
   return `
     <details class="source-menu">
       <summary aria-label="Source actions for ${escapeHtml(article.source)}" title="Source actions">•••</summary>
       <div class="source-menu-panel">
         <strong>${escapeHtml(article.source)}</strong>
-        <button type="button" data-source-action="${muted ? "restore" : "mute"}" data-preference-source="${escapeHtml(sourceId)}">${muted ? "Restore this source" : "Mute this source"}</button>
+        <button type="button" data-source-action="${muted ? "restore" : "mute"}" data-preference-source="${escapeHtml(sourceId)}" ${stateUnavailable ? "disabled" : ""} aria-disabled="${stateUnavailable}">${muted ? "Restore this source" : "Mute this source"}</button>
       </div>
     </details>`;
 }
 
-function libraryNote(article) {
-  if (state.view !== "saved") return "";
-  return `
-    <div class="library-note">
-      <label for="note-${escapeHtml(article.id)}">Research note</label>
-      <textarea id="note-${escapeHtml(article.id)}" data-note-id="${escapeHtml(article.id)}" rows="2" maxlength="4000" placeholder="Why is this useful? Add a technique, takeaway, or next step…">${escapeHtml(state.notes[article.id] || "")}</textarea>
-    </div>`;
-}
-
 function storyCard(article) {
   const saved = state.saved.has(article.id);
+  const stateUnavailable = !userStateMutationAllowed();
   const imageUrl = safeImageUrl(article.image);
   const image = imageUrl === "#" ? "" : `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`;
   const coverage = article.source_count > 1 ? `${article.source_count} sources` : "Single source";
@@ -566,11 +631,10 @@ function storyCard(article) {
         </h2>
         <p class="story-summary">${escapeHtml(trimSummary(article.summary))}</p>
         ${reasonMarkup}
-        ${libraryNote(article)}
         <div class="story-footer">
           <div class="source-stack">${sourceStack(article)}<span class="coverage-label">${coverage}</span></div>
           <div class="card-actions">
-            <button class="save-button${saved ? " is-saved" : ""}" type="button" data-save-id="${escapeHtml(article.id)}" aria-label="${saved ? "Remove from saved" : "Save story"}" aria-pressed="${saved}">${saved ? "★" : "☆"}</button>
+            <button class="save-button${saved ? " is-saved" : ""}" type="button" data-save-id="${escapeHtml(article.id)}" aria-label="${saved ? "Remove from saved" : "Save story"}" aria-pressed="${saved}" ${stateUnavailable ? "disabled" : ""} aria-disabled="${stateUnavailable}">${saved ? "★" : "☆"}</button>
             ${sourcePreferenceMenu(article)}
           </div>
         </div>
@@ -623,16 +687,16 @@ function libraryStoryMarkup(visible) {
     </section>`).join("");
 }
 
-function archiveControlsMarkup() {
-  if (!usesArchiveView()) return "";
-  if (state.archiveLoading && !state.archiveArticles.length) {
-    return `<div class="archive-loading" role="status"><span></span> Searching your local history…</div>`;
+function historyControlsMarkup() {
+  if (!usesHistoryView()) return "";
+  if (state.historyLoading && !state.historyArticles.length) {
+    return `<div class="history-loading" role="status"><span></span> Searching your local history…</div>`;
   }
-  if (!state.archiveHasMore && !state.archiveLoading) return "";
+  if (!state.historyHasMore && !state.historyLoading) return "";
   return `
-    <div class="archive-load-more">
-      <button type="button" data-load-more-archive ${state.archiveLoading ? "disabled" : ""}>
-        ${state.archiveLoading ? "Loading…" : `Load more · ${state.archiveArticles.length} of ${state.archiveTotal}`}
+    <div class="history-load-more">
+      <button type="button" data-load-more-history ${state.historyLoading ? "disabled" : ""}>
+        ${state.historyLoading ? "Loading…" : `Load more · ${state.historyArticles.length} of ${state.historyTotal}`}
       </button>
     </div>`;
 }
@@ -723,7 +787,10 @@ function renderFacetFilters(pool) {
 }
 
 function render() {
-  if (!state.payload) return;
+  if (!state.payload) {
+    renderUserStateControls();
+    return;
+  }
   const pool = state.view === "all" ? latestPool() : [];
   renderFacetFilters(pool);
   const visible = filteredArticles();
@@ -737,25 +804,25 @@ function render() {
   const storyMarkup = state.view === "saved"
     ? libraryStoryMarkup(visible)
     : latestStoryMarkup(visible);
-  elements.grid.innerHTML = `${storyMarkup}${archiveControlsMarkup()}`;
-  const initialArchiveLoad = usesArchiveView() && state.archiveLoading && !visible.length;
-  elements.empty.hidden = visible.length > 0 || initialArchiveLoad;
-  elements.grid.hidden = visible.length === 0 && !initialArchiveLoad;
+  elements.grid.innerHTML = `${storyMarkup}${historyControlsMarkup()}`;
+  const initialHistoryLoad = usesHistoryView() && state.historyLoading && !visible.length;
+  elements.empty.hidden = visible.length > 0 || initialHistoryLoad;
+  elements.grid.hidden = visible.length === 0 && !initialHistoryLoad;
   const emptyCopy = {
-    saved: ["Your learning library is empty", "Save a story, then add a note so useful techniques remain easy to find."],
+    saved: ["Your learning library is empty", "Save a story to keep it available here."],
     history: ["No articles match", "Try a broader search or restore your source filters."],
   }[state.view] || ["No signal here yet", "Try another category, clear your source filters, or refresh the feeds."];
   elements.empty.querySelector("h2").textContent = emptyCopy[0];
   elements.empty.querySelector("p").textContent = emptyCopy[1];
-  const resultCount = usesArchiveView() ? state.archiveTotal : visible.length;
+  const resultCount = usesHistoryView() ? state.historyTotal : visible.length;
   elements.visibleCount.textContent = `${resultCount} ${resultCount === 1 ? "story" : "stories"}`;
-  const newCount = usesArchiveView() ? 0 : visible.filter(articleIsNew).length;
+  const newCount = usesHistoryView() ? 0 : visible.filter(articleIsNew).length;
   elements.newSince.textContent = state.sessionCutoff && newCount ? `${newCount} new` : "";
   elements.newSince.hidden = !(state.sessionCutoff && newCount);
   const latestCount = state.articles.filter(articleWithinTimeWindow).length;
   elements.allCount.textContent = latestCount;
   elements.savedCount.textContent = state.saved.size;
-  elements.historyCount.textContent = state.payload.archive_count ?? state.archiveTotal ?? "—";
+  elements.historyCount.textContent = state.payload.history_count ?? state.historyTotal ?? "—";
   elements.sortLabel.textContent = {
     saved: "Learning library",
     history: "Full history",
@@ -783,6 +850,7 @@ function render() {
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-pressed", String(active));
   });
+  renderUserStateControls();
 }
 
 function sourceCount(sourceId) {
@@ -793,10 +861,11 @@ function renderSources(sources) {
   elements.sourceFilters.innerHTML = sources
     .map((source) => {
       const muted = state.mutedSources.has(source.id);
+      const stateUnavailable = muted && !userStateMutationAllowed();
       const active = state.activeSources.has(source.id) && !muted;
       const status = muted ? "Muted — click to restore" : active ? "Included" : "Filtered out";
       return `
-        <button class="source-button${active ? "" : " is-muted"}${muted ? " is-source-muted" : ""}" type="button" data-source-id="${escapeHtml(source.id)}" style="--source-accent:${escapeHtml(source.accent)}" aria-pressed="${active}" title="${escapeHtml(status)}">
+        <button class="source-button${active ? "" : " is-muted"}${muted ? " is-source-muted" : ""}" type="button" data-source-id="${escapeHtml(source.id)}" style="--source-accent:${escapeHtml(source.accent)}" aria-pressed="${active}" aria-disabled="${stateUnavailable}" ${stateUnavailable ? "disabled" : ""} title="${escapeHtml(status)}">
           <span class="source-dot"></span>
           <span>${escapeHtml(source.name)}</span>
           ${muted ? '<em aria-hidden="true">muted</em>' : ""}
@@ -1099,6 +1168,7 @@ async function toggleConfiguredSource(sourceId, enabled, button) {
 }
 
 function setSourcePreference(sourceId, action) {
+  if (!userStateMutationAllowed()) return;
   if (action === "mute") {
     state.mutedSources.add(sourceId);
   } else {
@@ -1107,7 +1177,7 @@ function setSourcePreference(sourceId, action) {
   }
   queueUserStateSave();
   renderSources(state.payload.sources || []);
-  if (usesArchiveView()) loadArchive();
+  if (usesHistoryView()) loadHistory();
   else render();
 }
 
@@ -1143,6 +1213,18 @@ document.addEventListener("visibilitychange", () => {
 });
 
 document.addEventListener("click", (event) => {
+  const retryUserStateSaveButton = event.target.closest("[data-retry-user-state-save]");
+  if (retryUserStateSaveButton) {
+    retryUserStateSave();
+    return;
+  }
+
+  const retryUserState = event.target.closest("[data-retry-user-state]");
+  if (retryUserState) {
+    loadUserState();
+    return;
+  }
+
   const timeWindowButton = event.target.closest(".time-window-button[data-time-window]");
   if (timeWindowButton) {
     state.timeWindow = Object.prototype.hasOwnProperty.call(TIME_WINDOW_LABELS, timeWindowButton.dataset.timeWindow)
@@ -1150,7 +1232,7 @@ document.addEventListener("click", (event) => {
       : "month";
     localStorage.setItem(storageKeys.timeWindow, state.timeWindow);
     renderSources(state.payload?.sources || []);
-    if (usesArchiveView()) loadArchive();
+    if (usesHistoryView()) loadHistory();
     else render();
     return;
   }
@@ -1162,14 +1244,14 @@ document.addEventListener("click", (event) => {
     elements.search.value = existing ? `${existing} ${token}` : token;
     state.search = elements.search.value;
     elements.search.focus();
-    if (usesArchiveView()) loadArchive();
+    if (usesHistoryView()) loadHistory();
     else render();
     return;
   }
 
-  const loadMoreArchive = event.target.closest("[data-load-more-archive]");
-  if (loadMoreArchive) {
-    loadArchive({ append: true });
+  const loadMoreHistory = event.target.closest("[data-load-more-history]");
+  if (loadMoreHistory) {
+    loadHistory({ append: true });
     return;
   }
 
@@ -1194,10 +1276,10 @@ document.addEventListener("click", (event) => {
 
   const saveButton = event.target.closest("[data-save-id]");
   if (saveButton) {
+    if (!userStateMutationAllowed()) return;
     const id = saveButton.dataset.saveId;
     const wasSaved = state.saved.has(id);
     wasSaved ? state.saved.delete(id) : state.saved.add(id);
-    if (state.view === "saved" && wasSaved) state.archiveTotal = Math.max(0, state.archiveTotal - 1);
     queueUserStateSave();
     render();
     return;
@@ -1206,7 +1288,7 @@ document.addEventListener("click", (event) => {
   const sourceButton = event.target.closest("[data-source-id]");
   if (sourceButton) {
     const id = sourceButton.dataset.sourceId;
-    if (state.mutedSources.has(id)) {
+    if (state.mutedSources.has(id) && userStateMutationAllowed()) {
       state.mutedSources.delete(id);
       queueUserStateSave();
     }
@@ -1220,7 +1302,7 @@ document.addEventListener("click", (event) => {
         : new Set([id]);
     }
     renderSources(state.payload.sources || []);
-    if (usesArchiveView()) loadArchive();
+    if (usesHistoryView()) loadHistory();
     else render();
     return;
   }
@@ -1251,7 +1333,7 @@ document.addEventListener("click", (event) => {
   if (laneButton) {
     state.lane = laneButton.dataset.lane;
     localStorage.setItem(storageKeys.lane, state.lane);
-    if (usesArchiveView()) loadArchive();
+    if (usesHistoryView()) loadHistory();
     else render();
     return;
   }
@@ -1259,31 +1341,19 @@ document.addEventListener("click", (event) => {
   const viewButton = event.target.closest("[data-view]");
   if (viewButton) {
     state.view = viewButton.dataset.view;
-    if (usesArchiveView()) loadArchive();
+    if (usesHistoryView()) loadHistory();
     else render();
   }
 });
 
 elements.search.addEventListener("input", () => {
   state.search = elements.search.value;
-  window.clearTimeout(archiveSearchTimer);
-  if (usesArchiveView()) {
-    archiveSearchTimer = window.setTimeout(() => loadArchive(), 250);
+  window.clearTimeout(historySearchTimer);
+  if (usesHistoryView()) {
+    historySearchTimer = window.setTimeout(() => loadHistory(), 250);
   } else {
     render();
   }
-});
-
-document.addEventListener("input", (event) => {
-  const note = event.target.closest?.("[data-note-id]");
-  if (!note) return;
-  const value = note.value.trim();
-  if (value) state.notes[note.dataset.noteId] = value;
-  else delete state.notes[note.dataset.noteId];
-  localStorage.setItem(storageKeys.notes, JSON.stringify(state.notes));
-  localStorage.setItem(storageKeys.stateDirty, "1");
-  window.clearTimeout(noteSaveTimer);
-  noteSaveTimer = window.setTimeout(queueUserStateSave, 500);
 });
 
 elements.refresh.addEventListener("click", () => loadFeed(true));
@@ -1379,11 +1449,12 @@ elements.home.addEventListener("click", () => {
 });
 
 document.querySelector("#reset-sources").addEventListener("click", () => {
+  if (!userStateMutationAllowed() || !state.payload) return;
   state.activeSources = new Set((state.payload.sources || []).map((source) => source.id));
   state.mutedSources.clear();
   queueUserStateSave();
   renderSources(state.payload.sources || []);
-  if (usesArchiveView()) loadArchive();
+  if (usesHistoryView()) loadHistory();
   else render();
 });
 
@@ -1438,9 +1509,9 @@ document.addEventListener("keydown", (event) => {
     elements.grid.querySelector(`[data-id="${CSS.escape(state.keyboardArticleId)}"] .story-title a`)?.click();
   } else if (key === "s") {
     event.preventDefault();
+    if (!userStateMutationAllowed()) return;
     const wasSaved = state.saved.has(state.keyboardArticleId);
     wasSaved ? state.saved.delete(state.keyboardArticleId) : state.saved.add(state.keyboardArticleId);
-    if (state.view === "saved" && wasSaved) state.archiveTotal = Math.max(0, state.archiveTotal - 1);
     queueUserStateSave();
     render();
   }

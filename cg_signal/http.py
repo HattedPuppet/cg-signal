@@ -216,7 +216,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/state":
             self.send_json(repository.read_state())
             return
-        if parsed.path == "/api/archive":
+        if parsed.path == "/api/history":
             parameters = urllib.parse.parse_qs(parsed.query)
             try:
                 source_ids = [
@@ -226,7 +226,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     if source_id
                 ]
                 self.send_json(
-                    repository.query_archive(
+                    repository.query_history(
                         query=parameters.get("q", [""])[0],
                         lane=parameters.get("lane", ["All"])[0],
                         source_ids=source_ids,
@@ -236,7 +236,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     )
                 )
             except (ValueError, sqlite3.Error) as exc:
-                self.send_json({"error": "Unable to search archive", "detail": str(exc)}, status=400)
+                self.send_json({"error": "Unable to search history", "detail": str(exc)}, status=400)
             return
         if parsed.path == "/api/sources":
             self.send_json({"sources": repository.list_source_configs()})
@@ -335,7 +335,7 @@ def main() -> None:
         "command",
         nargs="?",
         choices=("backup", "restore"),
-        help="backup the local SQLite archive or restore a verified snapshot",
+        help="backup local SQLite history or restore a verified snapshot",
     )
     parser.add_argument(
         "snapshot",
@@ -395,7 +395,7 @@ def main() -> None:
             # confirmed path verifies again immediately before staging.
             verified = verify_snapshot(arguments.snapshot)
             if not arguments.confirm:
-                print(format_preview(verified, paths.archive_db_file))
+                print(format_preview(verified, paths.history_db_file))
                 return
             result = restore_snapshot(paths, verified.path)
         except (BackupError, OSError, sqlite3.Error) as error:

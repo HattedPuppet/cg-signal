@@ -12,6 +12,7 @@ import sys
 import tempfile
 import threading
 from typing import Any
+import urllib.parse
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -38,6 +39,32 @@ def _load_mobile_builder() -> Any:
 
 
 class QuietDashboardHandler(DashboardHandler):
+    def do_GET(self) -> None:
+        parsed = urllib.parse.urlsplit(self.path)
+        parameters = urllib.parse.parse_qs(parsed.query)
+        if parsed.path in {"", "/", "/index.html"} and parameters.get("state_fault") == ["1"]:
+            if not getattr(self.dashboard, "_fault_state_seeded", False):
+                self.dashboard.service.repository.write_state(
+                    {
+                        "saved": ["smoke-blender-article"],
+                        "muted_sources": ["smoke-unreal-source"],
+                    }
+                )
+                self.dashboard._fault_state_seeded = True
+        if parsed.path in {"", "/", "/index.html"} and parameters.get("state_control") == ["1"]:
+            if not getattr(self.dashboard, "_control_state_seeded", False):
+                self.dashboard.service.repository.write_state(
+                    {"saved": ["smoke-blender-article"], "muted_sources": []}
+                )
+                self.dashboard._control_state_seeded = True
+        if parsed.path in {"", "/", "/index.html"} and parameters.get("state_failure") == ["1"]:
+            if not getattr(self.dashboard, "_failure_state_seeded", False):
+                self.dashboard.service.repository.write_state(
+                    {"saved": ["smoke-blender-article"], "muted_sources": []}
+                )
+                self.dashboard._failure_state_seeded = True
+        super().do_GET()
+
     def log_message(self, format_string: str, *args: Any) -> None:  # noqa: ARG002
         return
 
@@ -150,7 +177,7 @@ def fixture_payload() -> dict[str, Any]:
         "articles": articles,
         "sources": sources,
         "warnings": [],
-        "archive_count": len(articles),
+        "history_count": len(articles),
         "thumbnails_refreshing": False,
     }
 
@@ -175,7 +202,7 @@ def main() -> None:
 
         dashboard = DashboardServer(("127.0.0.1", 0), QuietDashboardHandler, paths=paths)
         dashboard.service.write_cache(payload)
-        dashboard.service.repository.archive_articles(payload["articles"])
+        dashboard.service.repository.record_articles(payload["articles"])
         dashboard_thread = threading.Thread(
             target=dashboard.serve_forever,
             name="cg-signal-smoke-dashboard",

@@ -1,9 +1,9 @@
 """Verified SQLite snapshot backup and restore support.
 
 The dashboard keeps its durable state in one SQLite database, while feeds,
-thumbnails, PID files, and the legacy JSON import remain disposable runtime
-artifacts.  This module deliberately treats a backup as a *database
-snapshot*, never as a copy of the live ``.db``, ``-wal``, or ``-shm`` files.
+thumbnails, and PID files remain disposable runtime artifacts.  This module
+deliberately treats a backup as a *database snapshot*, never as a copy of the
+live ``.db``, ``-wal``, or ``-shm`` files.
 
 Only the Python standard library is used here.  The public helpers are small
 enough for the command-line entrypoint and for isolated tests to use without
@@ -30,17 +30,24 @@ from .config import RuntimePaths
 from .storage import (
     STORAGE_SCHEMA_VERSION,
     StorageSchemaError,
+    _validate_v1_schema,
     migrate_storage_schema,
     validate_current_schema,
 )
 
 
 APP_NAME = "cg-signal"
-MANIFEST_FORMAT_VERSION = 1
+MANIFEST_FORMAT_VERSION = 2
 DATABASE_FILENAME = "cg-signal.db"
 BACKUP_BUSY_TIMEOUT_SECONDS = 5.0
 
 _REQUIRED_LOGICAL_KEYS = {
+    "articles",
+    "saved",
+    "configured_sources",
+    "muted_sources",
+}
+_FORMAT1_LOGICAL_KEYS = {
     "articles",
     "saved",
     "nonempty_notes",
@@ -175,18 +182,24 @@ def _logical_counts(connection: sqlite3.Connection) -> dict[str, int]:
                 "SELECT COUNT(*) FROM article_state WHERE is_saved = 1"
             ).fetchone()[0]
         ),
-        "nonempty_notes": int(
-            connection.execute(
-                "SELECT COUNT(*) FROM article_state "
-                "WHERE note IS NOT NULL AND trim(note) <> ''"
-            ).fetchone()[0]
-        ),
         "configured_sources": int(connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0]),
         "muted_sources": int(
             connection.execute(
                 "SELECT COUNT(*) FROM source_preferences WHERE muted = 1"
             ).fetchone()[0]
         ),
+    }
+
+
+def _logical_counts_v1(connection: sqlite3.Connection) -> dict[str, int]:
+    return {
+        "articles": int(connection.execute("SELECT COUNT(*) FROM articles").fetchone()[0]),
+        "saved": int(connection.execute("SELECT COUNT(*) FROM article_state WHERE is_saved = 1").fetchone()[0]),
+        "nonempty_notes": int(connection.execute(
+            "SELECT COUNT(*) FROM article_state WHERE note IS NOT NULL AND trim(note) <> ''"
+        ).fetchone()[0]),
+        "configured_sources": int(connection.execute("SELECT COUNT(*) FROM sources").fetchone()[0]),
+        "muted_sources": int(connection.execute("SELECT COUNT(*) FROM source_preferences WHERE muted = 1").fetchone()[0]),
     }
 
 
@@ -218,15 +231,18 @@ def _check_integrity(connection: sqlite3.Connection) -> None:
 def _validate_schema(
     sqlite_metadata: dict[str, Any],
     logical_counts: dict[str, int],
+    *,
+    expected_version: int = STORAGE_SCHEMA_VERSION,
+    expected_keys: set[str] = _REQUIRED_LOGICAL_KEYS,
 ) -> None:
-    if sqlite_metadata["user_version"] != STORAGE_SCHEMA_VERSION:
+    if sqlite_metadata["user_version"] != expected_version:
         raise SnapshotFormatError(
             f"Unsupported SQLite schema version {sqlite_metadata['user_version']}; "
-            f"supported version is {STORAGE_SCHEMA_VERSION}."
+            f"supported version is {expected_version}."
         )
     if sqlite_metadata["journal_mode"] != "delete":
         raise SnapshotFormatError("SQLite snapshot must use journal_mode=DELETE.")
-    if set(logical_counts) != _REQUIRED_LOGICAL_KEYS:
+    if set(logical_counts) != expected_keys:
         raise SnapshotFormatError("Logical count summary is incomplete.")
 
 
@@ -270,7 +286,7 @@ def _manifest(
 ) -> dict[str, Any]:
     if reason not in {"manual", "pre_restore"}:
         raise ValueError("Backup reason must be 'manual' or 'pre_restore'.")
-    # Do not add paths, URLs, IDs, notes, titles, or article content here.
+    # Do not add paths, URLs, IDs, private text, titles, or article content here.
     # Counts and SQLite structural metadata are sufficient for verification.
     sqlite_summary = {
         "library_version": sqlite_metadata["library_version"],
@@ -371,8 +387,15 @@ def _load_manifest(snapshot_dir: Path, *, expected_snapshot_id: str | None = Non
         "database", "sqlite", "table_counts", "logical_counts",
     }:
         raise SnapshotFormatError("Snapshot manifest has unexpected or missing fields.")
-    if raw["app"] != APP_NAME or raw["format_version"] != MANIFEST_FORMAT_VERSION:
+    format_value = raw["format_version"]
+    if (
+        raw["app"] != APP_NAME
+        or isinstance(format_value, bool)
+        or not isinstance(format_value, int)
+        or format_value not in {1, MANIFEST_FORMAT_VERSION}
+    ):
         raise SnapshotFormatError("Unsupported snapshot manifest format.")
+    format_version = format_value
     snapshot_id = raw["snapshot_id"]
     if (
         not isinstance(snapshot_id, str)
@@ -419,7 +442,8 @@ def _load_manifest(snapshot_dir: Path, *, expected_snapshot_id: str | None = Non
     user_version = _manifest_int(sqlite_summary["user_version"], "sqlite.user_version")
     page_size = _manifest_int(sqlite_summary["page_size"], "sqlite.page_size")
     page_count = _manifest_int(sqlite_summary["page_count"], "sqlite.page_count")
-    if user_version != STORAGE_SCHEMA_VERSION:
+    expected_version = 1 if format_version == 1 else STORAGE_SCHEMA_VERSION
+    if user_version != expected_version:
         raise SnapshotFormatError("Snapshot storage schema version is unsupported.")
     table_counts = raw["table_counts"]
     logical_counts = raw["logical_counts"]
@@ -435,7 +459,8 @@ def _load_manifest(snapshot_dir: Path, *, expected_snapshot_id: str | None = Non
         if not isinstance(name, str):
             raise SnapshotFormatError("Snapshot logical-count key is invalid.")
         normalized_logical[name] = _manifest_int(count, f"logical_counts.{name}")
-    if set(normalized_logical) != _REQUIRED_LOGICAL_KEYS:
+    expected_keys = _FORMAT1_LOGICAL_KEYS if format_version == 1 else _REQUIRED_LOGICAL_KEYS
+    if set(normalized_logical) != expected_keys:
         raise SnapshotFormatError("Snapshot logical-count summary is incomplete.")
     raw["database"] = {
         "filename": DATABASE_FILENAME,
@@ -477,12 +502,21 @@ def _verify_database(path: Path, manifest: dict[str, Any], *, check_sidecars: bo
         connection.execute("PRAGMA query_only=ON")
         sqlite_metadata = _sqlite_metadata(connection)
         try:
-            validate_current_schema(connection)
+            is_v1 = int(manifest["format_version"]) == 1
+            if is_v1:
+                _validate_v1_schema(connection)
+            else:
+                validate_current_schema(connection)
         except StorageSchemaError as exc:
             raise SnapshotFormatError(str(exc)) from exc
         table_counts = _table_counts(connection)
-        logical_counts = _logical_counts(connection)
-        _validate_schema(sqlite_metadata, logical_counts)
+        logical_counts = _logical_counts_v1(connection) if is_v1 else _logical_counts(connection)
+        _validate_schema(
+            sqlite_metadata,
+            logical_counts,
+            expected_version=1 if is_v1 else STORAGE_SCHEMA_VERSION,
+            expected_keys=_FORMAT1_LOGICAL_KEYS if is_v1 else _REQUIRED_LOGICAL_KEYS,
+        )
         _check_integrity(connection)
     except sqlite3.Error as exc:
         raise SnapshotVerificationError(f"Unable to verify SQLite snapshot: {exc}") from exc
@@ -541,7 +575,7 @@ def create_backup(
 
     if reason not in {"manual", "pre_restore"}:
         raise BackupError("Backup reason must be 'manual' or 'pre_restore'.")
-    live_db = paths.archive_db_file
+    live_db = paths.history_db_file
     if not live_db.is_file() or live_db.is_symlink():
         raise BackupError(f"Live SQLite database is missing: {live_db}")
     root = paths.backup_dir if destination is None else Path(destination).expanduser().resolve()
@@ -569,8 +603,8 @@ def create_backup(
             destination_connection.commit()
             source.close()
             source = None
-            # Legacy v0 databases are normalized only in the temporary copy;
-            # the live read-only source is never migrated in place.
+            # Published schema 1 databases are normalized only in the temporary
+            # copy; the live read-only source is never migrated in place.
             migrate_storage_schema(destination_connection)
             destination_connection.execute("PRAGMA journal_mode=DELETE")
             destination_connection.commit()
@@ -681,6 +715,35 @@ def _verify_staged_database(path: Path, manifest: dict[str, Any]) -> None:
     _verify_database(path, manifest, check_sidecars=True)
 
 
+def _normalize_staged_v1(path: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+    """Migrate a verified v1 restore stage and derive its exact v2 manifest."""
+
+    if int(manifest.get("format_version", 0)) != 1:
+        return manifest
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = _db_connect(path)
+        migrate_storage_schema(connection)
+        connection.execute("PRAGMA journal_mode=DELETE")
+        connection.commit()
+    except (sqlite3.Error, StorageSchemaError) as exc:
+        raise RestoreError(f"Unable to migrate staged schema1 snapshot to schema2: {exc}") from exc
+    finally:
+        if connection is not None:
+            connection.close()
+    sqlite_metadata, table_counts, logical_counts = _collect_database_summary(path, read_only=True)
+    return _manifest(
+        snapshot_id=str(manifest["snapshot_id"]),
+        created_at=str(manifest["created_at"]),
+        reason=str(manifest["reason"]),
+        database_size=path.stat().st_size,
+        database_sha256=_sha256(path),
+        sqlite_metadata=sqlite_metadata,
+        table_counts=table_counts,
+        logical_counts=logical_counts,
+    )
+
+
 def _rollback(
     *,
     live_db: Path,
@@ -744,10 +807,11 @@ def restore_snapshot(
             "The CG Signal database is in use by another process. "
             "Stop the dashboard with stop-dashboard.ps1, then retry restore."
         ) from exc
-    live_db = paths.archive_db_file
+    live_db = paths.history_db_file
     recovery: SnapshotVerification | None = None
     stage = live_db.with_name(f".{live_db.name}.restore-{_safe_id()}")
     installed_identity: tuple[int, int] | None = None
+    install_manifest = candidate.manifest
     try:
         # A symlink (including a broken one) is not an absent database.  Let
         # create_backup reject it before any replacement can follow its target.
@@ -761,6 +825,8 @@ def restore_snapshot(
         try:
             shutil.copyfile(candidate.database_path, stage)
             _verify_staged_database(stage, candidate.manifest)
+            install_manifest = _normalize_staged_v1(stage, candidate.manifest)
+            _verify_staged_database(stage, install_manifest)
             _checkpoint_live(live_db)
             _remove_safe_sidecars(live_db)
             installed_identity = _regular_file_identity(stage)
@@ -770,7 +836,7 @@ def restore_snapshot(
         except (OSError, sqlite3.Error, SnapshotVerificationError) as exc:
             raise RestoreError(f"Unable to install verified SQLite snapshot: {exc}") from exc
         try:
-            _verify_database(live_db, candidate.manifest, check_sidecars=True)
+            _verify_database(live_db, install_manifest, check_sidecars=True)
         except Exception as install_error:
             if installed_identity is None:
                 raise RestoreError(
@@ -921,14 +987,20 @@ def format_preview(verification: SnapshotVerification, target: Path) -> str:
 
     manifest = verification.manifest
     counts = manifest.get("logical_counts", {})
-    count_text = ", ".join(
-        f"{key}={counts[key]}" for key in ("articles", "saved", "nonempty_notes", "configured_sources", "muted_sources")
+    keys = ("articles", "saved", "configured_sources", "muted_sources")
+    if int(manifest.get("format_version", MANIFEST_FORMAT_VERSION)) == 1:
+        keys = ("articles", "saved", "nonempty_notes", "configured_sources", "muted_sources")
+    count_text = ", ".join(f"{key}={counts[key]}" for key in keys)
+    schema_note = (
+        "Schema 1 installs as schema 2; obsolete state is discarded.\n"
+        if int(manifest.get("format_version", MANIFEST_FORMAT_VERSION)) == 1 else ""
     )
     return (
         f"Snapshot verified\n"
         f"Created: {manifest['created_at']}\n"
         f"Schema: {manifest['sqlite']['user_version']}\n"
         f"Counts: {count_text}\n"
+        f"{schema_note}"
         f"Target: {target}\n"
         f"No changes made. Re-run: python server.py restore \"{verification.path}\" --confirm"
     )

@@ -89,10 +89,10 @@ test("publication windows share month and quarter boundaries", () => {
 });
 
 test("feed schema contract accepts only the canonical structural revision", () => {
-  assert.equal(FEED_SCHEMA_VERSION, 1);
+  assert.equal(FEED_SCHEMA_VERSION, 2);
   assert.deepEqual([...ARTICLE_LANE_VALUES], ["Tech & Development", "Industry", "Business"]);
   const valid = {
-    feed_schema_version: 1,
+    feed_schema_version: 2,
     generated_at: "2026-08-05T12:00:00Z",
     sources: [{ id: "example", name: "Example Studio" }],
     articles: [article],
@@ -101,14 +101,14 @@ test("feed schema contract accepts only the canonical structural revision", () =
   assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, articles: [] }), true);
   assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, articles: [{ ...article, summary: "" }] }), true);
   assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, articles: [{ ...article, summary: null }] }), false);
-  assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, feed_schema_version: 2 }), false);
+  assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, feed_schema_version: 1 }), false);
   assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, classification_version: 999 }), true);
-  assert.equal(feedPayloadIsStructurallyCompatible({ feed_schema_version: 1, articles: [{ ...article, lane: "Unknown" }] }), false);
+  assert.equal(feedPayloadIsStructurallyCompatible({ feed_schema_version: 2, articles: [{ ...article, lane: "Unknown" }] }), false);
 });
 
 test("feed schema rejects malformed render fields and URLs", () => {
   const valid = {
-    feed_schema_version: 1,
+    feed_schema_version: 2,
     generated_at: "2026-08-05T12:00:00Z",
     sources: [{ id: "example", name: "Example Studio" }],
     articles: [article],
@@ -120,14 +120,14 @@ test("feed schema rejects malformed render fields and URLs", () => {
   assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, articles: [{ ...article, image: "https://cdn.example.test/card.jpg" }] }), false);
   assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, unavailable_sources: [null] }), false);
   assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, articles: [{ ...article, priority_score: Number.NaN }] }), false);
-  assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, schema_version: 2 }), false);
+  assert.equal(feedPayloadIsStructurallyCompatible({ ...valid, schema_version: 1 }), false);
 });
 
 test("thumbnail references are exact content-addressed project-relative assets", () => {
   const reference = `thumbnails/${"a".repeat(64)}.jpg`;
   assert.equal(thumbnailReferenceIsValid(reference), true);
   assert.equal(feedPayloadIsStructurallyCompatible({
-    feed_schema_version: 1,
+    feed_schema_version: 2,
     generated_at: "2026-08-05T12:00:00Z",
     sources: [{ id: "example", name: "Example Studio" }],
     articles: [{ ...article, image: reference }],

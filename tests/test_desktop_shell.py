@@ -117,8 +117,9 @@ class DesktopShellTests(unittest.TestCase):
         self.assertNotIn('data-view="archived"', html)
         self.assertNotIn("data-archive-id", javascript)
         self.assertNotIn('key === "a"', javascript)
-        self.assertIn('archived: []', javascript)
-        self.assertIn('localStorage.removeItem("cg-signal:archived")', javascript)
+        self.assertIn('saved: new Set()', javascript)
+        self.assertIn('const presentationStorageKeys = new Set(Object.values(storageKeys));', javascript)
+        self.assertIn('key?.startsWith("cg-signal:") && !presentationStorageKeys.has(key)', javascript)
 
     def test_latest_signal_has_a_recent_publication_window(self):
         html = (SITE / "index.html").read_text(encoding="utf-8")
@@ -202,6 +203,43 @@ class DesktopShellTests(unittest.TestCase):
         self.assertIn("syncAfterBackgroundRefresh(payload)", javascript)
         self.assertIn("syncAfterThumbnailRefresh(payload)", javascript)
         self.assertIn("?wait_thumbnails=1", javascript)
+
+    def test_user_state_controls_require_authoritative_recovery(self):
+        html = (SITE / "index.html").read_text(encoding="utf-8")
+        javascript = (SITE / "app.js").read_text(encoding="utf-8")
+        self.assertIn('id="user-state-status"', html)
+        self.assertIn('userStateStatus: "loading"', javascript)
+        self.assertIn('state.userStateStatus = "error"', javascript)
+        self.assertIn('state.userStateStatus = "ready"', javascript)
+        self.assertIn('data-retry-user-state', javascript)
+        self.assertIn("function userStateReady()", javascript)
+        self.assertIn("function userStateMutationAllowed()", javascript)
+        self.assertIn('[data-save-id], [data-source-action]', javascript)
+        self.assertIn('#reset-sources, [data-view=\'saved\']', javascript)
+        self.assertIn("stateSaveInFlight", javascript)
+        self.assertIn("stateSaveGeneration", javascript)
+        self.assertIn("data-retry-user-state-save", javascript)
+        self.assertIn("Changes not saved.", javascript)
+
+    def test_schema_transition_warning_is_documented(self):
+        readme = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
+        prd = (PROJECT_ROOT / "PRD.md").read_text(encoding="utf-8")
+        for document in (readme, prd):
+            lowered = document.lower()
+            self.assertIn("schema 1", lowered)
+            self.assertIn("schema 2", lowered)
+            self.assertIn("in place", lowered)
+            self.assertIn("saved ids", lowered)
+            self.assertIn("muted sources", lowered)
+            self.assertIn("permanently discards", lowered)
+        self.assertIn("old schema 1 binary rejects a schema 2 database", readme.lower())
+        self.assertIn("format 1 snapshot", readme.lower())
+        self.assertIn("cannot include changes made after upgrade", readme.lower())
+        self.assertIn("manifest format 2", readme.lower())
+        self.assertIn("format 1/schema 1 snapshots remain accepted", readme.lower())
+        self.assertIn("format 2/schema 2", readme.lower())
+        self.assertIn("manifest format 2", prd.lower())
+        self.assertIn("format 1/schema 1 snapshots", prd.lower())
 
     def test_thumbnail_wait_rearms_after_a_server_timeout(self):
         javascript = (SITE / "app.js").read_text(encoding="utf-8")
