@@ -34,11 +34,13 @@ history, saved IDs, configured sources, muted sources, and the state timestamp,
 but permanently discards notes, reactions, read/manual archive flags, feedback
 context, reduced-source state, and other non-saved state. New backups normalize
 schema 1 only in a temporary copy before publishing a schema 2 snapshot, so
-those discarded fields are omitted. An old schema 1 binary rejects a schema 2 database;
+those discarded fields are omitted. New backups publish manifest format 2 with a
+schema 2 database. Exact legacy format 1/schema 1 snapshots remain accepted and
+are staged and verified before migration. An old schema 1 binary rejects a schema 2 database;
 downgrade requires a separately retained pre-upgrade schema 1
 database or format 1 snapshot and cannot include changes made after upgrade.
-Published schema 1 snapshots are normalized to schema 2 in the temporary
-snapshot copy; the live database remains unchanged during backup:
+Backing up a live schema 1 database normalizes a temporary copy to format 2/schema 2
+and discards obsolete fields; the live database remains unchanged during backup:
 
 ```powershell
 python server.py backup

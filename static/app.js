@@ -72,6 +72,8 @@ const state = {
   search: "",
   userStateStatus: "loading",
   userStateError: null,
+  userStateSaveStatus: "idle",
+  userStateSaveError: null,
   saved: new Set(),
   mutedSources: new Set(),
   layout: localStorage.getItem(storageKeys.layout) || "grid",
@@ -89,6 +91,11 @@ const state = {
 };
 
 let stateSaveTimer = null;
+let stateSaveInFlight = false;
+let stateSaveGeneration = 0;
+let stateSaveCommittedGeneration = 0;
+let stateSaveDirty = false;
+let stateSaveSnapshot = null;
 let backgroundRefreshTimer = null;
 let feedRefreshWaitPending = false;
 let thumbnailRefreshWaitPending = false;
@@ -185,28 +192,83 @@ function chooseSingleFilter(selected, value) {
   selected.add(value);
 }
 
+function userStateSnapshot() {
+  return {
+    saved: [...state.saved],
+    muted_sources: [...state.mutedSources],
+  };
+}
+
+function userStateMutationAllowed() {
+  return userStateReady() && state.userStateSaveStatus !== "error";
+}
+
+function scheduleUserStateWrite(delay = 140) {
+  window.clearTimeout(stateSaveTimer);
+  stateSaveTimer = window.setTimeout(() => {
+    stateSaveTimer = null;
+    persistUserState();
+  }, delay);
+}
+
 async function persistUserState() {
-  if (state.userStateStatus !== "ready") return;
+  if (!userStateReady() || stateSaveInFlight || !stateSaveDirty || !stateSaveSnapshot) return;
+  stateSaveInFlight = true;
+  const generation = stateSaveGeneration;
+  const snapshot = stateSaveSnapshot;
+  state.userStateSaveStatus = "saving";
+  state.userStateSaveError = null;
+  renderUserStateControls();
   try {
     const response = await apiFetch("/api/state", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        saved: [...state.saved],
-        muted_sources: [...state.mutedSources],
-      }),
+      body: JSON.stringify(snapshot),
     });
     if (!response.ok) throw new Error(`State save failed (${response.status})`);
+    if (stateSaveGeneration === generation) {
+      stateSaveCommittedGeneration = generation;
+      stateSaveDirty = false;
+      stateSaveSnapshot = null;
+      state.userStateSaveStatus = "idle";
+      state.userStateSaveError = null;
+    } else {
+      state.userStateSaveStatus = "pending";
+    }
   } catch (error) {
+    state.userStateSaveError = error;
+    state.userStateSaveStatus = "error";
+    // Keep the latest generation and snapshot. Retry must send exactly this
+    // optimistic state, without rehydrating from an older server response.
     console.warn("CG Signal could not save local state.", error);
+  } finally {
+    stateSaveInFlight = false;
+    renderUserStateControls();
+    if (stateSaveDirty && state.userStateSaveStatus !== "error") {
+      scheduleUserStateWrite(0);
+    }
   }
 }
 
 function queueUserStateSave() {
   window.clearTimeout(stateSaveTimer);
   stateSaveTimer = null;
-  if (state.userStateStatus !== "ready") return;
-  stateSaveTimer = window.setTimeout(persistUserState, 140);
+  if (!userStateMutationAllowed()) return;
+  stateSaveGeneration += 1;
+  stateSaveDirty = stateSaveGeneration !== stateSaveCommittedGeneration;
+  stateSaveSnapshot = userStateSnapshot();
+  state.userStateSaveStatus = "pending";
+  state.userStateSaveError = null;
+  renderUserStateControls();
+  scheduleUserStateWrite();
+}
+
+function retryUserStateSave() {
+  if (!userStateReady() || stateSaveInFlight || !stateSaveDirty || !stateSaveSnapshot) return;
+  state.userStateSaveStatus = "pending";
+  state.userStateSaveError = null;
+  renderUserStateControls();
+  persistUserState();
 }
 
 async function loadUserState() {
@@ -241,7 +303,7 @@ function userStateReady() {
 }
 
 function renderUserStateControls() {
-  const unavailable = !userStateReady();
+  const unavailable = !userStateMutationAllowed();
   document.querySelectorAll("[data-save-id], [data-source-action]").forEach((control) => {
     control.disabled = unavailable;
     control.setAttribute("aria-disabled", String(unavailable));
@@ -253,13 +315,20 @@ function renderUserStateControls() {
     control.setAttribute("aria-disabled", String(disabled));
   });
   if (!elements.userStateStatus) return;
-  elements.userStateStatus.setAttribute("aria-busy", String(state.userStateStatus === "loading"));
+  const saving = state.userStateSaveStatus === "pending" || state.userStateSaveStatus === "saving";
+  elements.userStateStatus.setAttribute("aria-busy", String(state.userStateStatus === "loading" || saving));
   if (state.userStateStatus === "loading") {
     elements.userStateStatus.hidden = false;
     elements.userStateStatus.innerHTML = "<strong>Loading saved stories and source preferences…</strong>";
   } else if (state.userStateStatus === "error") {
     elements.userStateStatus.hidden = false;
     elements.userStateStatus.innerHTML = "<strong>Saved stories and source preferences are unavailable.</strong> <span>Retry to enable saving and source controls.</span> <button type=\"button\" data-retry-user-state>Retry</button>";
+  } else if (state.userStateSaveStatus === "error") {
+    elements.userStateStatus.hidden = false;
+    elements.userStateStatus.innerHTML = "<strong>Changes not saved.</strong> <span>Your latest saved/source changes are still local.</span> <button type=\"button\" data-retry-user-state-save>Retry save</button>";
+  } else if (saving) {
+    elements.userStateStatus.hidden = false;
+    elements.userStateStatus.innerHTML = "<strong>Saving changes…</strong>";
   } else {
     elements.userStateStatus.hidden = true;
     elements.userStateStatus.textContent = "";
@@ -511,7 +580,7 @@ function sourcePreferenceMenu(article) {
   const sourceId = article.source_id || article.sources?.[0]?.id || "";
   if (!sourceId) return "";
   const muted = state.mutedSources.has(sourceId);
-  const stateUnavailable = !userStateReady();
+  const stateUnavailable = !userStateMutationAllowed();
   return `
     <details class="source-menu">
       <summary aria-label="Source actions for ${escapeHtml(article.source)}" title="Source actions">•••</summary>
@@ -524,7 +593,7 @@ function sourcePreferenceMenu(article) {
 
 function storyCard(article) {
   const saved = state.saved.has(article.id);
-  const stateUnavailable = !userStateReady();
+  const stateUnavailable = !userStateMutationAllowed();
   const imageUrl = safeImageUrl(article.image);
   const image = imageUrl === "#" ? "" : `<img src="${escapeHtml(imageUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer" />`;
   const coverage = article.source_count > 1 ? `${article.source_count} sources` : "Single source";
@@ -792,7 +861,7 @@ function renderSources(sources) {
   elements.sourceFilters.innerHTML = sources
     .map((source) => {
       const muted = state.mutedSources.has(source.id);
-      const stateUnavailable = muted && !userStateReady();
+      const stateUnavailable = muted && !userStateMutationAllowed();
       const active = state.activeSources.has(source.id) && !muted;
       const status = muted ? "Muted — click to restore" : active ? "Included" : "Filtered out";
       return `
@@ -1099,7 +1168,7 @@ async function toggleConfiguredSource(sourceId, enabled, button) {
 }
 
 function setSourcePreference(sourceId, action) {
-  if (!userStateReady()) return;
+  if (!userStateMutationAllowed()) return;
   if (action === "mute") {
     state.mutedSources.add(sourceId);
   } else {
@@ -1144,6 +1213,12 @@ document.addEventListener("visibilitychange", () => {
 });
 
 document.addEventListener("click", (event) => {
+  const retryUserStateSaveButton = event.target.closest("[data-retry-user-state-save]");
+  if (retryUserStateSaveButton) {
+    retryUserStateSave();
+    return;
+  }
+
   const retryUserState = event.target.closest("[data-retry-user-state]");
   if (retryUserState) {
     loadUserState();
@@ -1201,7 +1276,7 @@ document.addEventListener("click", (event) => {
 
   const saveButton = event.target.closest("[data-save-id]");
   if (saveButton) {
-    if (!userStateReady()) return;
+    if (!userStateMutationAllowed()) return;
     const id = saveButton.dataset.saveId;
     const wasSaved = state.saved.has(id);
     wasSaved ? state.saved.delete(id) : state.saved.add(id);
@@ -1213,7 +1288,7 @@ document.addEventListener("click", (event) => {
   const sourceButton = event.target.closest("[data-source-id]");
   if (sourceButton) {
     const id = sourceButton.dataset.sourceId;
-    if (state.mutedSources.has(id) && userStateReady()) {
+    if (state.mutedSources.has(id) && userStateMutationAllowed()) {
       state.mutedSources.delete(id);
       queueUserStateSave();
     }
@@ -1374,7 +1449,7 @@ elements.home.addEventListener("click", () => {
 });
 
 document.querySelector("#reset-sources").addEventListener("click", () => {
-  if (!userStateReady() || !state.payload) return;
+  if (!userStateMutationAllowed() || !state.payload) return;
   state.activeSources = new Set((state.payload.sources || []).map((source) => source.id));
   state.mutedSources.clear();
   queueUserStateSave();
@@ -1434,7 +1509,7 @@ document.addEventListener("keydown", (event) => {
     elements.grid.querySelector(`[data-id="${CSS.escape(state.keyboardArticleId)}"] .story-title a`)?.click();
   } else if (key === "s") {
     event.preventDefault();
-    if (!userStateReady()) return;
+    if (!userStateMutationAllowed()) return;
     const wasSaved = state.saved.has(state.keyboardArticleId);
     wasSaved ? state.saved.delete(state.keyboardArticleId) : state.saved.add(state.keyboardArticleId);
     queueUserStateSave();

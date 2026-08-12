@@ -179,10 +179,12 @@ And is actively interested in:
   database to schema 2 in place while preserving articles, history, saved IDs,
   configured sources, muted sources, and the state timestamp. It permanently discards
   notes, reactions, read/manual archive flags, feedback context,
-  reduced-source state, and other non-saved state. New backups normalize schema
-  1 in a temporary copy and publish schema 2; downgrade requires a separately
-  retained pre-upgrade schema 1 database or format 1 snapshot and cannot carry
-  post-upgrade changes.
+  reduced-source state, and other non-saved state. New backups publish manifest format 2
+  with schema 2 databases. Exact legacy format 1/schema 1 snapshots
+  remain accepted and are staged and verified before migration. Backing up a
+  live schema 1 database normalizes a temporary copy to format 2/schema 2 and
+  discards obsolete fields; downgrade requires a separately retained pre-upgrade
+  schema 1 database or format 1 snapshot and cannot carry post-upgrade changes.
 
 ### Source and refresh controls
 

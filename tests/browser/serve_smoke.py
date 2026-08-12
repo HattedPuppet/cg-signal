@@ -41,7 +41,8 @@ def _load_mobile_builder() -> Any:
 class QuietDashboardHandler(DashboardHandler):
     def do_GET(self) -> None:
         parsed = urllib.parse.urlsplit(self.path)
-        if parsed.path in {"", "/", "/index.html"} and urllib.parse.parse_qs(parsed.query).get("state_fault") == ["1"]:
+        parameters = urllib.parse.parse_qs(parsed.query)
+        if parsed.path in {"", "/", "/index.html"} and parameters.get("state_fault") == ["1"]:
             if not getattr(self.dashboard, "_fault_state_seeded", False):
                 self.dashboard.service.repository.write_state(
                     {
@@ -50,6 +51,18 @@ class QuietDashboardHandler(DashboardHandler):
                     }
                 )
                 self.dashboard._fault_state_seeded = True
+        if parsed.path in {"", "/", "/index.html"} and parameters.get("state_control") == ["1"]:
+            if not getattr(self.dashboard, "_control_state_seeded", False):
+                self.dashboard.service.repository.write_state(
+                    {"saved": ["smoke-blender-article"], "muted_sources": []}
+                )
+                self.dashboard._control_state_seeded = True
+        if parsed.path in {"", "/", "/index.html"} and parameters.get("state_failure") == ["1"]:
+            if not getattr(self.dashboard, "_failure_state_seeded", False):
+                self.dashboard.service.repository.write_state(
+                    {"saved": ["smoke-blender-article"], "muted_sources": []}
+                )
+                self.dashboard._failure_state_seeded = True
         super().do_GET()
 
     def log_message(self, format_string: str, *args: Any) -> None:  # noqa: ARG002
