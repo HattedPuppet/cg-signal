@@ -1,4 +1,4 @@
-"""SQLite repositories for archive, source configuration, and user state."""
+"""SQLite repositories for article history, source configuration, and saved state."""
 
 from __future__ import annotations
 
@@ -17,21 +17,17 @@ from .classification import apply_article_classification
 from .config import (
     CLASSIFICATION_REVISION,
     FEEDS,
-    MAX_ARCHIVE_PAGE_SIZE,
-    MAX_FEEDBACK_ITEMS,
+    MAX_HISTORY_PAGE_SIZE,
     MAX_ITEMS_PER_SOURCE,
-    MAX_NOTE_LENGTH,
     MAX_SOURCE_NAME_LENGTH,
     MAX_SOURCE_URL_LENGTH,
     MAX_STATE_IDS,
-    MAX_STATE_NOTES,
     MAX_STATE_SOURCES,
     RuntimePaths,
     SOURCE_ACCENTS,
 )
-STATE_IMPORT_MARKER = "user_state_json_imported"
 CLASSIFICATION_METADATA_KEY = "article_classification_revision"
-STORAGE_SCHEMA_VERSION = 1
+STORAGE_SCHEMA_VERSION = 2
 
 
 class StorageSchemaError(RuntimeError):
@@ -39,12 +35,14 @@ class StorageSchemaError(RuntimeError):
 
 
 _APPLICATION_TABLES = {"articles", "article_state", "sources", "source_preferences", "metadata"}
-_HISTORICAL_TABLES = {"articles", "article_state", "sources", "metadata"}
-_FEEDBACK_COLUMNS = {
-    "feedback_source_id": ("TEXT", 1, "''", 0),
-    "feedback_software_tags": ("TEXT", 1, "'[]'", 0),
-    "feedback_topic_tags": ("TEXT", 1, "'[]'", 0),
-}
+_V1_ARTICLE_STATE_COLUMNS = (
+    "article_id", "is_read", "is_saved", "is_archived", "note", "feedback_value",
+    "feedback_source_id", "feedback_software_tags", "feedback_topic_tags", "updated_at",
+)
+_V1_ARTICLE_STATE_COLUMNS_UPDATED_FIRST = (
+    "article_id", "is_read", "is_saved", "is_archived", "note", "feedback_value", "updated_at",
+    "feedback_source_id", "feedback_software_tags", "feedback_topic_tags",
+)
 
 # These statements are the owned on-disk schema contract.  The tokenizer below
 # deliberately compares persisted sqlite_schema.sql tokens rather than using a
@@ -58,22 +56,23 @@ _DDL_ARTICLES = (
     "sources_text TEXT NOT NULL DEFAULT '', search_text TEXT NOT NULL DEFAULT '', data_json TEXT NOT NULL, "
     "first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL)"
 )
-_DDL_ARTICLE_STATE_BASE = (
-    "CREATE TABLE article_state (article_id TEXT PRIMARY KEY, is_read INTEGER NOT NULL DEFAULT 0, "
-    "is_saved INTEGER NOT NULL DEFAULT 0, is_archived INTEGER NOT NULL DEFAULT 0, "
-    "note TEXT NOT NULL DEFAULT '', feedback_value INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)"
+_DDL_ARTICLE_STATE_V2 = (
+    "CREATE TABLE article_state (article_id TEXT PRIMARY KEY, is_saved INTEGER NOT NULL DEFAULT 0, "
+    "updated_at TEXT NOT NULL)"
 )
-_DDL_FEEDBACK = (
-    "feedback_source_id TEXT NOT NULL DEFAULT '', "
-    "feedback_software_tags TEXT NOT NULL DEFAULT '[]', "
-    "feedback_topic_tags TEXT NOT NULL DEFAULT '[]'"
-)
-_DDL_ARTICLE_STATE_NEW = (
+_DDL_ARTICLE_STATE_V1 = (
     "CREATE TABLE article_state (article_id TEXT PRIMARY KEY, is_read INTEGER NOT NULL DEFAULT 0, "
     "is_saved INTEGER NOT NULL DEFAULT 0, is_archived INTEGER NOT NULL DEFAULT 0, "
     "note TEXT NOT NULL DEFAULT '', feedback_value INTEGER NOT NULL DEFAULT 0, "
     "feedback_source_id TEXT NOT NULL DEFAULT '', feedback_software_tags TEXT NOT NULL DEFAULT '[]', "
     "feedback_topic_tags TEXT NOT NULL DEFAULT '[]', updated_at TEXT NOT NULL)"
+)
+_DDL_ARTICLE_STATE_V1_UPDATED_FIRST = (
+    "CREATE TABLE article_state (article_id TEXT PRIMARY KEY, is_read INTEGER NOT NULL DEFAULT 0, "
+    "is_saved INTEGER NOT NULL DEFAULT 0, is_archived INTEGER NOT NULL DEFAULT 0, "
+    "note TEXT NOT NULL DEFAULT '', feedback_value INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, "
+    "feedback_source_id TEXT NOT NULL DEFAULT '', feedback_software_tags TEXT NOT NULL DEFAULT '[]', "
+    "feedback_topic_tags TEXT NOT NULL DEFAULT '[]')"
 )
 _DDL_SOURCES = (
     "CREATE TABLE sources (id TEXT PRIMARY KEY, name TEXT NOT NULL, site TEXT NOT NULL DEFAULT '', "
@@ -81,7 +80,11 @@ _DDL_SOURCES = (
     "enabled INTEGER NOT NULL DEFAULT 1, is_builtin INTEGER NOT NULL DEFAULT 0, "
     "sort_order INTEGER NOT NULL DEFAULT 1000, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)"
 )
-_DDL_SOURCE_PREFERENCES = (
+_DDL_SOURCE_PREFERENCES_V2 = (
+    "CREATE TABLE source_preferences (source_id TEXT PRIMARY KEY, muted INTEGER NOT NULL DEFAULT 0, "
+    "updated_at TEXT NOT NULL)"
+)
+_DDL_SOURCE_PREFERENCES_V1 = (
     "CREATE TABLE source_preferences (source_id TEXT PRIMARY KEY, muted INTEGER NOT NULL DEFAULT 0, "
     "reduced INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL)"
 )
@@ -179,36 +182,22 @@ def _tokenize_ddl(sql: str) -> tuple[str, ...]:
     return tuple(normalized)
 
 
-def _historical_state_ddl(feedback_count: int) -> str:
-    if not 0 <= feedback_count <= 2:
-        raise ValueError("Historical feedback count must be between zero and two.")
-    if not feedback_count:
-        return _DDL_ARTICLE_STATE_BASE
-    feedback = _DDL_FEEDBACK.split(", ")[:feedback_count]
-    return _DDL_ARTICLE_STATE_BASE[:-1] + ", " + ", ".join(feedback) + ")"
-
-
-def _schema_signature(shape: str) -> dict[tuple[str, str, str], str]:
-    if shape == "empty":
-        return {}
-    if shape == "historical":
-        tables = {
-            ("table", "articles", "articles"): _DDL_ARTICLES,
-            ("table", "article_state", "article_state"): _DDL_ARTICLE_STATE_BASE,
-            ("table", "sources", "sources"): _DDL_SOURCES,
-            ("table", "metadata", "metadata"): _DDL_METADATA,
-        }
+def _schema_signature(version: int, *, updated_first: bool = False) -> dict[tuple[str, str, str], str]:
+    if version == 2:
+        state = _DDL_ARTICLE_STATE_V2
+        preferences = _DDL_SOURCE_PREFERENCES_V2
+    elif version == 1:
+        state = _DDL_ARTICLE_STATE_V1_UPDATED_FIRST if updated_first else _DDL_ARTICLE_STATE_V1
+        preferences = _DDL_SOURCE_PREFERENCES_V1
     else:
-        state = _DDL_ARTICLE_STATE_NEW if shape in {"current_new", "current"} else _DDL_ARTICLE_STATE_BASE
-        if shape.startswith("prefix"):
-            state = _historical_state_ddl(int(shape[-1]))
-        tables = {
-            ("table", "articles", "articles"): _DDL_ARTICLES,
-            ("table", "article_state", "article_state"): state,
-            ("table", "sources", "sources"): _DDL_SOURCES,
-            ("table", "source_preferences", "source_preferences"): _DDL_SOURCE_PREFERENCES,
-            ("table", "metadata", "metadata"): _DDL_METADATA,
-        }
+        raise ValueError("Unsupported schema signature version.")
+    tables = {
+        ("table", "articles", "articles"): _DDL_ARTICLES,
+        ("table", "article_state", "article_state"): state,
+        ("table", "sources", "sources"): _DDL_SOURCES,
+        ("table", "source_preferences", "source_preferences"): preferences,
+        ("table", "metadata", "metadata"): _DDL_METADATA,
+    }
     return {
         **tables,
         ("index", "articles_published_idx", "articles"): _DDL_ARTICLES_PUBLISHED_INDEX,
@@ -216,8 +205,8 @@ def _schema_signature(shape: str) -> dict[tuple[str, str, str], str]:
     }
 
 
-def _column_specs() -> dict[str, dict[str, tuple[str, int, str | None, int]]]:
-    """Return the semantic v1 table signature (column order is irrelevant)."""
+def _column_specs(version: int = 2) -> dict[str, dict[str, tuple[str, int, str | None, int]]]:
+    """Return the semantic persisted table signature (column order is irrelevant)."""
 
     return {
         "articles": {
@@ -231,7 +220,11 @@ def _column_specs() -> dict[str, dict[str, tuple[str, int, str | None, int]]]:
             "data_json": ("TEXT", 1, None, 0), "first_seen_at": ("TEXT", 1, None, 0),
             "last_seen_at": ("TEXT", 1, None, 0),
         },
-        "article_state": {
+        "article_state": ({
+            "article_id": ("TEXT", 0, None, 1),
+            "is_saved": ("INTEGER", 1, "0", 0),
+            "updated_at": ("TEXT", 1, None, 0),
+        } if version == 2 else {
             "article_id": ("TEXT", 0, None, 1),
             "is_read": ("INTEGER", 1, "0", 0), "is_saved": ("INTEGER", 1, "0", 0),
             "is_archived": ("INTEGER", 1, "0", 0), "note": ("TEXT", 1, "''", 0),
@@ -240,7 +233,7 @@ def _column_specs() -> dict[str, dict[str, tuple[str, int, str | None, int]]]:
             "feedback_software_tags": ("TEXT", 1, "'[]'", 0),
             "feedback_topic_tags": ("TEXT", 1, "'[]'", 0),
             "updated_at": ("TEXT", 1, None, 0),
-        },
+        }),
         "sources": {
             "id": ("TEXT", 0, None, 1), "name": ("TEXT", 1, None, 0),
             "site": ("TEXT", 1, "''", 0), "feed": ("TEXT", 1, None, 0),
@@ -249,10 +242,13 @@ def _column_specs() -> dict[str, dict[str, tuple[str, int, str | None, int]]]:
             "sort_order": ("INTEGER", 1, "1000", 0), "created_at": ("TEXT", 1, None, 0),
             "updated_at": ("TEXT", 1, None, 0),
         },
-        "source_preferences": {
+        "source_preferences": ({
+            "source_id": ("TEXT", 0, None, 1), "muted": ("INTEGER", 1, "0", 0),
+            "updated_at": ("TEXT", 1, None, 0),
+        } if version == 2 else {
             "source_id": ("TEXT", 0, None, 1), "muted": ("INTEGER", 1, "0", 0),
             "reduced": ("INTEGER", 1, "0", 0), "updated_at": ("TEXT", 1, None, 0),
-        },
+        }),
         "metadata": {"key": ("TEXT", 0, None, 1), "value": ("TEXT", 1, None, 0)},
     }
 
@@ -271,32 +267,20 @@ def _schema_inventory(connection: sqlite3.Connection) -> set[tuple[str, str, str
     return {(str(row[0]), str(row[1]), str(row[2])) for row in rows}
 
 
-def _validate_schema_signature(connection: sqlite3.Connection, shape: str) -> None:
+def _validate_schema_signature(connection: sqlite3.Connection, version: int, *, updated_first: bool = False) -> None:
     actual = _schema_inventory(connection)
-    candidates = [_schema_signature(shape)]
-    if shape == "current":
-        migrated = _schema_signature("current")
-        migrated[("table", "article_state", "article_state")] = (
-            _DDL_ARTICLE_STATE_BASE[:-1] + ", " + _DDL_FEEDBACK + ")"
-        )
-        candidates.append(migrated)
-    for expected in candidates:
-        if actual != set(expected):
-            continue
-        try:
-            for object_key, expected_sql in expected.items():
-                actual_sql = connection.execute(
-                    "SELECT sql FROM sqlite_schema WHERE type = ? AND name = ? AND tbl_name = ?",
-                    object_key,
-                ).fetchone()
-                if actual_sql is None or not isinstance(actual_sql[0], str):
-                    raise StorageSchemaError(f"Missing persisted DDL for {object_key[1]}.")
-                if _tokenize_ddl(actual_sql[0]) != _tokenize_ddl(expected_sql):
-                    raise StorageSchemaError(f"Persisted DDL for {object_key[1]} is not supported.")
-            return
-        except StorageSchemaError:
-            continue
-    raise StorageSchemaError("SQLite persisted DDL is not supported.")
+    expected = _schema_signature(version, updated_first=updated_first)
+    if actual != set(expected):
+        raise StorageSchemaError("SQLite persisted DDL is not supported.")
+    for object_key, expected_sql in expected.items():
+        actual_sql = connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE type = ? AND name = ? AND tbl_name = ?",
+            object_key,
+        ).fetchone()
+        if actual_sql is None or not isinstance(actual_sql[0], str):
+            raise StorageSchemaError(f"Missing persisted DDL for {object_key[1]}.")
+        if _tokenize_ddl(actual_sql[0]) != _tokenize_ddl(expected_sql):
+            raise StorageSchemaError(f"Persisted DDL for {object_key[1]} is not supported.")
 
 
 def _normalized_default(value: Any) -> str | None:
@@ -322,50 +306,34 @@ def _index_columns(connection: sqlite3.Connection, name: str) -> list[tuple[str,
     return [(str(row[2]), int(row[3])) for row in rows if int(row[5]) == 1 and row[2] is not None]
 
 
-def _validate_indexes(
-    connection: sqlite3.Connection,
-    *,
-    tables: set[str] | None = None,
-) -> None:
-    # User-created article indexes have contractual names; SQLite-generated
-    # primary-key/UNIQUE index names do not.  Validate generated indexes by
-    # their PRAGMA origin and key columns instead of depending on names such as
-    # ``sqlite_autoindex_sources_2``.
+def _validate_indexes(connection: sqlite3.Connection) -> None:
     expected_user = {"articles_published_idx", "articles_source_idx"}
     rows = connection.execute(
         "SELECT name, sql FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_autoindex_%'"
     ).fetchall()
-    actual_user = {str(row[0]) for row in rows}
-    if actual_user != expected_user or any(not isinstance(row[1], str) for row in rows):
+    if {str(row[0]) for row in rows} != expected_user or any(not isinstance(row[1], str) for row in rows):
         raise StorageSchemaError("Required user indexes are missing or unexpected indexes exist.")
-
     expected_pk = {
-        "articles": "id",
-        "article_state": "article_id",
-        "sources": "id",
-        "source_preferences": "source_id",
-        "metadata": "key",
+        "articles": "id", "article_state": "article_id", "sources": "id",
+        "source_preferences": "source_id", "metadata": "key",
     }
-    if tables is not None:
-        expected_pk = {table: column for table, column in expected_pk.items() if table in tables}
     for table, pk_column in expected_pk.items():
         index_rows = connection.execute(f'PRAGMA index_list("{table}")').fetchall()
-        if not index_rows:
-            raise StorageSchemaError(f"Indexes for {table} are missing.")
-        pk_rows: list[Any] = []
-        unique_rows: list[Any] = []
-        user_rows: list[Any] = []
+        pk_rows = []
+        unique_rows = []
+        user_rows = []
         for row in index_rows:
             name, unique, origin, partial = str(row[1]), int(row[2]), str(row[3]), int(row[4])
             if partial:
                 raise StorageSchemaError(f"Partial index is not supported: {name}")
+            columns = _index_columns(connection, name)
             if origin == "pk":
                 pk_rows.append(row)
-                if unique != 1 or _index_columns(connection, name) != [(pk_column, 0)]:
+                if unique != 1 or columns != [(pk_column, 0)]:
                     raise StorageSchemaError(f"Primary-key index for {table} has wrong semantics.")
             elif origin == "u":
                 unique_rows.append(row)
-                if table != "sources" or unique != 1 or _index_columns(connection, name) != [("feed", 0)]:
+                if table != "sources" or unique != 1 or columns != [("feed", 0)]:
                     raise StorageSchemaError(f"Unexpected UNIQUE index for {table}.")
             elif origin == "c":
                 user_rows.append(row)
@@ -375,27 +343,19 @@ def _validate_indexes(
                 raise StorageSchemaError(f"Unexpected index origin for {table}: {origin}")
         if len(pk_rows) != 1:
             raise StorageSchemaError(f"Primary-key index for {table} is missing or duplicated.")
-        if table == "sources":
-            if len(unique_rows) != 1:
-                raise StorageSchemaError("sources.feed uniqueness is missing or duplicated.")
-        elif unique_rows:
+        if table == "sources" and len(unique_rows) != 1:
+            raise StorageSchemaError("sources.feed uniqueness is missing or duplicated.")
+        if table != "sources" and unique_rows:
             raise StorageSchemaError(f"Unexpected UNIQUE index for {table}.")
-        expected_names = {
-            "articles": expected_user,
-            "article_state": set(),
-            "sources": set(),
-            "source_preferences": set(),
-            "metadata": set(),
-        }[table]
+        expected_names = expected_user if table == "articles" else set()
         if {str(row[1]) for row in user_rows} != expected_names:
             raise StorageSchemaError(f"Unexpected user indexes for {table}.")
         for row in user_rows:
             name = str(row[1])
             columns = _index_columns(connection, name)
-            if name == "articles_published_idx" and columns != [("published_at", 1)]:
-                raise StorageSchemaError("articles_published_idx has wrong semantics.")
-            if name == "articles_source_idx" and columns != [("source_id", 0)]:
-                raise StorageSchemaError("articles_source_idx has wrong semantics.")
+            expected = [("published_at", 1)] if name == "articles_published_idx" else [("source_id", 0)]
+            if columns != expected:
+                raise StorageSchemaError(f"{name} has wrong semantics.")
 
 
 def validate_current_schema(connection: sqlite3.Connection, *, require_version: bool = True) -> None:
@@ -406,8 +366,8 @@ def validate_current_schema(connection: sqlite3.Connection, *, require_version: 
         raise StorageSchemaError(f"Unsupported storage schema version {version}.")
     if _table_names(connection) != _APPLICATION_TABLES:
         raise StorageSchemaError("Application tables do not match the supported schema.")
-    _validate_schema_signature(connection, "current")
-    specs = _column_specs()
+    _validate_schema_signature(connection, 2)
+    specs = _column_specs(2)
     for table, expected in specs.items():
         actual = _table_columns(connection, table)
         if actual != expected:
@@ -422,57 +382,20 @@ def validate_current_schema(connection: sqlite3.Connection, *, require_version: 
     _validate_indexes(connection)
 
 
-def _validate_v0_shape(connection: sqlite3.Connection) -> str:
-    """Classify one of the finite historical shapes before any migration DDL."""
-
-    tables = _table_names(connection)
-    if not tables:
-        if _schema_inventory(connection):
-            raise StorageSchemaError("Unknown version-0 schema objects.")
-        return "empty"
-    specs = _column_specs()
-    base_article_state = {name: spec for name, spec in specs["article_state"].items() if name not in _FEEDBACK_COLUMNS}
-    historical_sets = (_HISTORICAL_TABLES, _APPLICATION_TABLES)
-    if tables not in historical_sets:
-        raise StorageSchemaError("Unknown version-0 schema shape.")
-    for table in ("articles", "sources"):
-        if _table_columns(connection, table) != specs[table]:
-            raise StorageSchemaError(f"Unknown version-0 columns for {table}.")
-    state_columns = _table_columns(connection, "article_state")
-    if tables == _HISTORICAL_TABLES:
-        if state_columns != base_article_state:
-            raise StorageSchemaError("Unknown historical article_state columns.")
-        _validate_schema_signature(connection, "historical")
-        _validate_indexes(connection, tables=_HISTORICAL_TABLES)
-        return "historical"
-    if tables == _APPLICATION_TABLES:
-        if state_columns == specs["article_state"]:
-            _validate_schema_signature(connection, "current")
-            _validate_indexes(connection)
-            return "current"
-        feedback_names = list(_FEEDBACK_COLUMNS)
-        allowed = [
-            {
-                **base_article_state,
-                **{name: specs["article_state"][name] for name in feedback_names[:count]},
-            }
-            for count in (0, 1, 2)
-        ]
-        # The old initializer can have stopped after zero, one, or two ALTERs;
-        # an already-complete three-column shape is handled above.
-        if state_columns not in allowed:
-            raise StorageSchemaError("Unknown version-0 article_state columns.")
-        count = next(
-            count for count in (0, 1, 2)
-            if state_columns == {
-                **base_article_state,
-                **{name: specs["article_state"][name] for name in feedback_names[:count]},
-            }
-        )
-        _validate_schema_signature(connection, f"prefix{count}")
-        _validate_indexes(connection)
-        return "prefix"
-    raise StorageSchemaError("Unknown version-0 schema shape.")
+def _validate_v1_schema(connection: sqlite3.Connection) -> None:
+    if int(connection.execute("PRAGMA user_version").fetchone()[0]) != 1:
+        raise StorageSchemaError("Unsupported published schema version.")
+    if _table_names(connection) != _APPLICATION_TABLES:
+        raise StorageSchemaError("Published v1 tables do not match the supported schema.")
+    specs = _column_specs(1)
+    for table, expected in specs.items():
+        if _table_columns(connection, table) != expected:
+            raise StorageSchemaError(f"Columns for {table} do not match published v1.")
+    state_order = tuple(str(row[1]) for row in connection.execute("PRAGMA table_info(article_state)"))
+    if state_order not in {_V1_ARTICLE_STATE_COLUMNS, _V1_ARTICLE_STATE_COLUMNS_UPDATED_FIRST}:
+        raise StorageSchemaError("Published v1 article_state column order is not supported.")
+    _validate_schema_signature(connection, 1, updated_first=state_order == _V1_ARTICLE_STATE_COLUMNS_UPDATED_FIRST)
+    _validate_indexes(connection)
 
 
 def _now() -> str:
@@ -480,7 +403,7 @@ def _now() -> str:
 
 
 def migrate_storage_schema(connection: sqlite3.Connection) -> None:
-    """Migrate a known v0 database to v1 without owning runtime maintenance.
+    """Bootstrap empty v0 or migrate the exact published v1 database to v2.
 
     The caller owns the connection and remains responsible for closing it and
     selecting journal mode.  This API performs schema DDL only, under its own
@@ -493,36 +416,60 @@ def migrate_storage_schema(connection: sqlite3.Connection) -> None:
     if version == STORAGE_SCHEMA_VERSION:
         validate_current_schema(connection)
         return
-    if version != 0:
+    if version not in {0, 1}:
         raise StorageSchemaError(f"Unsupported storage schema version {version}.")
-    shape = _validate_v0_shape(connection)
+    if version == 1:
+        _validate_v1_schema(connection)
+    elif _table_names(connection) or _schema_inventory(connection):
+        raise StorageSchemaError("Populated or malformed version-0 storage is unsupported.")
     connection.execute("BEGIN IMMEDIATE")
     try:
-        if shape == "empty":
+        legacy_state_updated_at: str | None = None
+        if version == 1:
+            legacy_row = connection.execute(
+                "SELECT value FROM metadata WHERE key = 'user_state_updated_at'"
+            ).fetchone()
+            if legacy_row is not None:
+                candidate = legacy_row[0]
+                if isinstance(candidate, str) and len(candidate) <= 64:
+                    try:
+                        datetime.fromisoformat(candidate)
+                    except ValueError:
+                        pass
+                    else:
+                        legacy_state_updated_at = candidate
+        if version == 0:
             connection.execute(_DDL_ARTICLES)
             connection.execute(_DDL_ARTICLES_PUBLISHED_INDEX)
             connection.execute(_DDL_ARTICLES_SOURCE_INDEX)
-            connection.execute(_DDL_ARTICLE_STATE_NEW)
+            connection.execute(_DDL_ARTICLE_STATE_V2)
             connection.execute(_DDL_SOURCES)
-            connection.execute(_DDL_SOURCE_PREFERENCES)
+            connection.execute(_DDL_SOURCE_PREFERENCES_V2)
             connection.execute(_DDL_METADATA)
-        elif shape == "historical":
-            connection.execute(_DDL_SOURCE_PREFERENCES)
-            for name, definition in _FEEDBACK_COLUMNS.items():
-                connection.execute(
-                    f"ALTER TABLE article_state ADD COLUMN {name} {definition[0]} NOT NULL DEFAULT {definition[2]}"
-                )
-        elif shape.startswith("prefix"):
-            columns = _table_columns(connection, "article_state")
-            for name, definition in _FEEDBACK_COLUMNS.items():
-                if name not in columns:
-                    connection.execute(
-                        f"ALTER TABLE article_state ADD COLUMN {name} {definition[0]} NOT NULL DEFAULT {definition[2]}"
-                    )
-        elif shape == "current":
-            pass
         else:
-            raise StorageSchemaError(f"Unknown migration shape: {shape}")
+            connection.execute("ALTER TABLE article_state RENAME TO article_state_v1")
+            connection.execute("ALTER TABLE source_preferences RENAME TO source_preferences_v1")
+            connection.execute(_DDL_ARTICLE_STATE_V2)
+            connection.execute(_DDL_SOURCE_PREFERENCES_V2)
+            connection.execute(
+                "INSERT INTO article_state(article_id, is_saved, updated_at) "
+                "SELECT article_id, 1, updated_at FROM article_state_v1 WHERE is_saved = 1"
+            )
+            connection.execute(
+                "INSERT INTO source_preferences(source_id, muted, updated_at) "
+                "SELECT source_id, 1, updated_at FROM source_preferences_v1 WHERE muted = 1"
+            )
+            connection.execute("DROP TABLE article_state_v1")
+            connection.execute("DROP TABLE source_preferences_v1")
+            connection.execute(
+                "DELETE FROM metadata WHERE key IN ('user_state_json_imported', 'user_state_updated_at')"
+            )
+            if legacy_state_updated_at is not None:
+                connection.execute(
+                    "INSERT INTO metadata(key, value) VALUES ('state_updated_at', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (legacy_state_updated_at,),
+                )
         validate_current_schema(connection, require_version=False)
         connection.execute(f"PRAGMA user_version={STORAGE_SCHEMA_VERSION}")
         validate_current_schema(connection)
@@ -542,62 +489,12 @@ def normalize_string_list(values: Any, limit: int, max_length: int = 80) -> list
     return list(dict.fromkeys(valid))[-limit:]
 
 
-def normalize_feedback(values: Any) -> list[dict[str, Any]]:
-    if not isinstance(values, list):
-        return []
-    by_id: dict[str, dict[str, Any]] = {}
-    for item in values:
-        if not isinstance(item, dict):
-            continue
-        article_id = item.get("id")
-        value = item.get("value")
-        if not isinstance(article_id, str) or not 1 <= len(article_id) <= 80:
-            continue
-        if isinstance(value, bool) or value not in {-1, 1}:
-            continue
-        source_id = item.get("source_id", "")
-        if not isinstance(source_id, str) or len(source_id) > 80:
-            source_id = ""
-        by_id[article_id] = {
-            "id": article_id,
-            "value": value,
-            "source_id": source_id,
-            "software_tags": normalize_string_list(item.get("software_tags", []), 12),
-            "topic_tags": normalize_string_list(item.get("topic_tags", []), 12),
-        }
-    return list(by_id.values())[-MAX_FEEDBACK_ITEMS:]
-
-
 def normalize_user_state(payload: Any) -> dict[str, Any]:
     source = payload if isinstance(payload, dict) else {}
     normalized: dict[str, Any] = {
-        key: normalize_string_list(source.get(key, []), MAX_STATE_IDS)
-        for key in ("saved", "archived")
+        "saved": normalize_string_list(source.get("saved", []), MAX_STATE_IDS),
+        "muted_sources": normalize_string_list(source.get("muted_sources", []), MAX_STATE_SOURCES),
     }
-    notes = source.get("notes", {})
-    normalized_notes: dict[str, str] = {}
-    if isinstance(notes, dict):
-        for article_id, note in notes.items():
-            if not isinstance(article_id, str) or not 1 <= len(article_id) <= 80:
-                continue
-            if not isinstance(note, str):
-                continue
-            clean = note.strip()[:MAX_NOTE_LENGTH]
-            if clean:
-                normalized_notes[article_id] = clean
-    normalized["notes"] = dict(list(normalized_notes.items())[-MAX_STATE_NOTES:])
-    normalized["feedback"] = normalize_feedback(source.get("feedback", []))
-    normalized["muted_sources"] = normalize_string_list(
-        source.get("muted_sources", []), MAX_STATE_SOURCES
-    )
-    muted = set(normalized["muted_sources"])
-    normalized["reduced_sources"] = [
-        source_id
-        for source_id in normalize_string_list(
-            source.get("reduced_sources", []), MAX_STATE_SOURCES
-        )
-        if source_id not in muted
-    ]
     updated_at = source.get("updated_at")
     if not isinstance(updated_at, str) or len(updated_at) > 64:
         updated_at = _now()
@@ -656,7 +553,7 @@ def source_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
 
 
 class SQLiteRepository:
-    """Own one SQLite database and serialize all state/archive operations."""
+    """Own one SQLite database and serialize all state/history operations."""
 
     def __init__(self, paths: RuntimePaths):
         self.paths = paths
@@ -667,7 +564,7 @@ class SQLiteRepository:
     def connection(self, *, set_wal: bool = True) -> Iterator[sqlite3.Connection]:
         self.paths.cache_dir.mkdir(parents=True, exist_ok=True)
         with self._lock:
-            connection = sqlite3.connect(self.paths.archive_db_file, timeout=10)
+            connection = sqlite3.connect(self.paths.history_db_file, timeout=10)
             connection.row_factory = sqlite3.Row
             if set_wal:
                 connection.execute("PRAGMA journal_mode=WAL")
@@ -711,52 +608,8 @@ class SQLiteRepository:
                             order, now, now,
                         ),
                     )
-                self._import_legacy_state(connection)
                 self._reclassify_if_needed(connection)
             self._initialized = True
-
-    def _import_legacy_state(self, connection: sqlite3.Connection) -> None:
-        """Import user-state.json exactly once, without ever writing it."""
-
-        marker = connection.execute(
-            "SELECT value FROM metadata WHERE key = ?", (STATE_IMPORT_MARKER,)
-        ).fetchone()
-        if marker is not None:
-            return
-        try:
-            raw = self.paths.user_state_file.read_text(encoding="utf-8")
-        except FileNotFoundError:
-            connection.execute(
-                "INSERT INTO metadata (key, value) VALUES (?, ?)",
-                (STATE_IMPORT_MARKER, "no_file"),
-            )
-            return
-        except (OSError, UnicodeDecodeError):
-            connection.execute(
-                "INSERT INTO metadata (key, value) VALUES (?, ?)",
-                (STATE_IMPORT_MARKER, "invalid"),
-            )
-            return
-        try:
-            state = json.loads(raw)
-        except json.JSONDecodeError:
-            connection.execute(
-                "INSERT INTO metadata (key, value) VALUES (?, ?)",
-                (STATE_IMPORT_MARKER, "invalid"),
-            )
-            return
-        if not isinstance(state, dict):
-            connection.execute(
-                "INSERT INTO metadata (key, value) VALUES (?, ?)",
-                (STATE_IMPORT_MARKER, "invalid"),
-            )
-            return
-        normalized = normalize_user_state(state)
-        self._replace_state(connection, normalized)
-        connection.execute(
-            "INSERT INTO metadata (key, value) VALUES (?, ?)",
-            (STATE_IMPORT_MARKER, "imported"),
-        )
 
     def _reclassify_if_needed(self, connection: sqlite3.Connection) -> int:
         stored = connection.execute(
@@ -785,7 +638,7 @@ class SQLiteRepository:
                     article.get("lane", ""), article.get("software_group", ""),
                     json.dumps(article.get("software_tags", []), ensure_ascii=False),
                     json.dumps(article.get("topic_tags", []), ensure_ascii=False),
-                    archive_search_text(article), json.dumps(article, ensure_ascii=False),
+                    history_search_text(article), json.dumps(article, ensure_ascii=False),
                     row["id"],
                 )
             )
@@ -870,65 +723,27 @@ class SQLiteRepository:
         return self.source_config(source_id) or {}
 
     def _replace_state(self, connection: sqlite3.Connection, state: dict[str, Any]) -> None:
-        saved_ids = set(state.get("saved", []))
-        archived_ids = set(state.get("archived", []))
-        notes = state.get("notes", {})
-        feedback = {
-            item["id"]: item for item in state.get("feedback", [])
-            if isinstance(item, dict) and item.get("id")
-        }
-        article_ids = saved_ids | archived_ids | set(notes) | set(feedback)
         updated_at = state.get("updated_at") or _now()
-        rows = []
-        for article_id in article_ids:
-            item = feedback.get(article_id, {})
-            rows.append(
-                (
-                    article_id,
-                    0,
-                    int(article_id in saved_ids),
-                    int(article_id in archived_ids),
-                    notes.get(article_id, ""),
-                    int(item.get("value", 0) or 0),
-                    item.get("source_id", ""),
-                    json.dumps(item.get("software_tags", []), ensure_ascii=False),
-                    json.dumps(item.get("topic_tags", []), ensure_ascii=False),
-                    updated_at,
-                )
-            )
         connection.execute("DELETE FROM article_state")
-        if rows:
+        saved = [(article_id, 1, updated_at) for article_id in state.get("saved", [])]
+        if saved:
             connection.executemany(
-                """
-                INSERT INTO article_state (
-                    article_id, is_read, is_saved, is_archived, note,
-                    feedback_value, feedback_source_id, feedback_software_tags,
-                    feedback_topic_tags, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                rows,
+                "INSERT INTO article_state(article_id, is_saved, updated_at) VALUES (?, ?, ?)",
+                saved,
             )
         connection.execute("DELETE FROM source_preferences")
         preference_rows = [
-            (source_id, 1, 0, updated_at)
+            (source_id, 1, updated_at)
             for source_id in state.get("muted_sources", [])
         ]
-        preference_rows.extend(
-            (source_id, 0, 1, updated_at)
-            for source_id in state.get("reduced_sources", [])
-            if source_id not in set(state.get("muted_sources", []))
-        )
         if preference_rows:
             connection.executemany(
-                """
-                INSERT INTO source_preferences(source_id, muted, reduced, updated_at)
-                VALUES (?, ?, ?, ?)
-                """,
+                "INSERT INTO source_preferences(source_id, muted, updated_at) VALUES (?, ?, ?)",
                 preference_rows,
             )
         connection.execute(
             """
-            INSERT INTO metadata(key, value) VALUES ('user_state_updated_at', ?)
+            INSERT INTO metadata(key, value) VALUES ('state_updated_at', ?)
             ON CONFLICT(key) DO UPDATE SET value = excluded.value
             """,
             (updated_at,),
@@ -947,48 +762,22 @@ class SQLiteRepository:
             rows = connection.execute("SELECT * FROM article_state").fetchall()
             preferences = connection.execute("SELECT * FROM source_preferences").fetchall()
             updated = connection.execute(
-                "SELECT value FROM metadata WHERE key = 'user_state_updated_at'"
+                "SELECT value FROM metadata WHERE key = 'state_updated_at'"
             ).fetchone()
         saved = [row["article_id"] for row in rows if row["is_saved"]]
-        archived = [row["article_id"] for row in rows if row["is_archived"]]
-        notes = {row["article_id"]: row["note"] for row in rows if row["note"]}
-        feedback = []
-        for row in rows:
-            value = int(row["feedback_value"] or 0)
-            if value not in {-1, 1}:
-                continue
-            try:
-                software_tags = json.loads(row["feedback_software_tags"] or "[]")
-                topic_tags = json.loads(row["feedback_topic_tags"] or "[]")
-            except json.JSONDecodeError:
-                software_tags, topic_tags = [], []
-            feedback.append(
-                {
-                    "id": row["article_id"],
-                    "value": value,
-                    "source_id": row["feedback_source_id"] or "",
-                    "software_tags": software_tags if isinstance(software_tags, list) else [],
-                    "topic_tags": topic_tags if isinstance(topic_tags, list) else [],
-                }
-            )
         muted = [row["source_id"] for row in preferences if row["muted"]]
-        reduced = [row["source_id"] for row in preferences if row["reduced"] and not row["muted"]]
         return normalize_user_state(
             {
                 "saved": saved,
-                "archived": archived,
-                "notes": notes,
-                "feedback": feedback,
                 "muted_sources": muted,
-                "reduced_sources": reduced,
                 "updated_at": updated["value"] if updated else _now(),
             }
         )
 
-    def archive_articles(self, articles: list[dict[str, Any]]) -> int:
+    def record_articles(self, articles: list[dict[str, Any]]) -> int:
         self.initialize()
         if not articles:
-            return self.archive_article_count()
+            return self.history_article_count()
         now = _now()
         rows = []
         for article in articles:
@@ -1004,7 +793,7 @@ class SQLiteRepository:
                         f"{source.get('id', '')} {source.get('name', '')}"
                         for source in article.get("sources", [])
                     ),
-                    archive_search_text(article), json.dumps(article, ensure_ascii=False), now, now,
+                    history_search_text(article), json.dumps(article, ensure_ascii=False), now, now,
                 )
             )
         with self.connection() as connection:
@@ -1029,12 +818,12 @@ class SQLiteRepository:
             count = connection.execute("SELECT COUNT(*) FROM articles").fetchone()[0]
         return int(count)
 
-    def archive_article_count(self) -> int:
+    def history_article_count(self) -> int:
         self.initialize()
         with self.connection() as connection:
             return int(connection.execute("SELECT COUNT(*) FROM articles").fetchone()[0])
 
-    def query_archive(
+    def query_history(
         self,
         query: str = "",
         lane: str = "All",
@@ -1044,12 +833,12 @@ class SQLiteRepository:
         new_after: str = "",
     ) -> dict[str, Any]:
         self.initialize()
-        limit = max(1, min(MAX_ARCHIVE_PAGE_SIZE, int(limit)))
+        limit = max(1, min(MAX_HISTORY_PAGE_SIZE, int(limit)))
         offset = max(0, int(offset))
         clauses: list[str] = []
         parameters: list[Any] = []
-        for token in parse_archive_search(query):
-            clause, values = archive_token_sql(token, new_after)
+        for token in parse_history_search(query):
+            clause, values = history_token_sql(token, new_after)
             clauses.append(clause)
             parameters.extend(values)
         if lane in {"Tech & Development", "Industry", "Business"}:
@@ -1081,8 +870,6 @@ class SQLiteRepository:
                 article = json.loads(row["data_json"])
             except json.JSONDecodeError:
                 article = {}
-            article["archive_first_seen_at"] = row["first_seen_at"]
-            article["archive_last_seen_at"] = row["last_seen_at"]
             articles.append(article)
         return {
             "articles": articles,
@@ -1090,11 +877,11 @@ class SQLiteRepository:
             "offset": offset,
             "limit": limit,
             "has_more": offset + len(articles) < total,
-            "archive_count": self.archive_article_count(),
+            "history_count": self.history_article_count(),
         }
 
 
-ARCHIVE_SEARCH_ALIASES = {
+HISTORY_SEARCH_ALIASES = {
     "unreal": ("software", "unreal engine"),
     "unreal-engine": ("software", "unreal engine"),
     "ue": ("software", "unreal engine"),
@@ -1118,7 +905,7 @@ ARCHIVE_SEARCH_ALIASES = {
 }
 
 
-def parse_archive_search(query: str) -> list[dict[str, Any]]:
+def parse_history_search(query: str) -> list[dict[str, Any]]:
     import shlex
 
     normalized = re.sub(r"#unreal\s+engine\b", '#software:"Unreal Engine"', query, flags=re.I)
@@ -1146,7 +933,7 @@ def parse_archive_search(query: str) -> list[dict[str, Any]]:
                 if candidate_field.lower() in {"software", "topic", "source", "is"}:
                     field, value = candidate_field.lower(), candidate_value
             else:
-                alias = ARCHIVE_SEARCH_ALIASES.get(token.lower().replace("_", "-"))
+                alias = HISTORY_SEARCH_ALIASES.get(token.lower().replace("_", "-"))
                 if alias:
                     field, value = alias
                 else:
@@ -1159,14 +946,14 @@ def parse_archive_search(query: str) -> list[dict[str, Any]]:
     return tokens
 
 
-def archive_like_pattern(value: str) -> str:
+def history_like_pattern(value: str) -> str:
     escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
 
 
-def archive_token_sql(token: dict[str, Any], new_after: str) -> tuple[str, list[Any]]:
+def history_token_sql(token: dict[str, Any], new_after: str) -> tuple[str, list[Any]]:
     field, value = token["field"], token["value"]
-    pattern = archive_like_pattern(value)
+    pattern = history_like_pattern(value)
     if field == "software":
         clause = "(LOWER(a.software_group) LIKE ? ESCAPE '\\' OR LOWER(a.software_tags) LIKE ? ESCAPE '\\')"
         parameters: list[Any] = [pattern, pattern]
@@ -1180,9 +967,6 @@ def archive_token_sql(token: dict[str, Any], new_after: str) -> tuple[str, list[
         status_clauses = {
             "saved": "COALESCE(s.is_saved, 0) = 1",
             "library": "COALESCE(s.is_saved, 0) = 1",
-            "archived": "COALESCE(s.is_archived, 0) = 1",
-            "liked": "COALESCE(s.feedback_value, 0) = 1",
-            "reduced": "COALESCE(s.feedback_value, 0) = -1",
         }
         if value == "new":
             clause = "a.published_at > ?" if new_after else "0 = 1"
@@ -1191,14 +975,14 @@ def archive_token_sql(token: dict[str, Any], new_after: str) -> tuple[str, list[
             clause = status_clauses.get(value, "0 = 1")
             parameters = []
     else:
-        clause = "(a.search_text LIKE ? ESCAPE '\\' OR LOWER(COALESCE(s.note, '')) LIKE ? ESCAPE '\\')"
-        parameters = [pattern, pattern]
+        clause = "a.search_text LIKE ? ESCAPE '\\'"
+        parameters = [pattern]
     if token["negative"]:
         clause = f"NOT ({clause})"
     return clause, parameters
 
 
-def archive_search_text(article: dict[str, Any]) -> str:
+def history_search_text(article: dict[str, Any]) -> str:
     values: list[str] = [
         article.get("title", ""), article.get("summary", ""), article.get("source", ""),
         article.get("source_id", ""), article.get("lane", ""), article.get("software_group", ""),

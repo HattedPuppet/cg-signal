@@ -29,21 +29,23 @@ async function apiFetch(url, options = {}) {
 }
 
 const storageKeys = {
-  saved: "cg-signal:saved",
-  archiveRemoval: "cg-signal:archive-feature-removed",
   theme: "cg-signal:theme",
   layout: "cg-signal:layout",
   lane: "cg-signal:lane",
   software: "cg-signal:software",
   topics: "cg-signal:topics",
-  notes: "cg-signal:notes",
-  mutedSources: "cg-signal:muted-sources",
   lastVisit: "cg-signal:last-visit",
-  stateDirty: "cg-signal:state-dirty",
-  stateMigrated: "cg-signal:state-migrated",
   timeWindow: "cg-signal:time-window",
   sidebar: "cg-signal:sidebar",
 };
+
+const presentationStorageKeys = new Set(Object.values(storageKeys));
+for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+  const key = localStorage.key(index);
+  if (key?.startsWith("cg-signal:") && !presentationStorageKeys.has(key)) {
+    localStorage.removeItem(key);
+  }
+}
 
 const TIME_WINDOW_LABELS = {
   month: "This month",
@@ -56,11 +58,11 @@ const storedLane = localStorage.getItem(storageKeys.lane);
 const state = {
   payload: null,
   articles: [],
-  archiveArticles: [],
-  archiveTotal: 0,
-  archiveHasMore: false,
-  archiveLoading: false,
-  archiveRequestId: 0,
+  historyArticles: [],
+  historyTotal: 0,
+  historyHasMore: false,
+  historyLoading: false,
+  historyRequestId: 0,
   managedSources: [],
   activeSources: new Set(),
   lane: LANE_VALUES.has(storedLane) ? storedLane : "All",
@@ -68,9 +70,8 @@ const state = {
   topics: readFilterSet(storageKeys.topics),
   view: "all",
   search: "",
-  saved: readSet(storageKeys.saved),
-  notes: readObject(storageKeys.notes),
-  mutedSources: readSet(storageKeys.mutedSources),
+  saved: new Set(),
+  mutedSources: new Set(),
   layout: localStorage.getItem(storageKeys.layout) || "grid",
   timeWindow: Object.prototype.hasOwnProperty.call(TIME_WINDOW_LABELS, localStorage.getItem(storageKeys.timeWindow))
     ? localStorage.getItem(storageKeys.timeWindow)
@@ -86,13 +87,12 @@ const state = {
 };
 
 let stateSaveTimer = null;
-let noteSaveTimer = null;
 let backgroundRefreshTimer = null;
 let feedRefreshWaitPending = false;
 let thumbnailRefreshWaitPending = false;
 let thumbnailRefreshRetryTimer = null;
 let thumbnailRefreshRetryDelay = 750;
-let archiveSearchTimer = null;
+let historySearchTimer = null;
 const THUMBNAIL_REFRESH_RETRY_MAX_MS = 10_000;
 
 const elements = {
@@ -149,24 +149,6 @@ const sourceShortNames = {
   "blender-developers": "BL",
 };
 
-function readSet(key) {
-  try {
-    const value = JSON.parse(localStorage.getItem(key) || "[]");
-    return new Set(Array.isArray(value) ? value : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function readObject(key) {
-  try {
-    const value = JSON.parse(localStorage.getItem(key) || "{}");
-    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
-  } catch {
-    return {};
-  }
-}
-
 function parseStoredDate(value) {
   if (!value) return null;
   const date = new Date(value);
@@ -200,40 +182,23 @@ function chooseSingleFilter(selected, value) {
   selected.add(value);
 }
 
-function saveSet(key, value) {
-  localStorage.setItem(key, JSON.stringify([...value].slice(-1500)));
-}
-
-function cacheUserState() {
-  saveSet(storageKeys.saved, state.saved);
-  localStorage.setItem(storageKeys.notes, JSON.stringify(state.notes));
-  saveSet(storageKeys.mutedSources, state.mutedSources);
-}
-
 async function persistUserState() {
-  cacheUserState();
   try {
     const response = await apiFetch("/api/state", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         saved: [...state.saved],
-        archived: [],
-        notes: state.notes,
         muted_sources: [...state.mutedSources],
       }),
     });
     if (!response.ok) throw new Error(`State save failed (${response.status})`);
-    localStorage.setItem(storageKeys.stateDirty, "0");
-    localStorage.setItem(storageKeys.stateMigrated, "1");
   } catch (error) {
-    console.warn("CG Signal kept the latest state in this browser.", error);
+    console.warn("CG Signal could not save local state.", error);
   }
 }
 
 function queueUserStateSave() {
-  cacheUserState();
-  localStorage.setItem(storageKeys.stateDirty, "1");
   window.clearTimeout(stateSaveTimer);
   stateSaveTimer = window.setTimeout(persistUserState, 140);
 }
@@ -243,22 +208,10 @@ async function loadUserState() {
     const response = await apiFetch("/api/state");
     if (!response.ok) throw new Error(`State request failed (${response.status})`);
     const stored = await response.json();
-    const mergeLocal = localStorage.getItem(storageKeys.stateMigrated) !== "1"
-      || localStorage.getItem(storageKeys.stateDirty) === "1";
-    state.saved = new Set(mergeLocal ? [...state.saved, ...(stored.saved || [])] : (stored.saved || []));
-    state.notes = mergeLocal ? { ...(stored.notes || {}), ...state.notes } : (stored.notes || {});
-    state.mutedSources = new Set(mergeLocal
-      ? [...state.mutedSources, ...(stored.muted_sources || [])]
-      : (stored.muted_sources || []));
-    const needsArchiveRemoval = localStorage.getItem(storageKeys.archiveRemoval) !== "1"
-      || (stored.archived || []).length > 0;
-    localStorage.removeItem("cg-signal:archived");
-    if (mergeLocal || needsArchiveRemoval) await persistUserState();
-    localStorage.setItem(storageKeys.archiveRemoval, "1");
-    localStorage.setItem(storageKeys.stateMigrated, "1");
-    cacheUserState();
+    state.saved = new Set(Array.isArray(stored.saved) ? stored.saved : []);
+    state.mutedSources = new Set(Array.isArray(stored.muted_sources) ? stored.muted_sources : []);
   } catch (error) {
-    console.warn("CG Signal is using browser state until the local store is available.", error);
+    console.warn("CG Signal could not load local state.", error);
   }
 }
 
@@ -351,7 +304,6 @@ function articleIsNew(article) {
 
 function matchesSearch(article, query) {
   return matchesSearchQuery(article, query, {
-    extraText: state.notes[article.id] || "",
     isStatus: (item, value) => ({
       saved: state.saved.has(item.id),
       library: state.saved.has(item.id),
@@ -390,16 +342,16 @@ function applyFacetFilters(articles) {
   return articles.filter((article) => matchesSoftware(article) && matchesTopics(article));
 }
 
-function usesArchiveView() {
+function usesHistoryView() {
   return state.view === "history" || state.view === "saved";
 }
 
-function archiveViewQuery() {
+function historyViewQuery() {
   const status = state.view === "saved" ? "#is:saved" : "";
   return [state.search.trim(), status].filter(Boolean).join(" ");
 }
 
-function archiveSourceFilter() {
+function historySourceFilter() {
   const enabledIds = (state.payload?.sources || []).map((source) => source.id);
   const selectedIds = enabledIds.filter(
     (sourceId) => state.activeSources.has(sourceId) && !state.mutedSources.has(sourceId),
@@ -408,44 +360,44 @@ function archiveSourceFilter() {
   return selectedIds.length ? selectedIds : ["__none__"];
 }
 
-async function loadArchive({ append = false } = {}) {
-  if (!state.payload || !usesArchiveView()) return;
-  const requestId = ++state.archiveRequestId;
-  const offset = append ? state.archiveArticles.length : 0;
+async function loadHistory({ append = false } = {}) {
+  if (!state.payload || !usesHistoryView()) return;
+  const requestId = ++state.historyRequestId;
+  const offset = append ? state.historyArticles.length : 0;
   if (!append) {
-    state.archiveArticles = [];
-    state.archiveTotal = 0;
-    state.archiveHasMore = false;
+    state.historyArticles = [];
+    state.historyTotal = 0;
+    state.historyHasMore = false;
   }
-  state.archiveLoading = true;
+  state.historyLoading = true;
   render();
   const parameters = new URLSearchParams({
-    q: archiveViewQuery(),
+    q: historyViewQuery(),
     lane: state.lane,
     limit: "60",
     offset: String(offset),
   });
-  const sourceIds = archiveSourceFilter();
+  const sourceIds = historySourceFilter();
   if (sourceIds.length) parameters.set("sources", sourceIds.join(","));
   if (state.sessionCutoff) parameters.set("new_after", state.sessionCutoff.toISOString());
   try {
-    const response = await apiFetch(`/api/archive?${parameters}`);
+    const response = await apiFetch(`/api/history?${parameters}`);
     const payload = await response.json();
-    if (!response.ok || payload.error) throw new Error(payload.detail || payload.error || `Archive request failed (${response.status})`);
-    if (requestId !== state.archiveRequestId) return;
-    state.archiveArticles = append
-      ? [...state.archiveArticles, ...(payload.articles || [])]
+    if (!response.ok || payload.error) throw new Error(payload.detail || payload.error || `History request failed (${response.status})`);
+    if (requestId !== state.historyRequestId) return;
+    state.historyArticles = append
+      ? [...state.historyArticles, ...(payload.articles || [])]
       : (payload.articles || []);
-    state.archiveTotal = payload.total || 0;
-    state.archiveHasMore = Boolean(payload.has_more);
-    if (elements.historyCount) elements.historyCount.textContent = payload.archive_count ?? state.archiveTotal;
+    state.historyTotal = payload.total || 0;
+    state.historyHasMore = Boolean(payload.has_more);
+    if (elements.historyCount) elements.historyCount.textContent = payload.history_count ?? state.historyTotal;
   } catch (error) {
-    if (requestId !== state.archiveRequestId) return;
+    if (requestId !== state.historyRequestId) return;
     elements.notice.textContent = `Article history could not be searched. ${error.message}`;
     elements.notice.hidden = false;
   } finally {
-    if (requestId === state.archiveRequestId) {
-      state.archiveLoading = false;
+    if (requestId === state.historyRequestId) {
+      state.historyLoading = false;
       render();
     }
   }
@@ -456,8 +408,8 @@ function filteredArticles() {
     return applyFacetFilters(latestPool());
   }
 
-  if (usesArchiveView()) {
-    return state.archiveArticles.filter((article) => {
+  if (usesHistoryView()) {
+    return state.historyArticles.filter((article) => {
       if (state.view === "saved" && !state.saved.has(article.id)) return false;
       return true;
     });
@@ -518,15 +470,6 @@ function sourcePreferenceMenu(article) {
     </details>`;
 }
 
-function libraryNote(article) {
-  if (state.view !== "saved") return "";
-  return `
-    <div class="library-note">
-      <label for="note-${escapeHtml(article.id)}">Research note</label>
-      <textarea id="note-${escapeHtml(article.id)}" data-note-id="${escapeHtml(article.id)}" rows="2" maxlength="4000" placeholder="Why is this useful? Add a technique, takeaway, or next step…">${escapeHtml(state.notes[article.id] || "")}</textarea>
-    </div>`;
-}
-
 function storyCard(article) {
   const saved = state.saved.has(article.id);
   const imageUrl = safeImageUrl(article.image);
@@ -566,7 +509,6 @@ function storyCard(article) {
         </h2>
         <p class="story-summary">${escapeHtml(trimSummary(article.summary))}</p>
         ${reasonMarkup}
-        ${libraryNote(article)}
         <div class="story-footer">
           <div class="source-stack">${sourceStack(article)}<span class="coverage-label">${coverage}</span></div>
           <div class="card-actions">
@@ -623,16 +565,16 @@ function libraryStoryMarkup(visible) {
     </section>`).join("");
 }
 
-function archiveControlsMarkup() {
-  if (!usesArchiveView()) return "";
-  if (state.archiveLoading && !state.archiveArticles.length) {
-    return `<div class="archive-loading" role="status"><span></span> Searching your local history…</div>`;
+function historyControlsMarkup() {
+  if (!usesHistoryView()) return "";
+  if (state.historyLoading && !state.historyArticles.length) {
+    return `<div class="history-loading" role="status"><span></span> Searching your local history…</div>`;
   }
-  if (!state.archiveHasMore && !state.archiveLoading) return "";
+  if (!state.historyHasMore && !state.historyLoading) return "";
   return `
-    <div class="archive-load-more">
-      <button type="button" data-load-more-archive ${state.archiveLoading ? "disabled" : ""}>
-        ${state.archiveLoading ? "Loading…" : `Load more · ${state.archiveArticles.length} of ${state.archiveTotal}`}
+    <div class="history-load-more">
+      <button type="button" data-load-more-history ${state.historyLoading ? "disabled" : ""}>
+        ${state.historyLoading ? "Loading…" : `Load more · ${state.historyArticles.length} of ${state.historyTotal}`}
       </button>
     </div>`;
 }
@@ -737,25 +679,25 @@ function render() {
   const storyMarkup = state.view === "saved"
     ? libraryStoryMarkup(visible)
     : latestStoryMarkup(visible);
-  elements.grid.innerHTML = `${storyMarkup}${archiveControlsMarkup()}`;
-  const initialArchiveLoad = usesArchiveView() && state.archiveLoading && !visible.length;
-  elements.empty.hidden = visible.length > 0 || initialArchiveLoad;
-  elements.grid.hidden = visible.length === 0 && !initialArchiveLoad;
+  elements.grid.innerHTML = `${storyMarkup}${historyControlsMarkup()}`;
+  const initialHistoryLoad = usesHistoryView() && state.historyLoading && !visible.length;
+  elements.empty.hidden = visible.length > 0 || initialHistoryLoad;
+  elements.grid.hidden = visible.length === 0 && !initialHistoryLoad;
   const emptyCopy = {
-    saved: ["Your learning library is empty", "Save a story, then add a note so useful techniques remain easy to find."],
+    saved: ["Your learning library is empty", "Save a story to keep it available here."],
     history: ["No articles match", "Try a broader search or restore your source filters."],
   }[state.view] || ["No signal here yet", "Try another category, clear your source filters, or refresh the feeds."];
   elements.empty.querySelector("h2").textContent = emptyCopy[0];
   elements.empty.querySelector("p").textContent = emptyCopy[1];
-  const resultCount = usesArchiveView() ? state.archiveTotal : visible.length;
+  const resultCount = usesHistoryView() ? state.historyTotal : visible.length;
   elements.visibleCount.textContent = `${resultCount} ${resultCount === 1 ? "story" : "stories"}`;
-  const newCount = usesArchiveView() ? 0 : visible.filter(articleIsNew).length;
+  const newCount = usesHistoryView() ? 0 : visible.filter(articleIsNew).length;
   elements.newSince.textContent = state.sessionCutoff && newCount ? `${newCount} new` : "";
   elements.newSince.hidden = !(state.sessionCutoff && newCount);
   const latestCount = state.articles.filter(articleWithinTimeWindow).length;
   elements.allCount.textContent = latestCount;
   elements.savedCount.textContent = state.saved.size;
-  elements.historyCount.textContent = state.payload.archive_count ?? state.archiveTotal ?? "—";
+  elements.historyCount.textContent = state.payload.history_count ?? state.historyTotal ?? "—";
   elements.sortLabel.textContent = {
     saved: "Learning library",
     history: "Full history",
@@ -1107,7 +1049,7 @@ function setSourcePreference(sourceId, action) {
   }
   queueUserStateSave();
   renderSources(state.payload.sources || []);
-  if (usesArchiveView()) loadArchive();
+  if (usesHistoryView()) loadHistory();
   else render();
 }
 
@@ -1150,7 +1092,7 @@ document.addEventListener("click", (event) => {
       : "month";
     localStorage.setItem(storageKeys.timeWindow, state.timeWindow);
     renderSources(state.payload?.sources || []);
-    if (usesArchiveView()) loadArchive();
+    if (usesHistoryView()) loadHistory();
     else render();
     return;
   }
@@ -1162,14 +1104,14 @@ document.addEventListener("click", (event) => {
     elements.search.value = existing ? `${existing} ${token}` : token;
     state.search = elements.search.value;
     elements.search.focus();
-    if (usesArchiveView()) loadArchive();
+    if (usesHistoryView()) loadHistory();
     else render();
     return;
   }
 
-  const loadMoreArchive = event.target.closest("[data-load-more-archive]");
-  if (loadMoreArchive) {
-    loadArchive({ append: true });
+  const loadMoreHistory = event.target.closest("[data-load-more-history]");
+  if (loadMoreHistory) {
+    loadHistory({ append: true });
     return;
   }
 
@@ -1197,7 +1139,6 @@ document.addEventListener("click", (event) => {
     const id = saveButton.dataset.saveId;
     const wasSaved = state.saved.has(id);
     wasSaved ? state.saved.delete(id) : state.saved.add(id);
-    if (state.view === "saved" && wasSaved) state.archiveTotal = Math.max(0, state.archiveTotal - 1);
     queueUserStateSave();
     render();
     return;
@@ -1220,7 +1161,7 @@ document.addEventListener("click", (event) => {
         : new Set([id]);
     }
     renderSources(state.payload.sources || []);
-    if (usesArchiveView()) loadArchive();
+    if (usesHistoryView()) loadHistory();
     else render();
     return;
   }
@@ -1251,7 +1192,7 @@ document.addEventListener("click", (event) => {
   if (laneButton) {
     state.lane = laneButton.dataset.lane;
     localStorage.setItem(storageKeys.lane, state.lane);
-    if (usesArchiveView()) loadArchive();
+    if (usesHistoryView()) loadHistory();
     else render();
     return;
   }
@@ -1259,31 +1200,19 @@ document.addEventListener("click", (event) => {
   const viewButton = event.target.closest("[data-view]");
   if (viewButton) {
     state.view = viewButton.dataset.view;
-    if (usesArchiveView()) loadArchive();
+    if (usesHistoryView()) loadHistory();
     else render();
   }
 });
 
 elements.search.addEventListener("input", () => {
   state.search = elements.search.value;
-  window.clearTimeout(archiveSearchTimer);
-  if (usesArchiveView()) {
-    archiveSearchTimer = window.setTimeout(() => loadArchive(), 250);
+  window.clearTimeout(historySearchTimer);
+  if (usesHistoryView()) {
+    historySearchTimer = window.setTimeout(() => loadHistory(), 250);
   } else {
     render();
   }
-});
-
-document.addEventListener("input", (event) => {
-  const note = event.target.closest?.("[data-note-id]");
-  if (!note) return;
-  const value = note.value.trim();
-  if (value) state.notes[note.dataset.noteId] = value;
-  else delete state.notes[note.dataset.noteId];
-  localStorage.setItem(storageKeys.notes, JSON.stringify(state.notes));
-  localStorage.setItem(storageKeys.stateDirty, "1");
-  window.clearTimeout(noteSaveTimer);
-  noteSaveTimer = window.setTimeout(queueUserStateSave, 500);
 });
 
 elements.refresh.addEventListener("click", () => loadFeed(true));
@@ -1383,7 +1312,7 @@ document.querySelector("#reset-sources").addEventListener("click", () => {
   state.mutedSources.clear();
   queueUserStateSave();
   renderSources(state.payload.sources || []);
-  if (usesArchiveView()) loadArchive();
+  if (usesHistoryView()) loadHistory();
   else render();
 });
 
@@ -1440,7 +1369,6 @@ document.addEventListener("keydown", (event) => {
     event.preventDefault();
     const wasSaved = state.saved.has(state.keyboardArticleId);
     wasSaved ? state.saved.delete(state.keyboardArticleId) : state.saved.add(state.keyboardArticleId);
-    if (state.view === "saved" && wasSaved) state.archiveTotal = Math.max(0, state.archiveTotal - 1);
     queueUserStateSave();
     render();
   }

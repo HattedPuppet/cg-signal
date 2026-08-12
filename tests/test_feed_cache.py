@@ -31,7 +31,7 @@ class FeedCacheTests(unittest.TestCase):
             "generated_at": (now - timedelta(seconds=age_seconds)).isoformat(),
             "articles": [{"id": "cached-story"}],
             "sources": [],
-            "archive_count": 1,
+            "history_count": 1,
         }
         if retry_age_seconds is not None:
             payload["last_refresh_attempt_at"] = (

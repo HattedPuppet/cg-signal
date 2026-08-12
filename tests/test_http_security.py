@@ -149,6 +149,21 @@ class DashboardSecurityTests(unittest.TestCase):
             )
             self.assertEqual(feed.call_args.kwargs["force"], True)
 
+    def test_history_route_replaces_archive_route(self):
+        token = self.token()
+        with mock.patch.object(
+            self.server.service.repository,
+            "query_history",
+            return_value={"articles": [], "total": 0, "history_count": 0},
+        ) as query:
+            response = self.request("/api/history", headers={"X-CG-Signal-Token": token})
+        self.assertEqual(response.status, 200)
+        query.assert_called_once()
+        self.assertEqual(
+            self.request("/api/archive", headers={"X-CG-Signal-Token": token}).status,
+            404,
+        )
+
     def test_token_rotates_between_server_instances(self):
         old_token = self.token()
         self.server.shutdown()

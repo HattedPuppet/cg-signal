@@ -255,10 +255,10 @@ def sanitize_feed(payload: Any) -> dict[str, Any]:
                 warning_sources.append(source_name)
     try:
         feed_schema_version = int(
-            payload.get("feed_schema_version", payload.get("schema_version", 1)) or 1
+            payload.get("feed_schema_version", payload.get("schema_version", 2)) or 2
         )
     except (TypeError, ValueError):
-        feed_schema_version = 1
+        feed_schema_version = 2
     try:
         classification_revision = int(
             payload.get(

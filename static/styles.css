@@ -312,7 +312,7 @@ a {
   animation: shimmer 1.4s infinite;
 }
 
-.sidebar-note {
+.sidebar-privacy {
   display: flex;
   gap: 11px;
   margin-top: auto;
@@ -327,14 +327,14 @@ a {
   font-size: 20px;
 }
 
-.sidebar-note strong {
+.sidebar-privacy strong {
   display: block;
   margin-top: 1px;
   color: var(--sidebar-text);
   font-size: 11px;
 }
 
-.sidebar-note p {
+.sidebar-privacy p {
   margin: 4px 0 0;
   color: var(--sidebar-faint);
   font-size: 10px;
@@ -939,8 +939,8 @@ kbd {
   gap: 16px;
 }
 
-.archive-loading,
-.archive-load-more {
+.history-loading,
+.history-load-more {
   display: flex;
   grid-column: 1 / -1;
   align-items: center;
@@ -948,7 +948,7 @@ kbd {
   min-height: 74px;
 }
 
-.archive-loading,
+.history-loading,
 .managed-source-loading {
   gap: 9px;
   color: var(--ink-muted);
@@ -956,7 +956,7 @@ kbd {
   font-weight: 700;
 }
 
-.archive-loading span,
+.history-loading span,
 .managed-source-loading span {
   width: 14px;
   height: 14px;
@@ -966,7 +966,7 @@ kbd {
   animation: spin 800ms linear infinite;
 }
 
-.archive-load-more button {
+.history-load-more button {
   min-width: 210px;
   padding: 11px 18px;
   border: 1px solid var(--line-strong);
@@ -978,12 +978,12 @@ kbd {
   font-weight: 750;
 }
 
-.archive-load-more button:hover:not(:disabled) {
+.history-load-more button:hover:not(:disabled) {
   border-color: var(--ink);
   transform: translateY(-1px);
 }
 
-.archive-load-more button:disabled {
+.history-load-more button:disabled {
   cursor: wait;
   opacity: 0.55;
 }
@@ -1226,41 +1226,6 @@ kbd {
   color: var(--ink-muted);
   font-size: 8px;
   font-weight: 700;
-}
-
-.library-note {
-  position: relative;
-  z-index: 4;
-  display: grid;
-  gap: 6px;
-  margin: -3px 0 14px;
-}
-
-.library-note label {
-  color: var(--ink-muted);
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: .09em;
-  text-transform: uppercase;
-}
-
-.library-note textarea {
-  width: 100%;
-  min-height: 58px;
-  padding: 9px 10px;
-  resize: vertical;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  outline: 0;
-  background: var(--paper-deep);
-  color: var(--ink);
-  font-size: 10px;
-  line-height: 1.45;
-}
-
-.library-note textarea:focus {
-  border-color: var(--blue);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 20%, transparent);
 }
 
 .story-footer {
@@ -2141,7 +2106,7 @@ body.night .source-stack i {
     transform: translateX(-100%);
   }
   .sidebar-kicker,
-  .sidebar-note,
+  .sidebar-privacy,
   .sidebar-footer { display: none; }
   .primary-nav {
     display: flex;

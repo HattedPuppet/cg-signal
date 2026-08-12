@@ -150,7 +150,7 @@ def fixture_payload() -> dict[str, Any]:
         "articles": articles,
         "sources": sources,
         "warnings": [],
-        "archive_count": len(articles),
+        "history_count": len(articles),
         "thumbnails_refreshing": False,
     }
 
@@ -175,7 +175,7 @@ def main() -> None:
 
         dashboard = DashboardServer(("127.0.0.1", 0), QuietDashboardHandler, paths=paths)
         dashboard.service.write_cache(payload)
-        dashboard.service.repository.archive_articles(payload["articles"])
+        dashboard.service.repository.record_articles(payload["articles"])
         dashboard_thread = threading.Thread(
             target=dashboard.serve_forever,
             name="cg-signal-smoke-dashboard",

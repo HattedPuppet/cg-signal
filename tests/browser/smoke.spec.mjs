@@ -124,6 +124,10 @@ test.afterAll(async () => {
 test("desktop dashboard serves and persists the fixture workflow", async ({ page }) => {
   const guards = await installBrowserGuards(page);
   await page.setViewportSize({ width: 1440, height: 900 });
+  await page.addInitScript(() => {
+    localStorage.setItem("cg-signal:legacy-state", "must be removed");
+    localStorage.setItem("cg-signal:theme", "paper");
+  });
   await page.goto(fixtureUrls.desktop_url, { waitUntil: "domcontentloaded" });
 
   const token = await page.locator('meta[name="cg-signal-api-token"]').getAttribute("content");
@@ -132,6 +136,7 @@ test("desktop dashboard serves and persists the fixture workflow", async ({ page
   await expect(page.locator("#stories")).toHaveAttribute("aria-busy", "false");
   await expect(page.locator("#story-grid .story-card")).toHaveCount(2);
   await expect(page.locator("#story-grid .skeleton-card")).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem("cg-signal:legacy-state"))).toBeNull();
 
   const cards = page.locator("#story-grid .story-card");
   await page.locator("#search-input").fill("Unreal");
@@ -153,7 +158,7 @@ test("desktop dashboard serves and persists the fixture workflow", async ({ page
   await page.locator('[data-view="saved"]').click();
   await expect(page.locator("#stories")).toHaveAttribute("aria-busy", "false");
   await expect(page.locator('[data-id="smoke-blender-article"]')).toContainText("Blender Lighting Workflow");
-  await expect(page.locator('textarea[data-note-id="smoke-blender-article"]')).toBeVisible();
+  await expect(page.locator('textarea[data-note-id="smoke-blender-article"]')).toHaveCount(0);
   await expectCleanBrowser(guards);
 });
 

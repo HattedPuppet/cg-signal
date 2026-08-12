@@ -762,11 +762,11 @@ class FeedService:
             with self._thumbnail_condition:
                 active = self._thumbnail_worker_active
             payload["thumbnails_refreshing"] = active or self._refresh_lock.locked()
-        if "archive_count" not in payload:
+        if "history_count" not in payload:
             try:
-                payload["archive_count"] = self.repository.archive_article_count()
+                payload["history_count"] = self.repository.history_article_count()
             except (OSError, sqlite3.Error):
-                payload["archive_count"] = 0
+                payload["history_count"] = 0
         return payload
 
     def update_cached_thumbnail_images(self, articles: list[dict[str, Any]], generated_at: str) -> None:
@@ -905,7 +905,7 @@ class FeedService:
                 "warnings": [f"{item['source']['name']}: {item['message']}" for item in failed],
             })
             try:
-                fallback["archive_count"] = self.repository.archive_article_count()
+                fallback["history_count"] = self.repository.history_article_count()
                 self.write_cache(fallback)
             except (OSError, sqlite3.Error):
                 pass
@@ -932,9 +932,9 @@ class FeedService:
             "warnings": [f"{item['source']['name']}: {item['message']}" for item in failed],
         }
         try:
-            payload["archive_count"] = self.repository.archive_articles(clusters)
+            payload["history_count"] = self.repository.record_articles(clusters)
         except (OSError, sqlite3.Error):
-            payload["archive_count"] = self.repository.archive_article_count()
+            payload["history_count"] = self.repository.history_article_count()
         payload["thumbnails_refreshing"] = bool(missing_thumbnail_articles)
         if configured_sources:
             try:

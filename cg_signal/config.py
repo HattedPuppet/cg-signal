@@ -8,7 +8,7 @@ from pathlib import Path
 # The JSON shape is a client-facing contract.  Classifier changes are tracked
 # independently so a rule update can reclassify stored articles without making
 # otherwise-compatible clients reject the feed.
-FEED_SCHEMA_VERSION = 1
+FEED_SCHEMA_VERSION = 2
 CLASSIFICATION_REVISION = 4
 SOURCE_CACHE_SCHEMA_VERSION = 2
 
@@ -18,11 +18,8 @@ IMAGE_INDEX_TTL_SECONDS = 30 * 86400
 MAX_ITEMS_PER_SOURCE = 40
 MAX_FEED_ENTRIES = 1000
 MAX_STATE_IDS = 5000
-MAX_STATE_NOTES = 1200
-MAX_NOTE_LENGTH = 4000
-MAX_FEEDBACK_ITEMS = 500
 MAX_STATE_SOURCES = 200
-MAX_ARCHIVE_PAGE_SIZE = 200
+MAX_HISTORY_PAGE_SIZE = 200
 MAX_SOURCE_NAME_LENGTH = 100
 MAX_SOURCE_URL_LENGTH = 2048
 
@@ -165,8 +162,7 @@ class RuntimePaths:
     image_index_file: Path
     thumbnail_dir: Path
     thumbnail_anchor: Path
-    user_state_file: Path
-    archive_db_file: Path
+    history_db_file: Path
     pid_file: Path
     backup_dir: Path
     database_lock_file: Path
@@ -184,8 +180,7 @@ class RuntimePaths:
             image_index_file=cache_dir / "image-index.json",
             thumbnail_dir=cache_dir / "thumbnails",
             thumbnail_anchor=cache_dir,
-            user_state_file=cache_dir / "user-state.json",
-            archive_db_file=cache_dir / "cg-signal.db",
+            history_db_file=cache_dir / "cg-signal.db",
             pid_file=cache_dir / "server.pid",
             backup_dir=project_root / ".backups",
             database_lock_file=cache_dir / "database.lock",
@@ -209,8 +204,7 @@ class RuntimePaths:
             image_index_file=generated / "image-index.json",
             thumbnail_dir=generated / "thumbnails",
             thumbnail_anchor=generated,
-            user_state_file=generated / "user-state.json",
-            archive_db_file=generated / "cg-signal.db",
+            history_db_file=generated / "cg-signal.db",
             pid_file=generated / "server.pid",
             backup_dir=generated / "backups",
             database_lock_file=generated / "database.lock",

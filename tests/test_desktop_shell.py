@@ -117,8 +117,9 @@ class DesktopShellTests(unittest.TestCase):
         self.assertNotIn('data-view="archived"', html)
         self.assertNotIn("data-archive-id", javascript)
         self.assertNotIn('key === "a"', javascript)
-        self.assertIn('archived: []', javascript)
-        self.assertIn('localStorage.removeItem("cg-signal:archived")', javascript)
+        self.assertIn('saved: new Set()', javascript)
+        self.assertIn('const presentationStorageKeys = new Set(Object.values(storageKeys));', javascript)
+        self.assertIn('key?.startsWith("cg-signal:") && !presentationStorageKeys.has(key)', javascript)
 
     def test_latest_signal_has_a_recent_publication_window(self):
         html = (SITE / "index.html").read_text(encoding="utf-8")

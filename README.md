@@ -26,17 +26,17 @@ python server.py
 
 ### Local SQLite backups
 
-The desktop archive can be captured as a verified, atomic SQLite snapshot. A
+Desktop history can be captured as a verified, atomic SQLite snapshot. A
 manual snapshot is written beneath `.backups/` (or to an explicit destination).
-Legacy v0 databases are normalized in the temporary snapshot copy; the live
-database remains unchanged during backup:
+Published schema 1 snapshots are normalized to schema 2 in the temporary
+snapshot copy; the live database remains unchanged during backup:
 
 ```powershell
 python server.py backup
 python server.py backup --destination C:\path\to\backups
 ```
 
-Inspect a snapshot before changing the live archive, then explicitly confirm
+Inspect a snapshot before changing live history, then explicitly confirm
 the restore:
 
 ```powershell
@@ -49,14 +49,15 @@ already be stopped. When a live database exists, the command first creates and
 verifies a `pre-restore` recovery snapshot, stages the candidate beside the
 live database, and verifies it again after replacement. If post-install
 verification fails, that verified recovery snapshot is restored atomically.
-If the live database was v0, the recovery snapshot is v1, so a rollback
-restores the same user data while advancing only the schema version to v1.
+Schema 1 restores are staged and migrated to schema 2 before installation;
+obsolete state is discarded while articles, saved IDs, sources, and muted
+sources are preserved.
 When no live database existed, a failed post-install verification removes the
 failed installed database and its SQLite sidecars to restore the original
 absence. Start the dashboard separately after a restore.
 
-Snapshots contain the complete local SQLite archive, including saved state,
-notes, custom source URLs, and full article history. They are private local
+Snapshots contain the complete local SQLite history, including saved state,
+custom source URLs, and full article history. They are private local
 files: never sync or publish them. The manifest contains only structural
 metadata, checksums, and row counts; its checksum detects corruption but does
 not provide authentication or encryption.
@@ -102,8 +103,8 @@ RSS URLs added only to the desktop remain desktop-only unless they are later
 added to the repository's public feed configuration.
 
 The export uses an explicit field allowlist. It never publishes the desktop
-SQLite article history, saved IDs, notes, or any `.cache` file. Learning
-Library, History, notes, and desktop source configuration remain desktop-only;
+SQLite article history, saved IDs, or any `.cache` file. Learning
+Library, History, and desktop source configuration remain desktop-only;
 mobile source enablement and pins are device-local.
 
 To build the same deployment locally from the current feed cache:
@@ -131,21 +132,18 @@ Git.
   `If-Modified-Since` when publishers support them, avoiding downloads and XML
   parsing for unchanged feeds. A failed source can reuse its last snapshot.
 - Every gathered story is also retained in `.cache/cg-signal.db`, a local
-  SQLite archive. **History** searches this complete collection with paging, so
+  SQLite history. **History** searches this complete collection with paging, so
   articles remain findable after they disappear from a publisher's feed.
-- Verified SQLite snapshots live in `.backups/`; they include the archive and
-  local notes but never feed caches, thumbnails, PID files, lock files, or the
-  legacy JSON import.
-- Saved and research-note states are persisted transactionally in
-  `.cache/cg-signal.db`. Browser storage acts as
-  a failure fallback and migrates existing saved state automatically. Existing
-  `.cache/user-state.json` data is imported once during the upgrade and then
-  retained unchanged as recovery evidence. Full-history searches use the same
-  SQLite state for `#is:` filters and research notes.
+- Verified SQLite snapshots live in `.backups/`; they include history and
+  saved/muted state but never feed caches, thumbnails, PID files, lock files, or
+  browser state.
+- Saved IDs and muted-source preferences are persisted transactionally in
+  `.cache/cg-signal.db`; SQLite is authoritative. Full-history searches use the
+  same state for `#is:saved` and `#is:new` filters.
 - **Latest Signal** is the default chronological view and defaults to stories published **this month**. The publication
   window can be widened to the **last three months** (with month separators for
   scanning) or to all articles currently returned by the feeds. Older stories
-  are not deleted: desktop **History** searches the complete local archive.
+  are not deleted: desktop **History** searches the complete local history.
 - **Latest Signal** keeps the primary feed chronological and offers live
   category counts. Multi-tool stories can be found from every relevant software
   filter while appearing only once in the All Stories feed and retaining one
@@ -157,9 +155,8 @@ Git.
   the feed.
 - A divider identifies stories published since the previous visit. Keyboard
   triage uses `J`/`K` to move, `Enter` to open, and `S` to save.
-- Saved stories form a durable Learning Library grouped by software/context.
-  Each item accepts a searchable research note and remains available after the
-  live RSS window moves on.
+- Saved stories form a durable Learning Library grouped by software/context and
+  remain available after the live RSS window moves on.
 - Search supports ordinary text plus combinable tags: `#unreal`, `#blender`,
   `#substance`, `#topic:animation`, `#source:"80 Level"`,
   `#is:saved`, and `#is:new`. Prefix a term with `-` to exclude it,
@@ -204,6 +201,6 @@ Git.
 The hidden launcher records the active server in `.cache/server.pid`; the stop
 shortcut only closes that local CG Signal process.
 
-Desktop notes and source mute state stay local to the PC. Mobile pins and source
+Desktop saved and source mute state stay local to the PC. Mobile pins and source
 enablement stay local to that device and are never synced to the desktop. The
 project intent and product requirements are maintained in `PRD.md`.

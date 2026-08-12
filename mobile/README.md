@@ -8,7 +8,7 @@ This directory contains the public-safe static mobile companion.
 - `dist/` is generated and must not be committed.
 
 Only allowlisted RSS-derived fields enter `feed.json`. The builder uses an
-isolated temporary cache, so desktop history, notes, saved state, preferences,
+isolated temporary cache, so desktop history, saved state, preferences,
 and locally configured custom sources cannot be included accidentally.
 The workflow keeps public publisher validators, per-source RSS snapshots, and
 validated thumbnail bytes under `.mobile-cache/http`. This allows conditional

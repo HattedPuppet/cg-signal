@@ -4,7 +4,7 @@
  * so it can also be exercised directly by Node's built-in test runner.
  */
 
-export const FEED_SCHEMA_VERSION = 1;
+export const FEED_SCHEMA_VERSION = 2;
 
 export const ARTICLE_LANE_VALUES = new Set([
   "Tech & Development",
@@ -176,7 +176,7 @@ export function searchTokens(query = "") {
   }).filter((token) => token.value);
 }
 
-export function searchableArticleText(article = {}, extraText = "") {
+export function searchableArticleText(article = {}) {
   return [
     article.title,
     article.summary,
@@ -187,11 +187,10 @@ export function searchableArticleText(article = {}, extraText = "") {
     ...(article.topic_tags || []),
     ...(article.priority_reasons || []),
     ...(article.related || []).map((item) => `${item?.source || ""} ${item?.title || ""}`),
-    extraText,
   ].filter(Boolean).join(" ").toLocaleLowerCase();
 }
 
-export function matchesSearchToken(article, token, { isStatus, extraText = "" } = {}) {
+export function matchesSearchToken(article, token, { isStatus } = {}) {
   const value = token.value;
   if (token.field === "software") {
     return articleCategories(article).some((item) => item.toLocaleLowerCase().includes(value));
@@ -210,12 +209,12 @@ export function matchesSearchToken(article, token, { isStatus, extraText = "" } 
   if (token.field === "is") {
     return typeof isStatus === "function" ? Boolean(isStatus(article, value, token)) : false;
   }
-  return searchableArticleText(article, extraText).includes(value);
+  return searchableArticleText(article).includes(value);
 }
 
 /**
  * Match every search token.  The callback is intentionally supplied by the
- * caller because desktop and mobile have different local #is state.
+ * caller because desktop and mobile supply different #is state callbacks.
  */
 export function matchesSearch(article, query, options = {}) {
   const normalizedOptions = options || {};
