@@ -286,7 +286,7 @@ def _manifest(
 ) -> dict[str, Any]:
     if reason not in {"manual", "pre_restore"}:
         raise ValueError("Backup reason must be 'manual' or 'pre_restore'.")
-    # Do not add paths, URLs, IDs, notes, titles, or article content here.
+    # Do not add paths, URLs, IDs, private text, titles, or article content here.
     # Counts and SQLite structural metadata are sufficient for verification.
     sqlite_summary = {
         "library_version": sqlite_metadata["library_version"],

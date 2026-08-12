@@ -859,7 +859,7 @@ class SQLiteRepository:
             ).fetchone()[0])
             rows = connection.execute(
                 f"""
-                SELECT a.data_json, a.first_seen_at, a.last_seen_at
+                SELECT a.data_json
                 {base} {where} ORDER BY a.published_at DESC LIMIT ? OFFSET ?
                 """,
                 [*parameters, limit, offset],
