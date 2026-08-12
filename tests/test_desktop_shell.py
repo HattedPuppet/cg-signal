@@ -213,7 +213,8 @@ class DesktopShellTests(unittest.TestCase):
         self.assertIn('state.userStateStatus = "ready"', javascript)
         self.assertIn('data-retry-user-state', javascript)
         self.assertIn('if (state.userStateStatus !== "ready") return;', javascript)
-        self.assertIn('[data-save-id], [data-source-action], #reset-sources, [data-view=\'saved\']', javascript)
+        self.assertIn('[data-save-id], [data-source-action]', javascript)
+        self.assertIn('#reset-sources, [data-view=\'saved\']', javascript)
         self.assertIn('if (!userStateReady()) return;', javascript)
 
     def test_schema_transition_warning_is_documented(self):

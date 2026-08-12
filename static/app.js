@@ -242,9 +242,15 @@ function userStateReady() {
 
 function renderUserStateControls() {
   const unavailable = !userStateReady();
-  document.querySelectorAll("[data-save-id], [data-source-action], #reset-sources, [data-view='saved']").forEach((control) => {
+  document.querySelectorAll("[data-save-id], [data-source-action]").forEach((control) => {
     control.disabled = unavailable;
     control.setAttribute("aria-disabled", String(unavailable));
+  });
+  document.querySelectorAll("#reset-sources, [data-view='saved']").forEach((control) => {
+    const feedUnavailable = !state.payload;
+    const disabled = unavailable || feedUnavailable;
+    control.disabled = disabled;
+    control.setAttribute("aria-disabled", String(disabled));
   });
   if (!elements.userStateStatus) return;
   elements.userStateStatus.setAttribute("aria-busy", String(state.userStateStatus === "loading"));
@@ -1368,7 +1374,7 @@ elements.home.addEventListener("click", () => {
 });
 
 document.querySelector("#reset-sources").addEventListener("click", () => {
-  if (!userStateReady()) return;
+  if (!userStateReady() || !state.payload) return;
   state.activeSources = new Set((state.payload.sources || []).map((source) => source.id));
   state.mutedSources.clear();
   queueUserStateSave();
