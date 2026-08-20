@@ -219,9 +219,12 @@ test("desktop state controls wait for authoritative recovery", async ({ page }) 
   await page.locator('[data-source-id="smoke-unreal-source"]').dispatchEvent("click");
   await restorePost;
   await expect(page.locator('[data-id="smoke-unreal-article"] [data-save-id]')).toBeVisible();
-  const statePost = page.waitForRequest(
-    (request) => request.url().endsWith("/api/state") && request.method() === "POST",
-  );
+  const statePost = page.waitForRequest((request) => {
+    if (!request.url().endsWith("/api/state") || request.method() !== "POST") return false;
+    const postedState = request.postDataJSON();
+    return postedState.saved?.includes("smoke-unreal-article")
+      && postedState.muted_sources?.includes("smoke-unreal-source");
+  });
   await page.locator('[data-id="smoke-unreal-article"] [data-save-id]').click();
   await page.locator('[data-id="smoke-unreal-article"] .source-menu summary').click();
   await page.locator('[data-id="smoke-unreal-article"] [data-source-action="mute"]').click();
