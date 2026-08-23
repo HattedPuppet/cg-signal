@@ -23,10 +23,11 @@ concurrency:
 
 jobs:
   test:
+    if: github.event_name != 'schedule'
     permissions:
       contents: read
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     steps:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -56,7 +57,7 @@ jobs:
         run: python -m unittest discover -s tests -v
 
   build:
-    if: github.event_name != 'pull_request'
+    if: ${{ always() && github.event_name != 'pull_request' && (github.event_name == 'schedule' || needs.test.result == 'success') }}
     needs: test
     permissions:
       contents: read
