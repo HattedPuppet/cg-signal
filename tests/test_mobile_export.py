@@ -258,7 +258,7 @@ class MobileExportTests(unittest.TestCase):
         self.assertIn("pull_request:", workflow)
         self.assertIn("needs: test", workflow)
         self.assertIn(
-            "if: ${{ always() && github.event_name != 'pull_request' && needs.build.result == 'success' }}",
+            "if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.build.result == 'success' }}",
             workflow,
         )
         self.assertIn("format('cg-signal-pr-{0}', github.event.pull_request.number)", workflow)
