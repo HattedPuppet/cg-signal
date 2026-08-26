@@ -101,7 +101,7 @@ jobs:
           path: mobile/dist
 
   deploy:
-    if: github.event_name != 'pull_request'
+    if: ${{ always() && github.event_name != 'pull_request' && needs.build.result == 'success' }}
     permissions:
       pages: write
       id-token: write
