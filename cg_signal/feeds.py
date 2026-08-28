@@ -463,6 +463,18 @@ class FeedService:
         missing = self.apply_cached_images(articles)
         if not missing:
             return
+        # Feed sources are fetched in configuration order, while the public
+        # feed is rendered newest first.  Prioritise recent stories before
+        # filling the bounded enrichment queue so a slow source cannot starve
+        # the stories users see first.
+        def published_timestamp(article: dict[str, Any]) -> float:
+            value = article.get("published_at", "")
+            try:
+                return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+            except (TypeError, ValueError, OverflowError):
+                return float("-inf")
+
+        missing.sort(key=published_timestamp, reverse=True)
         batch_deadline = time.monotonic() + 45
         index = self.read_image_index()
         by_url: dict[str, list[dict[str, Any]]] = {}
@@ -805,6 +817,15 @@ class FeedService:
                 if isinstance(article, dict) and "image" in article and "image" not in updated:
                     changed = True
                 image = images_by_url.get(updated.get("url", ""))
+                if not image and isinstance(updated.get("related"), list):
+                    image = next(
+                        (
+                            images_by_url.get(related.get("url", ""), "")
+                            for related in updated["related"]
+                            if isinstance(related, dict) and images_by_url.get(related.get("url", ""), "")
+                        ),
+                        "",
+                    )
                 if image and not updated.get("image"):
                     updated["image"] = image
                     changed = True

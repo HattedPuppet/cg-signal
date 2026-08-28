@@ -239,6 +239,32 @@ class FeedFallbackSchemaTests(ServiceTestCase):
 
 
 class ThumbnailPipelineTests(ServiceTestCase):
+    def test_enrichment_prioritizes_newest_articles_across_source_order(self):
+        articles = [
+            {**cached_article(), "url": "https://example.com/old", "published_at": "2026-07-01T00:00:00+00:00", "_thumbnail_candidate": "old"},
+            {**cached_article(), "id": "article-2", "url": "https://example.com/new", "published_at": "2026-07-30T00:00:00+00:00", "_thumbnail_candidate": "new"},
+        ]
+        with (
+            mock.patch.object(self.service, "apply_cached_images", return_value=articles),
+            mock.patch.object(self.service, "_fetch_thumbnail_asset", return_value="") as fetch_asset,
+            mock.patch.object(self.service, "fetch_page_image", return_value=""),
+        ):
+            self.service.enrich_missing_images(articles)
+        self.assertEqual(
+            [call.args[0] for call in fetch_asset.call_args_list if call.args[0]],
+            ["new", "old"],
+        )
+
+    def test_cached_cluster_uses_image_fetched_from_related_member(self):
+        primary = cached_article()
+        primary["related"] = [{"url": "https://example.com/related"}]
+        generated_at = "2026-08-28T00:00:00+00:00"
+        self.service.write_cache({"generated_at": generated_at, "articles": [primary], "thumbnails_refreshing": True})
+        image = store_thumbnail(self.service.paths.thumbnail_dir, b"\x89PNG\r\n\x1a\nmember", "image/png")
+        member = {"url": "https://example.com/related", "image": image}
+        self.service.update_cached_thumbnail_images([member], generated_at)
+        self.assertEqual(self.service.read_cache()["articles"][0]["image"], image)
+
     def test_rss_candidate_is_fetched_and_stored_as_app_owned_reference(self):
         article = {**cached_article(), "_thumbnail_candidate": "https://cdn.example/image.jpg"}
         headers = Message()
