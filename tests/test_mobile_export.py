@@ -202,6 +202,46 @@ class MobileExportTests(unittest.TestCase):
             self.assertEqual(sum(bool(article["image"]) for article in emitted["articles"]), 501)
             self.assertEqual(len(list((output / "thumbnails").iterdir())), 501)
 
+    def test_mobile_bundle_spends_byte_budget_on_newer_articles_first(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary) / "http"
+            output = Path(temporary) / "site"
+            thumbnail_root = cache / "thumbnails"
+            thumbnail_root.mkdir(parents=True)
+            payload = self.fixture()
+            old = validate_thumbnail_bytes(b"\x89PNG\r\n\x1a\nold", "image/png")
+            new = validate_thumbnail_bytes(b"\x89PNG\r\n\x1a\nnew", "image/png")
+            assert old and new
+            (thumbnail_root / Path(old.reference).name).write_bytes(old.body)
+            (thumbnail_root / Path(new.reference).name).write_bytes(new.body)
+            payload["articles"] = [
+                {
+                    **payload["articles"][0],
+                    "id": "older",
+                    "url": "https://example.com/older",
+                    "published_at": "2026-07-16T08:00:00+00:00",
+                    "image": old.reference,
+                },
+                {
+                    **payload["articles"][0],
+                    "id": "newer",
+                    "url": "https://example.com/newer",
+                    "published_at": "2026-07-16T10:00:00+00:00",
+                    "image": new.reference,
+                },
+            ]
+
+            with mock.patch.object(build_mobile, "MAX_MOBILE_THUMBNAIL_BYTES", len(new.body)):
+                build_mobile.build_site(output, payload, thumbnail_root=thumbnail_root)
+
+            emitted = json.loads((output / "feed.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                [article["image"] for article in emitted["articles"]],
+                ["", new.reference],
+            )
+            self.assertFalse((output / old.reference).exists())
+            self.assertTrue((output / new.reference).is_file())
+
     def test_mobile_bundle_rejects_symlinked_thumbnail_root_without_touching_sentinel(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
