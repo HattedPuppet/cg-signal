@@ -28,8 +28,10 @@ MOBILE_HISTORY_DAYS = 100
 MAX_MOBILE_ARTICLES = 1500
 MAX_MOBILE_SOURCES = 300
 MAX_MOBILE_UNAVAILABLE_SOURCES = 300
-MAX_MOBILE_THUMBNAILS = 500
-MAX_MOBILE_THUMBNAIL_BYTES = 64_000_000
+# The feed already publishes at most 1,500 cards.  Keep all verified assets
+# for those cards; the client still transfers them lazily as cards enter view.
+MAX_MOBILE_THUMBNAILS = MAX_MOBILE_ARTICLES
+MAX_MOBILE_THUMBNAIL_BYTES = 256_000_000
 
 ARTICLE_FIELDS = (
     "id",

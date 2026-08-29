@@ -174,6 +174,34 @@ class MobileExportTests(unittest.TestCase):
             self.assertEqual(emitted["articles"][0]["image"], "")
             self.assertFalse((output / reference).exists())
 
+    def test_mobile_bundle_keeps_referenced_thumbnails_beyond_legacy_cap(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary) / "http"
+            output = Path(temporary) / "site"
+            thumbnail_root = cache / "thumbnails"
+            thumbnail_root.mkdir(parents=True)
+            payload = self.fixture()
+            articles = []
+            for index in range(501):
+                body = b"\x89PNG\r\n\x1a\n" + index.to_bytes(4, "big")
+                validated = validate_thumbnail_bytes(body, "image/png")
+                reference = validated.reference
+                (thumbnail_root / Path(reference).name).write_bytes(validated.body)
+                articles.append({
+                    **payload["articles"][0],
+                    "id": f"article-{index}",
+                    "url": f"https://example.com/article-{index}",
+                    "image": reference,
+                })
+            payload["articles"] = articles
+
+            build_mobile.build_site(output, payload, thumbnail_root=thumbnail_root)
+
+            emitted = json.loads((output / "feed.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(emitted["articles"]), 501)
+            self.assertEqual(sum(bool(article["image"]) for article in emitted["articles"]), 501)
+            self.assertEqual(len(list((output / "thumbnails").iterdir())), 501)
+
     def test_mobile_bundle_rejects_symlinked_thumbnail_root_without_touching_sentinel(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
