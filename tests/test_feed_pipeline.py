@@ -1,4 +1,5 @@
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from email.message import Message
@@ -8,7 +9,12 @@ from unittest import mock
 from cg_signal.config import FEED_SCHEMA_VERSION, RuntimePaths, SOURCE_CACHE_SCHEMA_VERSION
 from cg_signal.feeds import FeedService
 from cg_signal.safe_http import SafeHttpError, SafeHttpResponse
-from cg_signal.thumbnails import canonical_thumbnail_reference, store_thumbnail, validate_thumbnail_bytes
+from cg_signal.thumbnails import (
+    THUMBNAIL_NEGATIVE_TTL_SECONDS,
+    canonical_thumbnail_reference,
+    store_thumbnail,
+    validate_thumbnail_bytes,
+)
 
 
 def source_fixture():
@@ -239,6 +245,24 @@ class FeedFallbackSchemaTests(ServiceTestCase):
 
 
 class ThumbnailPipelineTests(ServiceTestCase):
+    def test_stale_negative_thumbnail_cache_is_retried(self):
+        article = {**cached_article(), "_thumbnail_candidate": "https://cdn.example/image.jpg"}
+        self.service.write_image_index({
+            "schema_version": 1,
+            "entries": {
+                article["url"]: {
+                    "status": "miss",
+                    "checked_at": time.time() - THUMBNAIL_NEGATIVE_TTL_SECONDS - 1,
+                },
+            },
+        })
+        with (
+            mock.patch.object(self.service, "_fetch_thumbnail_asset", return_value="") as fetch_asset,
+            mock.patch.object(self.service, "fetch_page_image", return_value=""),
+        ):
+            self.service.enrich_missing_images([article])
+        self.assertEqual(fetch_asset.call_args_list[0].args[0], "https://cdn.example/image.jpg")
+
     def test_enrichment_prioritizes_newest_articles_across_source_order(self):
         articles = [
             {**cached_article(), "url": "https://example.com/old", "published_at": "2026-07-01T00:00:00+00:00", "_thumbnail_candidate": "old"},

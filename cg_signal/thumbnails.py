@@ -26,7 +26,9 @@ MAX_THUMBNAIL_FILES = 2_000
 MAX_THUMBNAIL_TOTAL_BYTES = 256_000_000
 THUMBNAIL_INDEX_SCHEMA_VERSION = 1
 THUMBNAIL_POSITIVE_TTL_SECONDS = 30 * 86400
-THUMBNAIL_NEGATIVE_TTL_SECONDS = 86400
+# A failed lookup is frequently a transient CDN or publisher response.  Retry
+# it on the next scheduled mobile build instead of hiding the image for a day.
+THUMBNAIL_NEGATIVE_TTL_SECONDS = 15 * 60
 
 MIME_TO_EXTENSION = {
     "image/jpeg": "jpg",
