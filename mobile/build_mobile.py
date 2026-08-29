@@ -28,10 +28,11 @@ MOBILE_HISTORY_DAYS = 100
 MAX_MOBILE_ARTICLES = 1500
 MAX_MOBILE_SOURCES = 300
 MAX_MOBILE_UNAVAILABLE_SOURCES = 300
-# The feed already publishes at most 1,500 cards.  Keep all verified assets
-# for those cards; the client still transfers them lazily as cards enter view.
+# Keep the published artifact bounded.  Select assets in publication order so
+# the newest cards keep their images when the byte budget is reached; the
+# browser still transfers them lazily as cards enter view.
 MAX_MOBILE_THUMBNAILS = MAX_MOBILE_ARTICLES
-MAX_MOBILE_THUMBNAIL_BYTES = 256_000_000
+MAX_MOBILE_THUMBNAIL_BYTES = 64_000_000
 
 ARTICLE_FIELDS = (
     "id",
@@ -433,7 +434,7 @@ def bundle_thumbnails(
     if thumbnail_root is not None:
         trusted_thumbnail_root = validate_thumbnail_root(thumbnail_root, thumbnail_anchor)
     sanitized = sanitize_feed(payload)
-    rewritten_articles = []
+    rewritten_articles = [dict(article) for article in sanitized["articles"]]
     copied: set[str] = set()
     total_bytes = 0
     destination = output / "thumbnails"
@@ -443,8 +444,17 @@ def bundle_thumbnails(
         else:
             destination.unlink()
     destination.mkdir(parents=True, exist_ok=True)
-    for article in sanitized["articles"]:
-        rewritten = dict(article)
+    # The feed is normally newest-first, but make the retention policy
+    # explicit so a malformed or hand-built payload cannot spend the budget on
+    # older cards before the stories users see first.
+    ordered_indices = sorted(
+        range(len(rewritten_articles)),
+        key=lambda index: parsed_datetime(rewritten_articles[index].get("published_at"))
+        or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    for index in ordered_indices:
+        rewritten = rewritten_articles[index]
         reference = canonical_thumbnail_reference(rewritten.get("image", ""))
         verified = (
             read_verified_thumbnail(
@@ -470,7 +480,6 @@ def bundle_thumbnails(
                 total_bytes += len(verified.body)
         if rewritten.get("image") and reference not in copied:
             rewritten["image"] = ""
-        rewritten_articles.append(rewritten)
     sanitized["articles"] = rewritten_articles
     return sanitized
 
