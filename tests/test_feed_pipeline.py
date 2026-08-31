@@ -279,6 +279,32 @@ class ThumbnailPipelineTests(ServiceTestCase):
             ["new", "old"],
         )
 
+    def test_enrichment_keeps_running_thumbnail_that_finishes_after_batch_wait(self):
+        article = cached_article()
+
+        def fetch_and_store(*_args):
+            return store_thumbnail(
+                self.service.paths.thumbnail_dir,
+                validate_thumbnail_bytes(b"\xff\xd8\xfflate", "image/jpeg"),
+            )
+
+        def report_all_as_pending(futures, **_kwargs):
+            return set(), set(futures)
+
+        with (
+            mock.patch.object(self.service, "apply_cached_images", return_value=[article]),
+            mock.patch.object(self.service, "_fetch_thumbnail_asset", side_effect=fetch_and_store),
+            mock.patch("cg_signal.feeds.concurrent.futures.wait", side_effect=report_all_as_pending),
+        ):
+            self.service.enrich_missing_images([article])
+
+        reference = article["image"]
+        self.assertRegex(reference, r"^thumbnails/[0-9a-f]{64}\.jpg$")
+        self.assertEqual(
+            self.service.read_image_index()["entries"][article["url"]]["image"],
+            reference,
+        )
+
     def test_cached_cluster_uses_image_fetched_from_related_member(self):
         primary = cached_article()
         primary["related"] = [{"url": "https://example.com/related"}]
@@ -372,7 +398,7 @@ class ThumbnailPipelineTests(ServiceTestCase):
         self.assertEqual(written["articles"], [article])
         self.assertFalse(written["thumbnails_refreshing"])
 
-    def test_thumbnail_worker_clears_state_after_enrichment_failure(self):
+    def test_thumbnail_worker_reports_failure_after_clearing_desktop_state(self):
         article, generated_at = cached_article(), "2026-07-30T00:00:00+00:00"
         cached = {"generated_at": generated_at, "articles": [article], "thumbnails_refreshing": True}
         self.service._thumbnail_pending = ([article], generated_at)
@@ -385,6 +411,7 @@ class ThumbnailPipelineTests(ServiceTestCase):
             self.service._thumbnail_worker()
         written = write_cache.call_args.args[0]
         self.assertFalse(written["thumbnails_refreshing"])
+        self.assertFalse(self.service.wait_for_thumbnail_refresh())
 
 
 if __name__ == "__main__":

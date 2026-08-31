@@ -288,6 +288,7 @@ class FeedService:
         self._refresh_lock = threading.Lock()
         self._thumbnail_condition = threading.Condition()
         self._thumbnail_worker_active = False
+        self._thumbnail_worker_failed = False
         self._thumbnail_pending: tuple[list[dict[str, Any]], str] | None = None
 
     def read_cache(self) -> dict[str, Any] | None:
@@ -506,9 +507,17 @@ class FeedService:
         for future in pending:
             future.cancel()
         try:
-            executor.shutdown(wait=False, cancel_futures=True)
+            # Cancellation cannot stop work that is already running.  Wait for
+            # those bounded workers and retain their results instead of
+            # discarding thumbnails that finished just after the batch wait.
+            executor.shutdown(wait=True, cancel_futures=True)
         except TypeError:  # pragma: no cover - older Python fallback
-            executor.shutdown(wait=False)
+            executor.shutdown(wait=True)
+        done.update(
+            future
+            for future in pending
+            if future.done() and not future.cancelled()
+        )
 
         now = time.time()
         entries = index.setdefault("entries", {})
@@ -853,10 +862,14 @@ class FeedService:
             try:
                 self.enrich_missing_images(articles)
             except Exception as exc:
+                with self._thumbnail_condition:
+                    self._thumbnail_worker_failed = True
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] Thumbnail refresh failed: {exc}")
             try:
                 self.update_cached_thumbnail_images(articles, generated_at)
             except Exception as exc:
+                with self._thumbnail_condition:
+                    self._thumbnail_worker_failed = True
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] Thumbnail cache update failed: {exc}")
 
     def schedule_thumbnail_enrichment(self, articles: list[dict[str, Any]], generated_at: str) -> bool:
@@ -864,6 +877,7 @@ class FeedService:
             self._thumbnail_pending = (articles, generated_at)
             if self._thumbnail_worker_active:
                 return True
+            self._thumbnail_worker_failed = False
             self._thumbnail_worker_active = True
             threading.Thread(target=self._thumbnail_worker, name="cg-signal-thumbnail-refresh", daemon=True).start()
             return True
@@ -876,7 +890,7 @@ class FeedService:
                 if remaining <= 0:
                     return False
                 self._thumbnail_condition.wait(remaining)
-            return True
+            return not self._thumbnail_worker_failed
 
     def refresh_feed(self, cached: dict[str, Any] | None = None) -> dict[str, Any]:
         configured_sources = self.repository.list_source_configs(enabled_only=True)
