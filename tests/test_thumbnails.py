@@ -1,3 +1,4 @@
+import os
 import unittest
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -117,6 +118,7 @@ class ThumbnailTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / "cache" / "thumbnails"
             anchor = root.parent
+            root.mkdir(parents=True)
             bodies = [b"\x89PNG\r\n\x1a\n" + bytes([index]) * 8 for index in range(8)]
 
             def publish(body):
@@ -134,9 +136,48 @@ class ThumbnailTests(unittest.TestCase):
 
             with ThreadPoolExecutor(max_workers=len(bodies)) as executor:
                 results = list(executor.map(publish, bodies))
-            self.assertEqual(sum(bool(result) for result in results), 2)
+            self.assertEqual(sum(bool(result) for result in results), len(bodies))
             self.assertEqual(len(list(root.glob("*.png"))), 2)
             self.assertLessEqual(sum(path.stat().st_size for path in root.glob("*.png")), 128)
+
+    def test_store_evicts_oldest_asset_at_file_quota(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            old_reference = store_thumbnail(
+                root, b"\x89PNG\r\n\x1a\nold", "image/png", max_files=1, max_bytes=128
+            )
+            old_path = root / Path(old_reference).name
+            os.utime(old_path, (1, 1))
+
+            new_reference = store_thumbnail(
+                root, b"\x89PNG\r\n\x1a\nnew", "image/png", max_files=1, max_bytes=128
+            )
+
+            self.assertFalse(old_path.exists())
+            self.assertTrue((root / Path(new_reference).name).is_file())
+            self.assertEqual(len(list(root.glob("*.png"))), 1)
+
+    def test_store_evicts_oldest_asset_at_byte_quota(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            old_body = b"\x89PNG\r\n\x1a\nold-image"
+            new_body = b"\x89PNG\r\n\x1a\nnew-image"
+            byte_quota = max(len(old_body), len(new_body))
+            old_reference = store_thumbnail(
+                root, old_body, "image/png", max_files=10, max_bytes=byte_quota
+            )
+            old_path = root / Path(old_reference).name
+            os.utime(old_path, (1, 1))
+
+            new_reference = store_thumbnail(
+                root, new_body, "image/png", max_files=10, max_bytes=byte_quota
+            )
+
+            self.assertFalse(old_path.exists())
+            self.assertTrue((root / Path(new_reference).name).is_file())
+            self.assertLessEqual(
+                sum(path.stat().st_size for path in root.glob("*.png")), byte_quota
+            )
 
     def test_junction_component_is_rejected_when_platform_exposes_is_junction(self):
         if not callable(getattr(Path, "is_junction", None)):

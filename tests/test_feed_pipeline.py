@@ -330,6 +330,66 @@ class ThumbnailPipelineTests(ServiceTestCase):
             )
         )
 
+    def test_enrichment_replaces_oldest_asset_when_store_is_full(self):
+        entries = {}
+        old_paths = []
+        for index in range(2):
+            article_url = f"https://example.com/old-{index}"
+            reference = store_thumbnail(
+                self.service.paths.thumbnail_dir,
+                b"\x89PNG\r\n\x1a\n" + bytes([index]) * 8,
+                "image/png",
+                expected_anchor=self.service.paths.thumbnail_anchor,
+                max_files=2,
+                max_bytes=128,
+            )
+            old_path = self.service.paths.thumbnail_dir / Path(reference).name
+            old_paths.append(old_path)
+            entries[article_url] = {
+                "status": "ok",
+                "image": reference,
+                "checked_at": time.time(),
+            }
+        old_paths[0].touch()
+        old_paths[1].touch()
+        self.service.write_image_index({"schema_version": 1, "entries": entries})
+
+        article = {
+            **cached_article(),
+            "id": "new",
+            "url": "https://example.com/new",
+            "published_at": "2026-08-31T00:00:00+00:00",
+            "_thumbnail_candidate": "https://cdn.example/new.png",
+        }
+        headers = Message()
+        headers["Content-Type"] = "image/png"
+        response = SafeHttpResponse(
+            200, headers, b"\x89PNG\r\n\x1a\nnew-image", article["_thumbnail_candidate"]
+        )
+        real_store = store_thumbnail
+
+        def constrained_store(root, thumbnail, mime_type=None, **kwargs):
+            return real_store(
+                root,
+                thumbnail,
+                mime_type,
+                expected_anchor=kwargs.get("expected_anchor"),
+                max_files=2,
+                max_bytes=128,
+            )
+
+        with (
+            mock.patch.object(self.service.http, "get", return_value=response),
+            mock.patch("cg_signal.feeds.store_thumbnail", side_effect=constrained_store),
+        ):
+            self.service.enrich_missing_images([article])
+
+        current_index = self.service.read_image_index()["entries"]
+        self.assertRegex(article["image"], r"^thumbnails/[0-9a-f]{64}\.png$")
+        self.assertEqual(current_index[article["url"]]["image"], article["image"])
+        self.assertEqual(len(list(self.service.paths.thumbnail_dir.glob("*.png"))), 2)
+        self.assertEqual(sum(url in current_index for url in entries), 1)
+
     def test_page_og_candidate_is_fetched_only_after_rss_candidate_fails(self):
         article = {**cached_article(), "_thumbnail_candidate": "https://cdn.example/bad.gif"}
         page_headers = Message()

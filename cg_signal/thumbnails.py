@@ -359,6 +359,10 @@ def store_thumbnail(
         if target.is_file():
             existing = _validated_file(target, validated.digest, validated.extension)
             if existing is not None:
+                try:
+                    os.utime(target, None)
+                except OSError:
+                    pass
                 return validated.reference
             _unlink_store_path(root_path, target, expected_anchor)
         try:
@@ -369,8 +373,21 @@ def store_thumbnail(
         if max_files < 1 or max_bytes < len(validated.body):
             raise ValueError("Thumbnail store quota exceeded.")
         inventory = _asset_inventory(root_path)
-        if len(inventory) >= max_files or sum(len(item[1].body) for item in inventory) + len(validated.body) > max_bytes:
-            raise ValueError("Thumbnail store quota exceeded.")
+        total_bytes = sum(len(item[1].body) for item in inventory)
+        # Make room for current content while holding the publication lock.
+        # A full persistent cache must not permanently reject every new image.
+        def eviction_order(item: tuple[Path, ValidatedThumbnail]) -> tuple[float, str]:
+            try:
+                modified_at = item[0].stat().st_mtime
+            except OSError:
+                modified_at = 0
+            return modified_at, item[0].name
+
+        inventory.sort(key=eviction_order)
+        while len(inventory) >= max_files or total_bytes + len(validated.body) > max_bytes:
+            oldest_path, oldest_thumbnail = inventory.pop(0)
+            _unlink_store_path(root_path, oldest_path, expected_anchor)
+            total_bytes -= len(oldest_thumbnail.body)
         temporary_name = ""
         try:
             root_path = validate_thumbnail_root(root_path, expected_anchor)
