@@ -301,6 +301,46 @@ class MobileExportTests(unittest.TestCase):
             self.assertEqual(emitted["articles"][0]["image"], reference)
             self.assertEqual((output / reference).read_bytes(), body)
 
+    def test_gather_feed_refuses_to_publish_timed_out_thumbnail_refresh(self):
+        payload = self.fixture()
+        payload["thumbnails_refreshing"] = True
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            mock.patch("cg_signal.feeds.FeedService.build_feed", return_value=payload),
+            mock.patch("cg_signal.feeds.FeedService.wait_for_thumbnail_refresh", return_value=False) as wait,
+            mock.patch("cg_signal.feeds.FeedService.read_cache", return_value=payload),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "refusing to publish an incomplete feed"):
+                build_mobile.gather_feed(Path(temporary) / "http")
+        wait.assert_called_once_with(timeout_seconds=build_mobile.MOBILE_THUMBNAIL_WAIT_SECONDS)
+
+    def test_gather_feed_refuses_cache_still_marked_as_refreshing(self):
+        payload = self.fixture()
+        payload["thumbnails_refreshing"] = True
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            mock.patch("cg_signal.feeds.FeedService.build_feed", return_value=payload),
+            mock.patch("cg_signal.feeds.FeedService.wait_for_thumbnail_refresh", return_value=True),
+            mock.patch("cg_signal.feeds.FeedService.read_cache", return_value=payload),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "refusing to publish an incomplete feed"):
+                build_mobile.gather_feed(Path(temporary) / "http")
+
+    def test_gather_feed_returns_completed_thumbnail_cache(self):
+        payload = self.fixture()
+        payload["thumbnails_refreshing"] = True
+        refreshed = {**payload, "thumbnails_refreshing": False, "generated_at": "completed"}
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            mock.patch("cg_signal.feeds.FeedService.build_feed", return_value=payload),
+            mock.patch("cg_signal.feeds.FeedService.wait_for_thumbnail_refresh", return_value=True),
+            mock.patch("cg_signal.feeds.FeedService.read_cache", return_value=refreshed),
+        ):
+            self.assertEqual(
+                build_mobile.gather_feed(Path(temporary) / "http"),
+                refreshed,
+            )
+
     def test_history_merge_keeps_current_sources_before_historical_sources(self):
         current = self.fixture()
         current["sources"] = [

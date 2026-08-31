@@ -320,6 +320,15 @@ test("mobile feed survives an offline reload through its service worker", async 
     }))).toMatchObject({ touch: true, coarse: true, mobile: true });
     await expect(page.locator("#story-list")).toHaveAttribute("aria-busy", "false");
     await expect(page.locator("#story-list .story-card:not(.skeleton)")).toHaveCount(2);
+    const thumbnail = page.locator("#story-list .story-card").first().locator(".story-image img");
+    await expect(thumbnail).toBeVisible();
+    await expect.poll(() => thumbnail.evaluate((image) => ({
+      complete: image.complete,
+      naturalWidth: image.naturalWidth,
+      sameOrigin: new URL(image.currentSrc).origin === window.location.origin,
+      bundledPath: new URL(image.currentSrc).pathname.includes("/thumbnails/"),
+    }))).toEqual({ complete: true, naturalWidth: expect.any(Number), sameOrigin: true, bundledPath: true });
+    expect((await thumbnail.evaluate((image) => image.naturalWidth))).toBeGreaterThan(0);
 
     await page.locator('[data-pin-id="smoke-blender-article"]').click();
     await expect(page.locator("#pinned-total")).toHaveText("1");

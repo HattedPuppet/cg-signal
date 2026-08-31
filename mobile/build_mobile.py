@@ -28,6 +28,7 @@ MOBILE_HISTORY_DAYS = 100
 MAX_MOBILE_ARTICLES = 1500
 MAX_MOBILE_SOURCES = 300
 MAX_MOBILE_UNAVAILABLE_SOURCES = 300
+MOBILE_THUMBNAIL_WAIT_SECONDS = 180
 # Keep the published artifact bounded.  Select assets in publication order so
 # the newest cards keep their images when the byte budget is reached; the
 # browser still transfers them lazily as cards enter view.
@@ -416,8 +417,15 @@ def gather_feed(request_cache_dir: Path | None = None) -> dict[str, Any]:
         service = FeedService(paths)
         payload = service.build_feed(force=True)
         if payload.get("thumbnails_refreshing"):
-            service.wait_for_thumbnail_refresh()
-            return service.read_cache() or payload
+            completed = service.wait_for_thumbnail_refresh(
+                timeout_seconds=MOBILE_THUMBNAIL_WAIT_SECONDS,
+            )
+            refreshed = service.read_cache()
+            if not completed or not refreshed or refreshed.get("thumbnails_refreshing"):
+                raise RuntimeError(
+                    "Mobile thumbnail enrichment did not finish; refusing to publish an incomplete feed."
+                )
+            return refreshed
         return payload
 
 

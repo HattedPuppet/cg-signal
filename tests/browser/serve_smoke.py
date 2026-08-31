@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timedelta, timezone
 import functools
 import importlib.util
@@ -26,6 +27,7 @@ from cg_signal.config import (  # noqa: E402
     RuntimePaths,
 )
 from cg_signal.http import DashboardHandler, DashboardServer  # noqa: E402
+from cg_signal.thumbnails import store_thumbnail, validate_thumbnail_bytes  # noqa: E402
 
 
 def _load_mobile_builder() -> Any:
@@ -212,8 +214,27 @@ def main() -> None:
         threads.append(dashboard_thread)
 
         mobile_output = root / "mobile-site"
+        mobile_cache = root / "mobile-cache"
+        thumbnail = validate_thumbnail_bytes(
+            base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+            ),
+            "image/png",
+        )
+        reference = store_thumbnail(
+            mobile_cache / "thumbnails",
+            thumbnail,
+            expected_anchor=mobile_cache,
+        )
+        mobile_payload = json.loads(json.dumps(payload))
+        mobile_payload["articles"][0]["image"] = reference
         mobile_builder = _load_mobile_builder()
-        mobile_builder.build_site(mobile_output, payload)
+        mobile_builder.build_site(
+            mobile_output,
+            mobile_payload,
+            thumbnail_root=mobile_cache / "thumbnails",
+            thumbnail_anchor=mobile_cache,
+        )
         mobile = _serve_mobile(mobile_output)
         mobile_thread = threading.Thread(
             target=mobile.serve_forever,
