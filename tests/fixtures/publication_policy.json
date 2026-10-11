@@ -1,0 +1,17 @@
+{
+  "now": "2026-10-11T12:00:00Z",
+  "cases": [
+    {"name": "current news", "article": {"published_at": "2026-10-11T11:00:00Z"}, "expected": true},
+    {"name": "small publisher clock skew", "article": {"published_at": "2026-10-11T12:09:00Z"}, "expected": true},
+    {"name": "future publication", "article": {"published_at": "2026-10-11T12:11:00Z"}, "expected": false},
+    {"name": "next year calendar date", "article": {"published_at": "2027-08-23T07:00:00Z"}, "expected": false},
+    {"name": "invalid publication date", "article": {"published_at": "not-a-date"}, "expected": false},
+    {"name": "missing publication date", "article": {}, "expected": false},
+    {"name": "null publication date", "article": {"published_at": null}, "expected": false},
+    {"name": "old news remains available", "article": {"published_at": "2020-01-01T00:00:00Z"}, "expected": true},
+    {"name": "legacy calendar URL", "article": {"published_at": "2026-08-23T07:00:00Z", "source_id": "game-developer", "url": "https://www.gamedeveloper.com/events/gamescom"}, "expected": false},
+    {"name": "legacy broken event website URL", "article": {"published_at": "2026-07-30T07:00:00Z", "source_id": "game-developer", "url": "https://www.gamedeveloper.comen.chinajoy.net/"}, "expected": false},
+    {"name": "news about an event is still news", "article": {"published_at": "2026-10-11T11:00:00Z", "source_id": "game-developer", "url": "https://www.gamedeveloper.com/business/gamescom-production-report", "title": "gamescom production report"}, "expected": true},
+    {"name": "event prefix is not a calendar path", "article": {"published_at": "2026-10-11T11:00:00Z", "source_id": "game-developer", "url": "https://www.gamedeveloper.com/events-in-game-design"}, "expected": true}
+  ]
+}

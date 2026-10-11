@@ -231,11 +231,30 @@ export function publicationWindowStart(timeWindow = "month", now = new Date()) {
   return new Date(current.getFullYear(), current.getMonth() - monthOffset, 1);
 }
 
-export function articleWithinPublicationWindow(article, timeWindow = "month", now = new Date()) {
-  const start = publicationWindowStart(timeWindow, now);
-  if (!start) return true;
+// Keep this policy in parity with cg_signal/article_policy.py. It also cleans
+// legacy device-local feed copies before a new hosted snapshot is available.
+export function articleIsPublishable(article, now = new Date()) {
+  if (typeof article?.published_at !== "string" || !article.published_at.trim()) return false;
   const published = new Date(article?.published_at);
-  return Number.isNaN(published.getTime()) || published >= start;
+  const reference = now instanceof Date ? now : new Date(now);
+  if (!Number.isFinite(published.getTime()) || published > reference.getTime() + 10 * 60 * 1000) return false;
+  if (article?.source_id === "game-developer") {
+    try {
+      const url = new URL(article.url);
+      const path = decodeURIComponent(url.pathname).toLowerCase().replace(/\/$/u, "");
+      if (!["gamedeveloper.com", "www.gamedeveloper.com"].includes(url.hostname)) return false;
+      if (path === "/events" || path.startsWith("/events/")) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function articleWithinPublicationWindow(article, timeWindow = "month", now = new Date()) {
+  if (!articleIsPublishable(article, now)) return false;
+  const start = publicationWindowStart(timeWindow, now);
+  return !start || new Date(article.published_at) >= start;
 }
 
 export function feedPayloadHasSchema(payload) {

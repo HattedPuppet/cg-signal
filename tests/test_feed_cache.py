@@ -29,7 +29,7 @@ class FeedCacheTests(unittest.TestCase):
             "classification_revision": CLASSIFICATION_REVISION,
             "classification_version": CLASSIFICATION_REVISION,
             "generated_at": (now - timedelta(seconds=age_seconds)).isoformat(),
-            "articles": [{"id": "cached-story"}],
+            "articles": [{"id": "cached-story", "published_at": (now - timedelta(minutes=5)).isoformat()}],
             "sources": [],
             "history_count": 1,
         }
@@ -69,7 +69,7 @@ class FeedCacheTests(unittest.TestCase):
         cached.pop("feed_schema_version")
         rebuilt = {
             **self.cached_feed(age_seconds=0),
-            "articles": [{"id": "rebuilt-story"}],
+            "articles": [{"id": "rebuilt-story", "published_at": datetime.now(timezone.utc).isoformat()}],
             "cached": False,
             "stale": False,
         }
@@ -130,6 +130,20 @@ class FeedCacheTests(unittest.TestCase):
         refresh.assert_called_once()
         background.assert_not_called()
 
+    def test_cached_feed_excludes_future_and_calendar_records_without_deleting_history(self):
+        cached = self.cached_feed(age_seconds=30)
+        good = cached["articles"][0]
+        cached["articles"] += [
+            {**good, "id": "future", "published_at": "2099-08-23T00:00:00Z"},
+            {**good, "id": "calendar", "source_id": "game-developer", "url": "https://www.gamedeveloper.com/events/gamescom"},
+        ]
+        cached["history_count"] = 3
+        result = self.service.cached_feed_payload(cached)
+        self.assertEqual(result["articles"], [good])
+        self.assertEqual(result["unique_count"], 1)
+        self.assertEqual(result["history_count"], 3)
+        self.assertEqual(len(cached["articles"]), 3)
+
     def test_previous_classifier_cache_is_not_fresh(self):
         cached = self.cached_feed(age_seconds=30)
         cached["classification_revision"] = CLASSIFICATION_REVISION - 1
@@ -140,6 +154,7 @@ class FeedCacheTests(unittest.TestCase):
         cached["classification_revision"] = CLASSIFICATION_REVISION - 1
         cached["articles"] = [{
             "id": "stale-gacha",
+            "published_at": datetime.now(timezone.utc).isoformat(),
             "title": "期間限定ガチャイベントを開催",
             "summary": "新キャラを追加",
             "source_id": "automaton",

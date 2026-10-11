@@ -301,7 +301,7 @@ class MobileExportTests(unittest.TestCase):
             self.assertEqual(emitted["articles"][0]["image"], reference)
             self.assertEqual((output / reference).read_bytes(), body)
 
-    def test_gather_feed_refuses_to_publish_timed_out_thumbnail_refresh(self):
+    def test_gather_feed_publishes_text_when_thumbnail_refresh_times_out(self):
         payload = self.fixture()
         payload["thumbnails_refreshing"] = True
         with (
@@ -310,11 +310,12 @@ class MobileExportTests(unittest.TestCase):
             mock.patch("cg_signal.feeds.FeedService.wait_for_thumbnail_refresh", return_value=False) as wait,
             mock.patch("cg_signal.feeds.FeedService.read_cache", return_value=payload),
         ):
-            with self.assertRaisesRegex(RuntimeError, "refusing to publish an incomplete feed"):
-                build_mobile.gather_feed(Path(temporary) / "http")
+            result = build_mobile.gather_feed(Path(temporary) / "http")
+        self.assertEqual(result["articles"], payload["articles"])
+        self.assertTrue(result["thumbnails_incomplete"])
         wait.assert_called_once_with(timeout_seconds=build_mobile.MOBILE_THUMBNAIL_WAIT_SECONDS)
 
-    def test_gather_feed_refuses_cache_still_marked_as_refreshing(self):
+    def test_gather_feed_publishes_text_when_thumbnail_cache_is_incomplete(self):
         payload = self.fixture()
         payload["thumbnails_refreshing"] = True
         with (
@@ -323,8 +324,9 @@ class MobileExportTests(unittest.TestCase):
             mock.patch("cg_signal.feeds.FeedService.wait_for_thumbnail_refresh", return_value=True),
             mock.patch("cg_signal.feeds.FeedService.read_cache", return_value=payload),
         ):
-            with self.assertRaisesRegex(RuntimeError, "refusing to publish an incomplete feed"):
-                build_mobile.gather_feed(Path(temporary) / "http")
+            result = build_mobile.gather_feed(Path(temporary) / "http")
+        self.assertEqual(result["articles"], payload["articles"])
+        self.assertTrue(result["thumbnails_incomplete"])
 
     def test_gather_feed_returns_completed_thumbnail_cache(self):
         payload = self.fixture()
@@ -422,7 +424,7 @@ class MobileExportTests(unittest.TestCase):
         result = build_mobile.merge_feed_history(
             current,
             previous,
-            now=datetime(2026, 7, 16, tzinfo=timezone.utc),
+            now=datetime(2026, 7, 16, 10, tzinfo=timezone.utc),
         )
 
         self.assertEqual(
@@ -455,12 +457,48 @@ class MobileExportTests(unittest.TestCase):
         result = build_mobile.merge_feed_history(
             current,
             previous,
-            now=datetime(2026, 7, 16, tzinfo=timezone.utc),
+            now=datetime(2026, 7, 16, 10, tzinfo=timezone.utc),
         )
 
         self.assertEqual([article["id"] for article in result["articles"]], ["article-1"])
         self.assertEqual(result["classification_version"], 4)
         self.assertEqual(result["carried_forward_count"], 0)
+
+    def test_mobile_history_cannot_reintroduce_future_or_calendar_entries(self):
+        current = self.fixture()
+        previous = self.fixture()
+        previous["articles"] = [
+            {**current["articles"][0], "id": "future", "published_at": "2099-08-23T00:00:00Z", "url": "https://example.com/future"},
+            {**current["articles"][0], "id": "calendar", "source_id": "game-developer", "url": "https://www.gamedeveloper.com/events/gamescom"},
+            {**current["articles"][0], "id": "broken-url", "source_id": "game-developer", "url": "https://www.gamedeveloper.comen.chinajoy.net/"},
+            {**current["articles"][0], "id": "retained", "published_at": "2026-07-15T09:00:00+00:00", "url": "https://example.com/retained"},
+        ]
+        merged = build_mobile.merge_feed_history(current, previous, now=datetime(2026, 7, 16, 10, tzinfo=timezone.utc))
+        self.assertEqual([article["id"] for article in merged["articles"]], ["article-1", "retained"])
+        self.assertEqual(merged["carried_forward_count"], 1)
+        self.assertEqual(merged["newest_article_at"], current["articles"][0]["published_at"])
+
+    def test_sanitizer_rejects_ineligible_articles_before_its_item_budget(self):
+        payload = self.fixture()
+        payload["articles"] = [
+            {**payload["articles"][0], "id": "future", "published_at": "2099-08-23T00:00:00Z"},
+            payload["articles"][0],
+        ]
+        with mock.patch.object(build_mobile, "MAX_MOBILE_ARTICLES", 1):
+            sanitized = build_mobile.sanitize_feed(payload)
+        self.assertEqual([article["id"] for article in sanitized["articles"]], ["article-1"])
+
+    def test_public_source_freshness_is_exported_without_request_details(self):
+        payload = self.fixture()
+        payload["sources"][0].update({
+            "last_success_at": "2026-07-15T09:00:00+00:00", "used_stale_cache": True,
+            "etag": "private-validator", "last_error": "private-request-detail",
+        })
+        result = build_mobile.sanitize_feed(payload)
+        self.assertEqual(result["sources"][0]["last_success_at"], "2026-07-15T09:00:00+00:00")
+        self.assertTrue(result["sources"][0]["used_stale_cache"])
+        self.assertNotIn("private-validator", str(result))
+        self.assertNotIn("private-request-detail", str(result))
 
     def test_mobile_offline_cache_requires_current_feed_schema(self):
         javascript = (MODULE_PATH.parent / "site" / "app.js").read_text(encoding="utf-8")
@@ -477,18 +515,18 @@ class MobileExportTests(unittest.TestCase):
         worker = (site / "sw.js").read_text(encoding="utf-8")
         self.assertIn('from "./domain.mjs"', javascript)
         self.assertIn('type="module"', html)
-        self.assertIn("app.js?v=20260812-v24", html)
-        self.assertIn("styles.css?v=20260812-v24", html)
-        self.assertIn('register("./sw.js?v=20260812-v24")', javascript)
-        self.assertIn('const CACHE_NAME = "cg-signal-mobile-v24"', worker)
-        self.assertIn("app.js?v=20260812-v24", worker)
+        self.assertIn("app.js?v=20261011-v25", html)
+        self.assertIn("styles.css?v=20261011-v25", html)
+        self.assertIn('register("./sw.js?v=20261011-v25")', javascript)
+        self.assertIn('const CACHE_NAME = "cg-signal-mobile-v25"', worker)
+        self.assertIn("app.js?v=20261011-v25", worker)
         self.assertIn("./domain.mjs", worker)
-        self.assertIn('fetch("./feed.json", { cache: "no-store" })', javascript)
+        self.assertIn('fetch("./feed.json", { cache: "no-store", signal: controller.signal })', javascript)
         self.assertNotIn("reload(", javascript)
         self.assertIn(".then(async (response) =>", worker)
         self.assertIn("const cache = await caches.open(CACHE_NAME);", worker)
         self.assertIn("await cache.put(event.request, response.clone());", worker)
-        self.assertIn(".catch(() => caches.match(event.request))", worker)
+        self.assertIn('headers.set("X-CG-Signal-Offline", "1")', worker)
 
     def test_mobile_shell_keeps_inline_controls_reachable(self):
         site = MODULE_PATH.parent / "site"
@@ -598,12 +636,12 @@ class MobileExportTests(unittest.TestCase):
         self.assertIn("function storyListMarkup(articles)", javascript)
         self.assertIn("function readCachedFeed()", javascript)
         self.assertIn("applyFeed(cached)", javascript)
-        self.assertIn("cg-signal-mobile-v24", service_worker)
-        self.assertIn("styles.css?v=20260812-v24", service_worker)
-        self.assertIn("app.js?v=20260812-v24", service_worker)
+        self.assertIn("cg-signal-mobile-v25", service_worker)
+        self.assertIn("styles.css?v=20261011-v25", service_worker)
+        self.assertIn("app.js?v=20261011-v25", service_worker)
         self.assertIn("./domain.mjs", service_worker)
-        self.assertIn("sw.js?v=20260812-v24", javascript)
-        self.assertIn("sw.js?v=20260812-v24", service_worker)
+        self.assertIn("sw.js?v=20261011-v25", javascript)
+        self.assertIn("sw.js?v=20261011-v25", service_worker)
         self.assertIn("fetch(event.request)", service_worker)
         self.assertIn("return articles.map(storyMarkup).join", javascript)
         self.assertNotIn("function articleRecencyBucket(article)", javascript)

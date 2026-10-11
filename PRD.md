@@ -93,6 +93,10 @@ And is actively interested in:
 - Publish parsed articles before retrieving missing standard preview images;
   thumbnail discovery must run as a non-critical background stage.
 - Support English and Japanese titles, summaries, dates, and classifications.
+- Treat publication dates as news metadata, not event start dates. Exclude
+  calendar records and dates more than 10 minutes ahead from the timeline before
+  source limits; reapply eligibility when consuming caches and mobile history.
+  Preserve durable desktop history rather than deleting old records.
 
 ### Organization and deduplication
 
@@ -208,8 +212,15 @@ And is actively interested in:
 
 - Generate a static mobile feed from the same supported sources,
   classification, relevance, and deduplication rules as the desktop app.
-- Refresh the hosted feed every 30 minutes through a scheduled GitHub workflow
-  so availability does not depend on the user's PC.
+- Schedule hosted feed refreshes every 30 minutes through GitHub so availability
+  does not depend on the user's PC. Treat execution timing as best-effort; warn
+  when the published feed is more than 90 minutes old. Show feed publication,
+  newest-story, and per-source successful-check times distinctly.
+- Check the published feed every five minutes while mobile is visible and offer
+  an explicit manual check. Neither operation forces an upstream publisher update.
+- Publish current articles despite optional thumbnail failure or timeout, and
+  label offline service-worker fallback rather than treating cached HTTP 200 as
+  proof of an online refresh.
 - Provide Latest Signal and Pinned views, plus information-type and category
   filtering, source selection, publication-window filtering, text and hashtag
   search.

@@ -17,6 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from cg_signal.article_policy import article_is_publishable  # noqa: E402
 from cg_signal.thumbnails import (  # noqa: E402
     canonical_thumbnail_reference,
     read_verified_thumbnail,
@@ -222,13 +223,14 @@ def sanitize_article(value: Any) -> dict[str, Any]:
     }
 
 
-def sanitize_feed(payload: Any) -> dict[str, Any]:
+def sanitize_feed(payload: Any, *, now: datetime | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Feed payload must be an object.")
     articles = []
+    reference_time = now or datetime.now(timezone.utc)
     for article in payload.get("articles", []) if isinstance(payload.get("articles", []), list) else []:
         sanitized = sanitize_article(article)
-        if sanitized:
+        if sanitized and article_is_publishable(sanitized, now=reference_time):
             articles.append(sanitized)
     # Keep output deterministic and within the shared browser validator's
     # bounded article count.  Preserve source order so repeated builds agree.
@@ -245,7 +247,12 @@ def sanitize_feed(payload: Any) -> dict[str, Any]:
         accent = bounded_string(source.get("accent"), maximum=100)
         if source_id is None or name is None or site is None:
             continue
-        sources.append({"id": source_id, "name": name, "site": site, "accent": accent or "", "ok": source.get("ok") is True, "count": safe_count(source.get("count", 0))})
+        sources.append({
+            "id": source_id, "name": name, "site": site, "accent": accent or "",
+            "ok": source.get("ok") is True, "count": safe_count(source.get("count", 0)),
+            "used_stale_cache": source.get("used_stale_cache") is True,
+            "last_success_at": bounded_string(source.get("last_success_at"), maximum=128) or "",
+        })
     sources = sources[:MAX_SOURCES]
     warning_sources = [
         source.strip()[:100]
@@ -281,6 +288,8 @@ def sanitize_feed(payload: Any) -> dict[str, Any]:
         "classification_version": classification_revision,
         "generated_at": bounded_string(payload.get("generated_at"), required=True, maximum=128)
         or datetime.now(timezone.utc).isoformat(),
+        "newest_article_at": max(articles, key=lambda article: parsed_datetime(article["published_at"]))["published_at"],
+        "thumbnails_incomplete": payload.get("thumbnails_incomplete") is True,
         "unique_count": len(articles),
         "duplicates_collapsed": safe_count(payload.get("duplicates_collapsed", 0)),
         "carried_forward_count": safe_count(payload.get("carried_forward_count", 0)),
@@ -315,9 +324,9 @@ def merge_feed_history(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Retain a bounded public history when a feed rotates or briefly fails."""
-    current = sanitize_feed(current_payload)
+    current = sanitize_feed(current_payload, now=now)
     try:
-        previous = sanitize_feed(previous_payload)
+        previous = sanitize_feed(previous_payload, now=now)
     except ValueError:
         return current
     if previous["feed_schema_version"] != current["feed_schema_version"]:
@@ -387,6 +396,7 @@ def merge_feed_history(
 
     return {
         **current,
+        "newest_article_at": merged_articles[0]["published_at"],
         "unique_count": len(merged_articles),
         "carried_forward_count": len(carried_ids.intersection(retained_ids)),
         "articles": merged_articles,
@@ -421,11 +431,12 @@ def gather_feed(request_cache_dir: Path | None = None) -> dict[str, Any]:
                 timeout_seconds=MOBILE_THUMBNAIL_WAIT_SECONDS,
             )
             refreshed = service.read_cache()
-            if not completed or not refreshed or refreshed.get("thumbnails_refreshing"):
-                raise RuntimeError(
-                    "Mobile thumbnail enrichment did not finish; refusing to publish an incomplete feed."
-                )
-            return refreshed
+            if completed and refreshed and not refreshed.get("thumbnails_refreshing"):
+                return refreshed
+            # Text is the primary signal. A failed or slow optional image pass
+            # must not keep the previous deployment's articles frozen in place.
+            print("Thumbnail enrichment incomplete; publishing current articles with available images.", file=sys.stderr)
+            return {**payload, "thumbnails_incomplete": True}
         return payload
 
 
