@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .article_policy import PUBLICATION_CLOCK_SKEW, article_is_publishable
 from .classification import (
     apply_article_classification,
     classify_lane,
@@ -124,6 +125,8 @@ def _new_feed_diagnostics() -> dict[str, int]:
         "missing_date": 0,
         "invalid_date": 0,
         "missing_title_or_link": 0,
+        "future_date": 0,
+        "non_news": 0,
     }
 
 
@@ -557,17 +560,22 @@ class FeedService:
                 "accent": source["accent"],
             }
             for article in cached.get("articles", [])
+            if article_is_publishable({**article, "source_id": source["id"]})
         ]
         diagnostics = _new_feed_diagnostics()
         headers = {
             "User-Agent": "CGSignal/1.0 (local personal RSS reader)",
             "Accept": "application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.5",
         }
-        if cached_articles and cached.get("etag"):
+        cache_is_clean = len(cached_articles) == len(cached.get("articles", []))
+        # Reload a contaminated snapshot in full: its old item limit may have
+        # excluded real news behind future/calendar entries.
+        if cached_articles and cache_is_clean and cached.get("etag"):
             headers["If-None-Match"] = str(cached["etag"])
-        if cached_articles and cached.get("last_modified"):
+        if cached_articles and cache_is_clean and cached.get("last_modified"):
             headers["If-Modified-Since"] = str(cached["last_modified"])
         started = time.monotonic()
+        checked_at = datetime.now(timezone.utc)
         try:
             response = self.http.get(
                 source["feed"],
@@ -583,6 +591,7 @@ class FeedService:
                     "last_modified": response.headers.get("Last-Modified", cached.get("last_modified", "")),
                     "not_modified": True, "used_stale_cache": False,
                     "diagnostics": diagnostics,
+                    "last_success_at": checked_at.isoformat(),
                 }
             if not 200 <= response.status < 300:
                 raise SafeHttpError(f"HTTP {response.status}")
@@ -611,6 +620,19 @@ class FeedService:
                 if not title or not url:
                     diagnostics["missing_title_or_link"] += 1
                 if published is None or not title or not url:
+                    continue
+                candidate = {"published_at": published.isoformat(), "source_id": source["id"], "url": url}
+                # Game Developer's dc:date/dc:valid calendar records use event
+                # start/end dates, not publication dates. Do not reject news
+                # articles merely because their titles mention an event.
+                if source["id"] == "game-developer" and any(local_name(child.tag) == "valid" for child in item):
+                    diagnostics["non_news"] += 1
+                    continue
+                if published > checked_at + PUBLICATION_CLOCK_SKEW:
+                    diagnostics["future_date"] += 1
+                    continue
+                if not article_is_publishable(candidate, now=checked_at):
+                    diagnostics["non_news"] += 1
                     continue
                 raw_summary = preferred_child_text(item, ("encoded", "content", "description", "summary"))
                 summary = strip_markup(raw_summary)
@@ -648,6 +670,7 @@ class FeedService:
                 "etag": etag, "last_modified": last_modified,
                 "not_modified": False, "used_stale_cache": False,
                 "diagnostics": diagnostics,
+                "last_success_at": checked_at.isoformat(),
             }
         except (SafeHttpError, TimeoutError, ET.ParseError, OSError, ValueError) as exc:
             error = exc
@@ -657,6 +680,7 @@ class FeedService:
             "etag": cached.get("etag", ""), "last_modified": cached.get("last_modified", ""),
             "not_modified": False, "used_stale_cache": bool(cached_articles),
             "diagnostics": diagnostics,
+            "last_success_at": cached.get("last_success_at", ""),
         }
 
     def test_source(self, payload: Any) -> dict[str, Any]:
@@ -697,13 +721,16 @@ class FeedService:
                     "feed": source["feed"], "etag": result.get("etag", ""),
                     "last_modified": result.get("last_modified", ""),
                     "articles": result["articles"], "checked_at": checked_at, "last_error": "",
+                    "last_success_at": result.get("last_success_at", ""),
                 }
             elif previous.get("feed") == source["feed"]:
                 updated[source_id] = {
                     **previous,
                     "etag": result.get("etag") or previous.get("etag", ""),
                     "last_modified": result.get("last_modified") or previous.get("last_modified", ""),
+                    "articles": result["articles"],
                     "checked_at": checked_at,
+                    "last_success_at": result.get("last_success_at", previous.get("last_success_at", "")),
                     "last_error": "" if result["ok"] else result["message"][:500],
                 }
         try:
@@ -777,6 +804,8 @@ class FeedService:
                 self._render_cached_article(article)
                 for article in cached.get("articles", []) if isinstance(article, dict)
             ]
+        payload["articles"] = [article for article in payload["articles"] if article_is_publishable(article)]
+        payload["unique_count"] = len(payload["articles"])
         payload["cached"] = True
         payload["refreshing"] = refreshing
         if payload.get("thumbnails_refreshing"):
@@ -933,12 +962,21 @@ class FeedService:
                 "articles": [
                     self._render_cached_article(apply_article_classification(dict(article)))
                     for article in cached.get("articles", [])
-                    if schema_compatible and isinstance(article, dict)
+                    if schema_compatible and article_is_publishable(article)
                 ],
                 "cached": True, "stale": True, "refreshing": False,
                 "last_refresh_attempt_at": datetime.now(timezone.utc).isoformat(),
                 "warnings": [f"{item['source']['name']}: {item['message']}" for item in failed],
             })
+            fallback["unique_count"] = len(fallback["articles"])
+            fallback["sources"] = [
+                {
+                    **result["source"], "ok": result["ok"], "count": len(result["articles"]),
+                    "used_stale_cache": result["used_stale_cache"],
+                    "last_success_at": result.get("last_success_at", ""),
+                }
+                for result in results
+            ]
             try:
                 fallback["history_count"] = self.repository.history_article_count()
                 self.write_cache(fallback)
@@ -961,6 +999,7 @@ class FeedService:
                     **result["source"], "ok": result["ok"], "count": len(result["articles"]),
                     "duration_ms": result["duration_ms"], "not_modified": result["not_modified"],
                     "used_stale_cache": result["used_stale_cache"],
+                    "last_success_at": result.get("last_success_at", ""),
                 }
                 for result in results
             ],

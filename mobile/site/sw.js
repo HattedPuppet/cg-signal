@@ -1,5 +1,5 @@
-const CACHE_NAME = "cg-signal-mobile-v24";
-const SHELL = ["./", "./index.html", "./styles.css?v=20260812-v24", "./app.js?v=20260812-v24", "./domain.mjs", "./sw.js?v=20260812-v24", "./manifest.json", "./icon-192.png", "./icon-512.png"];
+const CACHE_NAME = "cg-signal-mobile-v25";
+const SHELL = ["./", "./index.html", "./styles.css?v=20261011-v25", "./app.js?v=20261011-v25", "./domain.mjs", "./sw.js?v=20261011-v25", "./manifest.json", "./icon-192.png", "./icon-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL)));
@@ -32,6 +32,14 @@ self.addEventListener("fetch", (event) => {
         }
         return response;
       })
-      .catch(() => caches.match(event.request)),
+      .catch(async () => {
+        const cached = await caches.match(event.request);
+        if (!cached) return Response.error();
+        if (!url.pathname.endsWith("/feed.json")) return cached;
+        // A cached 200 is not evidence that the online publisher was reached.
+        const headers = new Headers(cached.headers);
+        headers.set("X-CG-Signal-Offline", "1");
+        return new Response(cached.body, { status: cached.status, headers });
+      }),
   );
 });

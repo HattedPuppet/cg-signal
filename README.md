@@ -82,8 +82,9 @@ required.
 
 The public-safe mobile edition is built from `mobile/` and deployed through the
 `Refresh mobile signal` GitHub Pages workflow. GitHub gathers the same feeds,
-runs the existing classification and deduplication rules, and refreshes the
-hosted static feed every 30 minutes. The workflow keeps HTTP validators and a
+runs the existing classification and deduplication rules, and schedules a
+hosted static feed refresh every 30 minutes. GitHub may delay scheduled runs;
+the mobile app warns when the published feed is more than 90 minutes old. The workflow keeps HTTP validators and a
 sanitized 100-day rolling history (up to 1,500 stories) in a repository-scoped
 Actions cache, so a temporary publisher outage or a story rotating out of RSS
 does not make recent coverage disappear. A cache miss publishes current
@@ -99,6 +100,16 @@ category and source chips directly in the feed controls, a header search field
 with text and hashtag support, offline fallback, and Android home-screen
 installation.
 Stories remain in one flat newest-first list without a separate recency board.
+Calendar listings and publication dates more than 10 minutes ahead are excluded
+from the news timeline, including cached and carried-forward entries. Actual
+reporting about events remains eligible. Desktop history is not deleted.
+**Check for updates** downloads the latest published feed; it does not trigger
+the GitHub publisher. The visible app checks again every five minutes and on
+returning to the foreground. The status distinguishes feed publication time
+from the newest story date, and Manage sources shows each source's last
+successful check. Offline fallback is explicitly labeled.
+Optional thumbnail failures do not block publishing current articles; available
+verified previews are bundled and missing ones use the normal placeholder.
 The header and filter drawer share one compact sticky surface: tap or swipe its
 handle to pull the full controls out. A persistent Top button jumps directly to
 the first visible article without a smooth-scroll delay. Pins are stored only

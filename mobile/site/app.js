@@ -3,6 +3,7 @@ import {
   SOFTWARE_GROUP_ORDER,
   SOFTWARE_GROUP_COLORS,
   articleCategories,
+  articleIsPublishable,
   articleSourceIds,
   articleWithinPublicationWindow,
   matchesSearch as matchesSearchQuery,
@@ -17,6 +18,9 @@ const storageKeys = {
   density: "cg-signal-mobile:density",
   timeWindow: "cg-signal-mobile:time-window",
 };
+
+const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const FEED_STALE_AFTER_MS = 90 * 60 * 1000;
 
 const TIME_WINDOW_LABELS = {
   month: "This month",
@@ -40,6 +44,7 @@ const state = {
   density: localStorage.getItem(storageKeys.density) === "compact" ? "compact" : "comfortable",
   installPrompt: null,
   lastFetchAt: 0,
+  feedCached: false,
 };
 
 const elements = {
@@ -64,12 +69,14 @@ const elements = {
   filterDrawerHandle: document.querySelector("#filter-drawer-handle"),
   filterDrawerSummary: document.querySelector("#filter-drawer-summary"),
   densityToggle: document.querySelector("#density-toggle"),
+  refresh: document.querySelector("#refresh-feed"),
   pinnedTotal: document.querySelector("#pinned-total"),
 };
 
 let sourceManagerReturnFocus = null;
 let filterPointerStartY = null;
 let ignoreNextFilterClick = false;
+let feedLoadPromise = null;
 
 function readIdSet(key) {
   try {
@@ -269,7 +276,9 @@ function renderSourceManager() {
   elements.sourceManagerList.innerHTML = sources.map((source) => {
     const enabled = !state.disabledSources.has(source.id);
     const count = Number(source.count || 0);
-    const countLabel = `${count} ${count === 1 ? "story" : "stories"}`;
+    const checked = source.last_success_at ? `Last successful check ${relativeTime(source.last_success_at)}` : "Last successful check unknown";
+    const unavailable = source.ok === false || source.used_stale_cache;
+    const countLabel = `${count} ${count === 1 ? "story" : "stories"} · ${checked}${unavailable ? " · source unavailable" : ""}`;
     const action = enabled ? "Disable" : "Enable";
     return `<button class="source-manager-item${enabled ? " is-enabled" : ""}" type="button" data-toggle-source="${escapeHtml(source.id)}" aria-pressed="${enabled}" aria-label="${escapeHtml(`${action} ${source.name}, ${countLabel}`)}" style="--source-accent:${escapeHtml(source.accent || "#7fa9ff")}"><span class="source-manager-label"><i aria-hidden="true"></i><span><strong>${escapeHtml(source.name)}</strong><small>${escapeHtml(countLabel)}</small></span></span><span class="source-switch" aria-hidden="true"><i></i></span></button>`;
   }).join("");
@@ -384,16 +393,16 @@ function render() {
 }
 
 function updateConnection(online, cached = false, checking = false) {
-  elements.connectionDot.classList.toggle("is-offline", !online);
+  state.feedCached = cached;
+  elements.connectionDot.classList.toggle("is-offline", !online || cached);
   if (!state.payload) return;
-  const generated = state.payload.generated_at ? relativeTime(state.payload.generated_at) : "recently";
+  const generated = state.payload.generated_at ? relativeTime(state.payload.generated_at) : "at an unknown time";
+  const newest = state.articles.reduce((latest, article) => Math.max(latest, new Date(article.published_at).getTime()), 0);
+  const newestLabel = newest ? ` · newest story ${relativeTime(newest)}` : "";
   const retained = Number(state.payload.carried_forward_count || 0);
   const retainedLabel = retained ? ` · ${retained} retained` : "";
-  elements.updateStatus.textContent = checking
-    ? `Stored copy · checking for updates${retainedLabel}`
-    : cached
-      ? `Offline copy · updated ${generated}${retainedLabel}`
-      : `Updated ${generated}${retainedLabel} · refreshes every 30 minutes`;
+  const prefix = checking ? "Stored copy · checking for updates" : cached ? "Offline copy" : "Feed published";
+  elements.updateStatus.textContent = `${prefix} ${generated}${newestLabel}${retainedLabel}`;
 }
 
 function feedPayloadIsCompatible(payload) {
@@ -424,7 +433,7 @@ function applyFeed(payload, { store = false } = {}) {
   const previousSource = state.source;
   try {
     state.payload = payload;
-    state.articles = payload.articles;
+    state.articles = payload.articles.filter((article) => articleIsPublishable(article));
     persistPinned();
     persistDisabledSources();
     if (state.disabledSources.has(state.source)) state.source = "All";
@@ -449,51 +458,67 @@ function applyFeed(payload, { store = false } = {}) {
   }
 }
 
-function showUnavailableNotice(names = [], { stale = false, retained = 0 } = {}) {
-  const uniqueNames = [...new Set(names.map((name) => String(name).trim()).filter(Boolean))];
-  const summary = stale
-    ? "Live refresh unavailable · showing cached stories"
-    : `${uniqueNames.length || "Some"} sources unavailable · showing cached stories`;
-  const retainedMessage = retained ? ` · ${retained} retained` : "";
-  const detail = uniqueNames.length
-    ? `<details><summary>Show unavailable sources</summary><span>${uniqueNames.map(escapeHtml).join(", ")}</span></details>`
+function renderFeedNotice({ offline = false } = {}) {
+  if (!state.payload) return;
+  const delayed = Date.now() - new Date(state.payload.generated_at).getTime() > FEED_STALE_AFTER_MS;
+  const messages = [];
+  if (offline) messages.push("Live refresh unavailable · showing cached stories");
+  if (delayed) messages.push("Feed refresh is delayed. The scheduled publisher has not produced a recent feed; checking again cannot force a publisher update.");
+  const names = state.payload.unavailable_sources || [];
+  if (names.length) messages.push(`${names.length} sources unavailable · showing cached stories`);
+  if (state.payload.thumbnails_incomplete) messages.push("Some previews are unavailable; current articles are still shown.");
+  const detail = names.length
+    ? `<details><summary>Show unavailable sources</summary><span>${names.map(escapeHtml).join(", ")}</span></details>`
     : "";
-  elements.notice.innerHTML = `<strong>${escapeHtml(summary)}${escapeHtml(retainedMessage)}</strong>${detail}`;
-  elements.notice.hidden = false;
+  elements.notice.innerHTML = messages.map((message) => `<strong>${escapeHtml(message)}</strong>`).join(" ") + detail;
+  elements.notice.hidden = messages.length === 0;
 }
 
-async function loadFeed() {
+function loadFeed() {
+  if (feedLoadPromise) return feedLoadPromise;
+  elements.refresh.disabled = true;
+  elements.refresh.textContent = "Checking…";
+  feedLoadPromise = fetchFeed().finally(() => {
+    feedLoadPromise = null;
+    elements.refresh.disabled = false;
+    elements.refresh.textContent = "Check for updates";
+  });
+  return feedLoadPromise;
+}
+
+async function fetchFeed() {
   state.lastFetchAt = Date.now();
   let cached = readCachedFeed();
   if (!state.payload && cached) {
     try {
       applyFeed(cached);
       updateConnection(navigator.onLine, true, navigator.onLine);
+      renderFeedNotice({ offline: !navigator.onLine });
     } catch (error) {
       cached = null;
       try { localStorage.removeItem(storageKeys.feed); } catch { /* ignore storage errors */ }
       console.warn("CG Signal evicted an unreadable offline feed copy.", error);
     }
   }
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 20 * 1000);
   try {
-    const response = await fetch("./feed.json", { cache: "no-store" });
+    const response = await fetch("./feed.json", { cache: "no-store", signal: controller.signal });
     if (!response.ok) throw new Error(`Feed request failed (${response.status})`);
     const payload = await response.json();
     if (!feedPayloadIsCompatible(payload)) throw new Error("The hosted feed uses incompatible article labels.");
     applyFeed(payload, { store: true });
-    updateConnection(true);
-    if (payload.unavailable_sources?.length) {
-      showUnavailableNotice(payload.unavailable_sources, { retained: payload.carried_forward_count });
-    } else {
-      elements.notice.hidden = true;
-    }
+    const offline = !navigator.onLine || response.headers.get("X-CG-Signal-Offline") === "1";
+    updateConnection(!offline, offline);
+    renderFeedNotice({ offline });
   } catch (error) {
     const fallback = state.payload || cached;
     if (fallback?.articles?.length) {
       if (!state.payload) applyFeed(fallback);
       updateConnection(false, true);
-      showUnavailableNotice([], { stale: true });
+      renderFeedNotice({ offline: true });
     } else {
+      elements.storyList.setAttribute("aria-busy", "false");
       elements.storyList.hidden = true;
       elements.empty.hidden = false;
       elements.empty.querySelector("h2").textContent = "The mobile signal is unavailable";
@@ -501,6 +526,8 @@ async function loadFeed() {
       elements.notice.textContent = error.message;
       elements.notice.hidden = false;
     }
+  } finally {
+    window.clearTimeout(timeout);
   }
 }
 
@@ -653,12 +680,24 @@ window.addEventListener("appinstalled", () => {
   elements.install.hidden = true;
 });
 
+elements.refresh.addEventListener("click", () => loadFeed());
+
 window.addEventListener("online", () => loadFeed());
-window.addEventListener("offline", () => updateConnection(false, true));
+window.addEventListener("offline", () => {
+  updateConnection(false, true);
+  renderFeedNotice({ offline: true });
+});
 
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible" && Date.now() - state.lastFetchAt > 5 * 60 * 1000) loadFeed();
+  if (document.visibilityState === "visible" && Date.now() - state.lastFetchAt > REFRESH_INTERVAL_MS) loadFeed();
 });
+
+window.setInterval(() => {
+  if (document.visibilityState !== "visible" || feedLoadPromise) return;
+  updateConnection(navigator.onLine, state.feedCached);
+  renderFeedNotice({ offline: state.feedCached });
+  if (navigator.onLine && Date.now() - state.lastFetchAt >= REFRESH_INTERVAL_MS) loadFeed();
+}, 60 * 1000);
 
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
@@ -717,7 +756,7 @@ elements.filterDrawerHandle.addEventListener("pointercancel", () => {
 });
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=20260812-v24").catch(() => {}));
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=20261011-v25").catch(() => {}));
 }
 
 loadFeed();

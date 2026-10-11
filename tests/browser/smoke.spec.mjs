@@ -307,6 +307,119 @@ test("desktop state save failure keeps latest state for accessible retry", async
   await expectCleanBrowser(guards);
 });
 
+test("mobile cleans legacy cached events and checks for fresh articles without losing preferences", async ({ browser }) => {
+  const context = await browser.newContext({ ...PIXEL_7, serviceWorkers: "block" });
+  const page = await context.newPage();
+  try {
+    const guards = await installBrowserGuards(page);
+    const response = await page.request.get(`${fixtureUrls.mobile_url}feed.json`);
+    const payload = await response.json();
+    const event = {
+      ...payload.articles[0], id: "legacy-calendar", title: "gamescom", source_id: "game-developer",
+      published_at: "2099-08-23T07:00:00Z", url: "https://www.gamedeveloper.com/events/gamescom",
+    };
+    const cached = { ...payload, generated_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), articles: [event, ...payload.articles] };
+    let allowNetwork = false;
+    let feedRequests = 0;
+    const freshArticle = { ...payload.articles[0], id: "fresh-article", title: "Fresh production news", url: "https://example.test/fresh" };
+    await page.addInitScript((offline) => {
+      localStorage.setItem("cg-signal-mobile:last-feed", JSON.stringify(offline));
+      localStorage.setItem("cg-signal-mobile:pinned", JSON.stringify(["smoke-blender-article"]));
+      localStorage.setItem("cg-signal-mobile:disabled-sources", JSON.stringify(["hidden-source"]));
+    }, cached);
+    await page.route("**/feed.json", async (route) => {
+      feedRequests += 1;
+      if (!allowNetwork) return route.abort();
+      return route.fulfill({ json: { ...payload, articles: [event, freshArticle, ...payload.articles] } });
+    });
+    await page.goto(fixtureUrls.mobile_url, { waitUntil: "domcontentloaded" });
+    await expect(page.locator("#story-list .story-card:not(.skeleton)")).toHaveCount(2);
+    await expect(page.locator("#story-list")).not.toContainText("gamescom");
+    await expect(page.locator("#notice")).toContainText("Feed refresh is delayed");
+    await expect(page.locator("#update-status")).toContainText("Offline copy");
+    await expect(page.locator("#pinned-total")).toHaveText("1");
+
+    allowNetwork = true;
+    await page.locator("#refresh-feed").click();
+    await expect(page.locator("#story-list .story-card:not(.skeleton)")).toHaveCount(3);
+    await expect(page.locator("#story-list")).toContainText("Fresh production news");
+    await expect(page.locator("#story-list")).not.toContainText("gamescom");
+    await expect(page.locator("#notice")).toBeHidden();
+    await expect(page.locator("#update-status")).toContainText("Feed published");
+    await expect(page.locator("#update-status")).toContainText("newest story");
+    await expect(page.locator("#refresh-feed")).toBeEnabled();
+    expect(feedRequests).toBe(2);
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem("cg-signal-mobile:disabled-sources")))).toEqual(["hidden-source"]);
+    await expect(page.locator("#pinned-total")).toHaveText("1");
+    await expectCleanBrowser(guards);
+  } finally {
+    await context.close();
+  }
+});
+
+test("mobile bounds a stalled refresh and coalesces overlapping checks", async ({ browser }) => {
+  const context = await browser.newContext({ ...PIXEL_7, serviceWorkers: "block" });
+  const page = await context.newPage();
+  try {
+    const guards = await installBrowserGuards(page);
+    const payload = await (await page.request.get(`${fixtureUrls.mobile_url}feed.json`)).json();
+    await page.addInitScript((cached) => localStorage.setItem("cg-signal-mobile:last-feed", JSON.stringify(cached)), payload);
+    let requests = 0;
+    let held = null;
+    await page.route("**/feed.json", async (route) => {
+      requests += 1;
+      if (requests === 1) { held = route; return; }
+      await route.fulfill({ json: payload });
+    });
+    await page.clock.install({ time: Date.now() });
+    await page.goto(fixtureUrls.mobile_url, { waitUntil: "domcontentloaded" });
+    await expect(page.locator("#story-list .story-card:not(.skeleton)")).toHaveCount(2);
+    await expect(page.locator("#refresh-feed")).toBeDisabled();
+    await expect.poll(() => requests).toBe(1);
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    expect(requests).toBe(1);
+    await page.clock.fastForward("00:21");
+    await expect(page.locator("#refresh-feed")).toBeEnabled();
+    await expect(page.locator("#notice")).toContainText("Live refresh unavailable");
+    await held.abort().catch(() => {});
+    await page.locator("#refresh-feed").click();
+    await expect(page.locator("#notice")).toBeHidden();
+    await expect(page.locator("#refresh-feed")).toBeEnabled();
+    expect(requests).toBe(2);
+    await expectCleanBrowser(guards);
+  } finally {
+    await context.close();
+  }
+});
+
+test("mobile periodically checks the feed while it remains visible", async ({ browser }) => {
+  const context = await browser.newContext({ ...PIXEL_7, serviceWorkers: "block" });
+  const page = await context.newPage();
+  try {
+    const guards = await installBrowserGuards(page);
+    const payload = await (await page.request.get(`${fixtureUrls.mobile_url}feed.json`)).json();
+    let requests = 0;
+    await page.route("**/feed.json", async (route) => {
+      requests += 1;
+      const articles = requests === 1 ? payload.articles : [
+        { ...payload.articles[0], id: "automatic-refresh", title: "Automatically refreshed story", url: "https://example.test/automatic" },
+        ...payload.articles,
+      ];
+      await route.fulfill({ json: { ...payload, articles } });
+    });
+    await page.clock.install({ time: Date.now() });
+    await page.goto(fixtureUrls.mobile_url, { waitUntil: "domcontentloaded" });
+    await expect(page.locator("#story-list .story-card:not(.skeleton)")).toHaveCount(2);
+    await expect(page.locator("#refresh-feed")).toBeEnabled();
+    await page.clock.fastForward("06:00");
+    await expect(page.locator("#story-list")).toContainText("Automatically refreshed story");
+    expect(requests).toBe(2);
+    await expectCleanBrowser(guards);
+  } finally {
+    await context.close();
+  }
+});
+
 test("mobile feed survives an offline reload through its service worker", async ({ browser }) => {
   const context = await browser.newContext({ ...PIXEL_7, serviceWorkers: "allow" });
   const page = await context.newPage();
@@ -369,6 +482,8 @@ test("mobile feed survives an offline reload through its service worker", async 
     await expect(page.locator("#story-list")).toHaveAttribute("aria-busy", "false");
     await expect(page.locator("#story-list .story-card:not(.skeleton)")).toHaveCount(2);
     await expect(page.locator("#pinned-total")).toHaveText("1");
+    await expect(page.locator("#update-status")).toContainText("Offline copy");
+    await expect(page.locator("#notice")).toContainText("Live refresh unavailable");
     await expect.poll(() => page.evaluate(() => ({
       controlled: Boolean(navigator.serviceWorker.controller),
       feedCached: Boolean(document.querySelector("#story-list .story-card:not(.skeleton)")),

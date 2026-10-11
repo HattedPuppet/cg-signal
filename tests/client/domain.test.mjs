@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   ARTICLE_LANE_VALUES,
@@ -7,6 +8,7 @@ import {
   SOFTWARE_GROUP_ORDER,
   FEED_SCHEMA_VERSION,
   articleCategories,
+  articleIsPublishable,
   articleSourceIds,
   articleTopics,
   articleWithinPublicationWindow,
@@ -84,8 +86,21 @@ test("publication windows share month and quarter boundaries", () => {
   assert.deepEqual([quarterStart.getFullYear(), quarterStart.getMonth(), quarterStart.getDate()], [2026, 5, 1]);
   assert.equal(articleWithinPublicationWindow({ published_at: "2026-08-01T00:00:00Z" }, "month", now), true);
   assert.equal(articleWithinPublicationWindow({ published_at: "2026-07-31T10:00:00Z" }, "month", now), false);
-  assert.equal(articleWithinPublicationWindow({ published_at: "not-a-date" }, "month", now), true);
+  assert.equal(articleWithinPublicationWindow({ published_at: "not-a-date" }, "month", now), false);
   assert.equal(articleWithinPublicationWindow({ published_at: "2020-01-01T00:00:00Z" }, "all", now), true);
+});
+
+test("publication policy matches the backend fixtures in every time window", () => {
+  const fixture = JSON.parse(readFileSync(new URL("../fixtures/publication_policy.json", import.meta.url), "utf8"));
+  const now = new Date(fixture.now);
+  for (const item of fixture.cases) {
+    assert.equal(articleIsPublishable(item.article, now), item.expected, item.name);
+    if (!item.expected) {
+      for (const window of ["month", "quarter", "all"]) {
+        assert.equal(articleWithinPublicationWindow(item.article, window, now), false, `${item.name}: ${window}`);
+      }
+    }
+  }
 });
 
 test("feed schema contract accepts only the canonical structural revision", () => {

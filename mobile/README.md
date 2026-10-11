@@ -21,10 +21,23 @@ private, repository-scoped Actions cache (`.mobile-cache/http` and
 snapshot only; no public Pages feed is downloaded for recovery. The merge
 retains up to 1,500 allowlisted articles from the last 100 days, removes
 duplicate URLs, and drops anything outside the public field allowlist again.
+The publication policy is reapplied to fresh feeds, source snapshots, and
+carried history so future/calendar entries cannot return through a cache.
+Source metadata exposes only the last successful check and stale-cache status,
+not request validators or error details.
 Use the manual `discard_history` input to remove the carried history snapshot
 and its thumbnail index/assets before a build while retaining HTTP validators
 and feed validators.
 
-The GitHub Pages workflow runs regression tests before every deployment. If no
-valid articles can be gathered, the build fails and the previous working Pages
-deployment remains available.
+The GitHub Pages workflow runs regression tests for code changes; scheduled
+refreshes build the already-tested default branch. If no valid articles can be
+gathered, the build fails and the previous working Pages deployment remains
+available. Thumbnail enrichment is optional: a timeout or failure publishes
+current articles with available verified images instead of freezing the feed.
+
+The workflow targets a 30-minute refresh interval, not a timing guarantee. The
+app checks for published updates every five minutes while visible, offers a
+manual check, and warns once the published snapshot is over 90 minutes old.
+Neither a phone refresh nor the manual button forces an RSS publisher update.
+The service worker marks offline feed responses explicitly; existing pins and
+source preferences survive shell/cache updates.

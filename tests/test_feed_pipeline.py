@@ -82,6 +82,56 @@ class FeedIngestionTests(ServiceTestCase):
         self.assertEqual([article["title"] for article in result["articles"]], ["Newest", "Middle"])
         self.assertEqual(result["diagnostics"]["accepted"], 3)
 
+    def test_future_dates_are_excluded_before_the_source_limit(self):
+        xml = b"""<rss><channel>
+            <item><title>Future event</title><link>https://example.com/future</link><pubDate>2099-08-23T00:00:00Z</pubDate></item>
+            <item><title>News</title><link>https://example.com/news</link><pubDate>2026-08-03T00:00:00Z</pubDate></item>
+        </channel></rss>"""
+        with mock.patch.object(self.service.http, "get", return_value=self.feed_response(xml)):
+            result = self.service.fetch_source({**source_fixture(), "limit": 1})
+        self.assertTrue(result["ok"])
+        self.assertEqual([article["title"] for article in result["articles"]], ["News"])
+        self.assertEqual(result["diagnostics"]["future_date"], 1)
+
+    def test_game_developer_calendar_metadata_is_not_a_news_publication_date(self):
+        xml = b"""<rss xmlns:dc="http://purl.org/dc/elements/1.1/"><channel>
+            <item><title>ChinaJoy</title><link>https://www.gamedeveloper.com/keyword/chinajoy</link>
+                <dc:date>2026-07-30T00:00:00Z</dc:date><dc:valid>2026-08-02T00:00:00Z</dc:valid></item>
+            <item><title>gamescom production report</title><link>https://www.gamedeveloper.com/business/gamescom-report</link>
+                <dc:date>2026-08-03T00:00:00Z</dc:date><description>Production news</description></item>
+        </channel></rss>"""
+        with mock.patch.object(self.service.http, "get", return_value=self.feed_response(xml)):
+            result = self.service.fetch_source({**source_fixture(), "id": "game-developer", "limit": 1})
+        self.assertTrue(result["ok"])
+        self.assertEqual([article["title"] for article in result["articles"]], ["gamescom production report"])
+        self.assertEqual(result["diagnostics"]["non_news"], 1)
+
+    def test_contaminated_source_cache_is_reloaded_without_http_validators(self):
+        cache = self.cache_entry()
+        cache["articles"].append({**cached_article(), "id": "future", "published_at": "2099-08-23T00:00:00Z"})
+        xml = b"""<rss><channel><item><title>News</title><link>https://example.com/news</link>
+            <pubDate>2026-08-03T00:00:00Z</pubDate></item></channel></rss>"""
+        with mock.patch.object(self.service.http, "get", return_value=self.feed_response(xml)) as get:
+            result = self.service.fetch_source(source_fixture(), cache)
+        self.assertNotIn("If-None-Match", get.call_args.kwargs["headers"])
+        self.assertNotIn("If-Modified-Since", get.call_args.kwargs["headers"])
+        self.assertEqual([article["title"] for article in result["articles"]], ["News"])
+        self.assertTrue(result["last_success_at"])
+
+    def test_failed_source_reuses_only_eligible_cached_articles_and_success_timestamp(self):
+        cache = self.cache_entry()
+        cache["last_success_at"] = "2026-07-30T00:00:00+00:00"
+        cache["articles"].append({**cached_article(), "id": "future", "published_at": "2099-08-23T00:00:00Z"})
+        with mock.patch.object(self.service.http, "get", side_effect=SafeHttpError("unavailable")):
+            result = self.service.fetch_source(source_fixture(), cache)
+        self.assertFalse(result["ok"])
+        self.assertEqual([article["id"] for article in result["articles"]], ["article-1"])
+        self.assertEqual(result["last_success_at"], cache["last_success_at"])
+        self.service.update_feed_source_cache({source_fixture()["id"]: cache}, [result])
+        persisted = self.service.read_feed_source_cache()[source_fixture()["id"]]
+        self.assertEqual(persisted["last_success_at"], cache["last_success_at"])
+        self.assertEqual([article["id"] for article in persisted["articles"]], ["article-1"])
+
     def test_invalid_preferred_date_falls_through_to_valid_candidate(self):
         xml = b"""<rss><channel><item>
             <title>Fallback date</title><link>https://example.com/fallback</link>
@@ -157,6 +207,8 @@ class FeedIngestionTests(ServiceTestCase):
                 "missing_date": 1,
                 "invalid_date": 1,
                 "missing_title_or_link": 1,
+                "future_date": 0,
+                "non_news": 0,
             },
         )
 
