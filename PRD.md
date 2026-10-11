@@ -225,7 +225,15 @@ And is actively interested in:
   filtering, source selection, publication-window filtering, text and hashtag
   search.
 - Keep mobile stories in one flat newest-first chronology without a separate
-  recency board.
+  recency board. Default to compact cards while retaining an existing layout
+  preference. Render 40 stories initially, then load more near the list end or
+  through an accessible explicit button.
+- Reuse unchanged story cards and preserve the reading anchor through filtering,
+  pinning, view switches, and tab reloads. Remember view, filters, and search for
+  the current tab without uploading reading state.
+- Stage new arrivals behind a filter-aware new-stories button rather than
+  replacing the list while the reader is active. Accepting updates starts at
+  the newest matching story; publication status uses the downloaded snapshot.
 - Keep search in the mobile header and expose information type, category, and
   source controls as touch-sized inline choices in the feed, with clear
   active-state indication and no required discovery drawer.

@@ -99,13 +99,20 @@ windows. **Pinned** stories stay device-local. It also includes one-tap
 category and source chips directly in the feed controls, a header search field
 with text and hashtag support, offline fallback, and Android home-screen
 installation.
+Compact cards are the default; an existing comfortable-layout preference is
+preserved. Stories load 40 at a time, automatically near the end or through
+**Show more**. Filters, pins, and background checks reuse unchanged cards and
+keep the reading position. The current view, filters, search, and article
+position are remembered for the browser tab, including reloads.
 Stories remain in one flat newest-first list without a separate recency board.
 Calendar listings and publication dates more than 10 minutes ahead are excluded
 from the news timeline, including cached and carried-forward entries. Actual
 reporting about events remains eligible. Desktop history is not deleted.
 **Check for updates** downloads the latest published feed; it does not trigger
 the GitHub publisher. The visible app checks again every five minutes and on
-returning to the foreground. The status distinguishes feed publication time
+returning to the foreground. New arrivals wait behind a **new stories** button
+instead of moving the list while you read; tap it to start at the latest story.
+The status distinguishes feed publication time
 from the newest story date, and Manage sources shows each source's last
 successful check. Offline fallback is explicitly labeled.
 Optional thumbnail failures do not block publishing current articles; available
