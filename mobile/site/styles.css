@@ -496,11 +496,16 @@ button { color: inherit; }
 .density-toggle > span:first-child { color: var(--orange); font-size: 11px; line-height: 1; }
 .density-toggle.is-active { border-color: color-mix(in srgb, var(--blue) 45%, var(--line)); background: color-mix(in srgb, var(--blue) 10%, transparent); color: var(--ink); }
 
-.story-list { display: grid; gap: 12px; }
+.new-stories-row { position: sticky; top: calc(var(--app-header-height, 100px) + 8px); z-index: 12; }
+.new-stories-button,
+.more-stories-button { min-height: 44px; padding: 10px 16px; border: 1px solid var(--line); border-radius: 999px; font: inherit; font-size: 12px; font-weight: 800; }
+.new-stories-button { display: block; margin: 0 auto 12px; background: var(--acid); color: var(--ink); box-shadow: 0 3px 12px rgba(0,0,0,.14); }
+.more-stories-button { display: block; margin: 18px auto 0; background: var(--card); color: var(--ink); }
+.story-list { display: grid; gap: 12px; overflow-anchor: none; }
 
 .story-card {
   overflow: hidden;
-  scroll-margin-top: calc(92px + env(safe-area-inset-top));
+  scroll-margin-top: calc(var(--app-header-height, 100px) + 12px);
   border: 1px solid var(--line);
   border-radius: 17px;
   background: var(--card);
@@ -687,7 +692,7 @@ button { color: inherit; }
 }
 
 .story-list.is-compact .story-body { min-width: 0; padding: 9px 10px 8px; }
-.story-list.is-compact .story-meta { gap: 4px; font-size: 7px; }
+.story-list.is-compact .story-meta { gap: 4px; font-size: 10px; }
 .story-list.is-compact .source-name { max-width: 43%; }
 
 .story-list.is-compact .story-body h3 {
@@ -701,14 +706,15 @@ button { color: inherit; }
 }
 
 .story-list.is-compact .story-body > p {
-  font-size: 8px;
+  font-size: 11px;
   line-height: 1.35;
   -webkit-line-clamp: 2;
 }
 
 .story-list.is-compact .reason-list { gap: 3px; margin-top: 6px; }
-.story-list.is-compact .reason-list span { padding: 2px 4px; font-size: 6px; }
-.story-list.is-compact .story-body footer { margin-top: 6px; padding-top: 6px; font-size: 7px; }
+.story-list.is-compact .reason-list span { padding: 2px 4px; font-size: 9px; }
+.story-list.is-compact .story-body footer { margin-top: 6px; padding-top: 6px; font-size: 10px; }
+.story-list.is-compact .pin-button { min-width: 36px; min-height: 36px; }
 .story-list.is-compact .story-body footer a { font-size: 0; }
 .story-list.is-compact .story-body footer a i { font-size: 12px; }
 

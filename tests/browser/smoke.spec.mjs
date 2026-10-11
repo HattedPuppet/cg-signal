@@ -307,6 +307,180 @@ test("desktop state save failure keeps latest state for accessible retry", async
   await expectCleanBrowser(guards);
 });
 
+function expandedMobilePayload(payload, count = 120) {
+  const now = Date.now();
+  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).getTime();
+  return {
+    ...payload,
+    articles: Array.from({ length: count }, (_, index) => ({
+      ...payload.articles[index % payload.articles.length],
+      id: `mobile-story-${String(index).padStart(3, "0")}`,
+      title: `${index % 2 ? "Blender" : "Unreal"} story ${index}`,
+      url: `https://example.test/story-${index}`,
+      published_at: new Date(Math.max(monthStart, now - (index + 5) * 60_000)).toISOString(),
+      image: index === 0 ? payload.articles[0].image : "",
+    })),
+  };
+}
+
+async function cardTop(page, id) {
+  return page.locator(`[data-article-id="${id}"]`).evaluate((card) => card.getBoundingClientRect().top);
+}
+
+test("mobile incrementally renders compact cards and stages updates without moving the reader", async ({ browser }) => {
+  const context = await browser.newContext({ ...PIXEL_7, serviceWorkers: "block" });
+  const page = await context.newPage();
+  try {
+    const guards = await installBrowserGuards(page);
+    const fixture = await (await page.request.get(`${fixtureUrls.mobile_url}feed.json`)).json();
+    let payload = expandedMobilePayload(fixture);
+    await page.route("**/feed.json", (route) => route.fulfill({ json: payload }));
+    await page.goto(fixtureUrls.mobile_url, { waitUntil: "domcontentloaded" });
+    await expect(page.locator("#story-list")).toHaveClass(/is-compact/);
+    await expect(page.locator("#story-list .story-card")).toHaveCount(40);
+    await page.evaluate(() => { window.originalFirstCard = document.querySelector(".story-card"); });
+    await page.locator("#more-stories").scrollIntoViewIfNeeded();
+    await expect(page.locator("#story-list .story-card")).toHaveCount(80);
+    expect(await page.evaluate(() => window.originalFirstCard === document.querySelector(".story-card"))).toBe(true);
+
+    await page.locator('[data-article-id="mobile-story-020"]').evaluate((card) => card.scrollIntoView({ block: "start", behavior: "instant" }));
+    const beforePin = await cardTop(page, "mobile-story-020");
+    await page.locator('[data-pin-id="mobile-story-020"]').click();
+    await expect(page.locator('[data-pin-id="mobile-story-020"]')).toHaveAttribute("aria-pressed", "true");
+    expect(Math.abs(await cardTop(page, "mobile-story-020") - beforePin)).toBeLessThan(3);
+    expect(await page.evaluate(() => window.originalFirstCard === document.querySelector(".story-card"))).toBe(true);
+
+    payload.articles[20] = { ...payload.articles[20], title: "Updated existing Unreal story" };
+    await page.locator("#refresh-feed").dispatchEvent("click");
+    await expect(page.locator('[data-article-id="mobile-story-020"]')).toContainText("Updated existing Unreal story");
+    expect(Math.abs(await cardTop(page, "mobile-story-020") - beforePin)).toBeLessThan(3);
+    expect(await page.evaluate(() => window.originalFirstCard === document.querySelector(".story-card"))).toBe(true);
+    await expect(page.locator("#new-stories")).toBeHidden();
+    await expect(page.locator("#refresh-feed")).toBeEnabled();
+    await page.evaluate(() => window.dispatchEvent(new Event("offline")));
+    await expect(page.locator("#update-status")).toContainText("Offline copy");
+    expect(Math.abs(await cardTop(page, "mobile-story-020") - beforePin)).toBeLessThan(3);
+
+    payload = {
+      ...payload,
+      articles: [...Array.from({ length: 3 }, (_, index) => ({
+        ...payload.articles[1], id: `new-story-${index}`, title: `New Blender story ${index}`,
+        url: `https://example.test/new-${index}`, published_at: new Date(Date.now() - index * 1000).toISOString(),
+      })), ...payload.articles],
+    };
+    // The header refresh control is above the reading position; dispatching its
+    // action avoids test-driver auto-scrolling before the update arrives.
+    const beforeRefresh = await cardTop(page, "mobile-story-020");
+    await page.locator("#refresh-feed").dispatchEvent("click");
+    await expect(page.locator("#new-stories")).toContainText("3 new stories");
+    await expect(page.locator("#story-list .story-card")).toHaveCount(80);
+    await expect(page.locator("#story-list")).not.toContainText("New Blender story");
+    expect(Math.abs(await cardTop(page, "mobile-story-020") - beforeRefresh)).toBeLessThan(3);
+    expect(await page.evaluate(() => window.originalFirstCard === document.querySelector(".story-card"))).toBe(true);
+    await expect(page.locator("#refresh-feed")).toBeEnabled();
+    await page.locator("#refresh-feed").dispatchEvent("click");
+    await expect(page.locator("#refresh-feed")).toBeEnabled();
+    await expect(page.locator("#new-stories")).toContainText("3 new stories");
+
+    await page.locator("#filter-drawer-handle").click();
+    await page.locator('[data-category="Unreal Engine"]').click();
+    await expect(page.locator("#new-stories")).toBeHidden();
+    await page.locator('[data-category="All"]').click();
+    await expect(page.locator("#new-stories")).toContainText("3 new stories");
+    await page.locator("#filter-drawer-handle").click();
+    await page.locator("#new-stories").click();
+    await expect(page.locator("#new-stories")).toBeHidden();
+    await expect(page.locator("#story-list .story-card")).toHaveCount(40);
+    await expect(page.locator("#story-list .story-card").first()).toContainText("New Blender story 0");
+    await expect(page.locator('[data-pin-id="mobile-story-020"]')).toHaveAttribute("aria-pressed", "true");
+    expect(await cardTop(page, "new-story-0")).toBeGreaterThan(0);
+    expect(await cardTop(page, "new-story-0")).toBeLessThan(200);
+    payload = {
+      ...payload, generated_at: new Date(Date.parse(payload.generated_at) - 60_000).toISOString(),
+      articles: payload.articles.filter((article) => !article.id.startsWith("new-story-")),
+    };
+    await page.locator("#refresh-feed").dispatchEvent("click");
+    await expect(page.locator("#refresh-feed")).toBeEnabled();
+    await expect(page.locator("#story-list .story-card").first()).toContainText("New Blender story 0");
+    await expectCleanBrowser(guards);
+  } finally {
+    await context.close();
+  }
+});
+
+test("mobile preserves filters and reading anchors through view changes and reload", async ({ browser }) => {
+  const context = await browser.newContext({ ...PIXEL_7, serviceWorkers: "block" });
+  const page = await context.newPage();
+  try {
+    const guards = await installBrowserGuards(page);
+    const fixture = await (await page.request.get(`${fixtureUrls.mobile_url}feed.json`)).json();
+    const payload = expandedMobilePayload(fixture);
+    await page.addInitScript(() => { delete window.IntersectionObserver; });
+    await page.route("**/feed.json", (route) => route.fulfill({ json: payload }));
+    await page.goto(fixtureUrls.mobile_url, { waitUntil: "domcontentloaded" });
+    await expect(page.locator("#story-list .story-card")).toHaveCount(40);
+    await page.locator("#more-stories").click();
+    await expect(page.locator("#story-list .story-card")).toHaveCount(80);
+    await expect(page.locator('[data-article-id="mobile-story-040"] h3 a')).toBeFocused();
+    await page.locator('[data-article-id="mobile-story-055"]').evaluate((card) => card.scrollIntoView({ block: "start", behavior: "instant" }));
+    await page.locator('[data-pin-id="mobile-story-055"]').click();
+    const beforeFilter = await cardTop(page, "mobile-story-055");
+    // Search uses the same filtering path as typing, without moving focus away
+    // from the article before the anchor-preservation assertion.
+    await page.locator("#search-input").evaluate((input) => { input.value = "Blender story"; input.dispatchEvent(new Event("input", { bubbles: true })); });
+    expect(Math.abs(await cardTop(page, "mobile-story-055") - beforeFilter)).toBeLessThan(3);
+    await expect(page.locator("#story-list .story-card")).toHaveCount(40);
+    const latestTop = await cardTop(page, "mobile-story-055");
+    await page.locator('[data-view="pinned"]').click();
+    await expect(page.locator("#story-list .story-card")).toHaveCount(1);
+    await page.locator('[data-view="latest"]').click();
+    expect(Math.abs(await cardTop(page, "mobile-story-055") - latestTop)).toBeLessThan(3);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.locator("#search-input")).toHaveValue("Blender story");
+    await expect(page.locator('[data-pin-id="mobile-story-055"]')).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(async () => Math.abs(await cardTop(page, "mobile-story-055") - latestTop)).toBeLessThan(3);
+    await expectCleanBrowser(guards);
+  } finally {
+    await context.close();
+  }
+});
+
+for (const automaticLoading of [false, true]) {
+  test(`mobile restores unfiltered deep and batch-boundary anchors with automatic loading ${automaticLoading}`, async ({ browser }) => {
+    const context = await browser.newContext({ ...PIXEL_7, serviceWorkers: "block" });
+    const page = await context.newPage();
+    try {
+      const guards = await installBrowserGuards(page);
+      const fixture = await (await page.request.get(`${fixtureUrls.mobile_url}feed.json`)).json();
+      const payload = expandedMobilePayload(fixture);
+      if (!automaticLoading) await page.addInitScript(() => { delete window.IntersectionObserver; });
+      await page.route("**/feed.json", (route) => route.fulfill({ json: payload }));
+      await page.goto(fixtureUrls.mobile_url, { waitUntil: "domcontentloaded" });
+      await expect(page.locator("#story-list .story-card")).toHaveCount(40);
+      if (automaticLoading) await page.locator("#more-stories").scrollIntoViewIfNeeded();
+      else await page.locator("#more-stories").click();
+      await expect(page.locator("#story-list .story-card")).toHaveCount(80);
+
+      for (const index of [39, 40, 55]) {
+        const id = `mobile-story-${String(index).padStart(3, "0")}`;
+        await page.locator(`[data-article-id="${id}"]`).evaluate((card) => card.scrollIntoView({ block: "start", behavior: "instant" }));
+        const top = await cardTop(page, id);
+        const savedAnchor = () => page.evaluate(() => JSON.parse(sessionStorage.getItem("cg-signal-mobile:reading-session"))?.positions?.latest?.id);
+        await expect.poll(savedAnchor).toBe(id);
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.locator("#story-list")).toHaveAttribute("aria-busy", "false");
+        await expect(page.locator("#refresh-feed")).toBeEnabled();
+        await expect.poll(async () => Math.abs(await cardTop(page, id) - top)).toBeLessThan(3);
+        await expect.poll(savedAnchor).toBe(id);
+        expect(await page.locator("#story-list .story-card").count()).toBeLessThan(payload.articles.length);
+      }
+      await expectCleanBrowser(guards);
+    } finally {
+      await context.close();
+    }
+  });
+}
+
 test("mobile cleans legacy cached events and checks for fresh articles without losing preferences", async ({ browser }) => {
   const context = await browser.newContext({ ...PIXEL_7, serviceWorkers: "block" });
   const page = await context.newPage();
@@ -325,6 +499,7 @@ test("mobile cleans legacy cached events and checks for fresh articles without l
     await page.addInitScript((offline) => {
       localStorage.setItem("cg-signal-mobile:last-feed", JSON.stringify(offline));
       localStorage.setItem("cg-signal-mobile:pinned", JSON.stringify(["smoke-blender-article"]));
+      localStorage.setItem("cg-signal-mobile:density", "comfortable");
       localStorage.setItem("cg-signal-mobile:disabled-sources", JSON.stringify(["hidden-source"]));
     }, cached);
     await page.route("**/feed.json", async (route) => {
@@ -336,11 +511,15 @@ test("mobile cleans legacy cached events and checks for fresh articles without l
     await expect(page.locator("#story-list .story-card:not(.skeleton)")).toHaveCount(2);
     await expect(page.locator("#story-list")).not.toContainText("gamescom");
     await expect(page.locator("#notice")).toContainText("Feed refresh is delayed");
+    await expect(page.locator("#story-list")).not.toHaveClass(/is-compact/);
     await expect(page.locator("#update-status")).toContainText("Offline copy");
     await expect(page.locator("#pinned-total")).toHaveText("1");
 
     allowNetwork = true;
     await page.locator("#refresh-feed").click();
+    await expect(page.locator("#new-stories")).toContainText("1 new story");
+    await expect(page.locator("#story-list .story-card:not(.skeleton)")).toHaveCount(2);
+    await page.locator("#new-stories").click();
     await expect(page.locator("#story-list .story-card:not(.skeleton)")).toHaveCount(3);
     await expect(page.locator("#story-list")).toContainText("Fresh production news");
     await expect(page.locator("#story-list")).not.toContainText("gamescom");
@@ -412,6 +591,9 @@ test("mobile periodically checks the feed while it remains visible", async ({ br
     await expect(page.locator("#story-list .story-card:not(.skeleton)")).toHaveCount(2);
     await expect(page.locator("#refresh-feed")).toBeEnabled();
     await page.clock.fastForward("06:00");
+    await expect(page.locator("#new-stories")).toContainText("1 new story");
+    await expect(page.locator("#story-list")).not.toContainText("Automatically refreshed story");
+    await page.locator("#new-stories").click();
     await expect(page.locator("#story-list")).toContainText("Automatically refreshed story");
     expect(requests).toBe(2);
     await expectCleanBrowser(guards);
@@ -479,6 +661,9 @@ test("mobile feed survives an offline reload through its service worker", async 
       (response) => response.status === 200 && response.fromServiceWorker,
     )).toBe(true);
     page.off("response", recordOfflineFeed);
+    await expect(page.locator('[data-view="pinned"]')).toHaveAttribute("aria-current", "page");
+    await expect(page.locator("#story-list .story-card:not(.skeleton)")).toHaveCount(1);
+    await page.locator('[data-view="latest"]').click();
     await expect(page.locator("#story-list")).toHaveAttribute("aria-busy", "false");
     await expect(page.locator("#story-list .story-card:not(.skeleton)")).toHaveCount(2);
     await expect(page.locator("#pinned-total")).toHaveText("1");

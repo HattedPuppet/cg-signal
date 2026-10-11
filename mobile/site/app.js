@@ -1,6 +1,7 @@
 import {
   FEED_SCHEMA_VERSION,
   SOFTWARE_GROUP_ORDER,
+  LANE_VALUES,
   SOFTWARE_GROUP_COLORS,
   articleCategories,
   articleIsPublishable,
@@ -10,6 +11,7 @@ import {
   feedPayloadIsStructurallyCompatible,
   thumbnailReferenceIsValid,
 } from "./domain.mjs";
+import { FeedList } from "./feed-list.mjs";
 
 const storageKeys = {
   pinned: "cg-signal-mobile:pinned",
@@ -17,6 +19,7 @@ const storageKeys = {
   disabledSources: "cg-signal-mobile:disabled-sources",
   density: "cg-signal-mobile:density",
   timeWindow: "cg-signal-mobile:time-window",
+  session: "cg-signal-mobile:reading-session",
 };
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
@@ -28,20 +31,25 @@ const TIME_WINDOW_LABELS = {
   all: "All available",
 };
 
+const readingSession = readReadingSession();
+const readingPositions = readingSession.positions;
+let initialPosition = readingPositions[readingSession.view] || null;
+
 const state = {
   payload: null,
   articles: [],
   pinned: readIdSet(storageKeys.pinned),
   disabledSources: disabledSourceSet(),
-  lane: "All",
-  category: "All",
-  source: "All",
-  search: "",
-  view: "latest",
+  lane: readingSession.lane,
+  category: readingSession.category,
+  source: readingSession.source,
+  search: readingSession.search,
+  view: readingSession.view,
+  pendingPayload: null,
   timeWindow: Object.prototype.hasOwnProperty.call(TIME_WINDOW_LABELS, localStorage.getItem(storageKeys.timeWindow))
     ? localStorage.getItem(storageKeys.timeWindow)
     : "month",
-  density: localStorage.getItem(storageKeys.density) === "compact" ? "compact" : "comfortable",
+  density: localStorage.getItem(storageKeys.density) === "comfortable" ? "comfortable" : "compact",
   installPrompt: null,
   lastFetchAt: 0,
   feedCached: false,
@@ -71,12 +79,54 @@ const elements = {
   densityToggle: document.querySelector("#density-toggle"),
   refresh: document.querySelector("#refresh-feed"),
   pinnedTotal: document.querySelector("#pinned-total"),
+  moreStories: document.querySelector("#more-stories"),
+  newStories: document.querySelector("#new-stories"),
 };
 
 let sourceManagerReturnFocus = null;
 let filterPointerStartY = null;
 let ignoreNextFilterClick = false;
 let feedLoadPromise = null;
+// The feed's article anchor owns reload/back restoration, not a stale pixel
+// offset restored by the browser while cached and live snapshots are applied.
+if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+const feedList = new FeedList({
+  list: elements.storyList, moreButton: elements.moreStories,
+  stickyHeader: document.querySelector(".app-header"),
+  renderCard: storyMarkup, updateCard: updateStoryCard,
+});
+
+function readReadingSession() {
+  let saved = {};
+  try { saved = JSON.parse(sessionStorage.getItem(storageKeys.session)) || {}; } catch { /* optional session state */ }
+  const positions = {};
+  for (const view of ["latest", "pinned"]) {
+    const position = saved.positions?.[view];
+    if (typeof position?.id === "string" && position.id.length <= 200
+      && Number.isFinite(position.top) && Math.abs(position.top) <= 10000) {
+      positions[view] = { id: position.id, top: position.top };
+    }
+  }
+  return {
+    view: saved.view === "pinned" ? "pinned" : "latest",
+    lane: LANE_VALUES.has(saved.lane) ? saved.lane : "All",
+    category: SOFTWARE_GROUP_ORDER.includes(saved.category) ? saved.category : "All",
+    source: typeof saved.source === "string" && saved.source.length <= 200 ? saved.source : "All",
+    search: typeof saved.search === "string" ? saved.search.slice(0, 500) : "",
+    positions,
+  };
+}
+
+function saveReadingSession() {
+  const position = feedList.capturePosition();
+  if (position) readingPositions[state.view] = position;
+  try {
+    sessionStorage.setItem(storageKeys.session, JSON.stringify({
+      view: state.view, lane: state.lane, category: state.category,
+      source: state.source, search: state.search, positions: readingPositions,
+    }));
+  } catch { /* Reading continuity is optional when browser storage is unavailable. */ }
+}
 
 function readIdSet(key) {
   try {
@@ -318,8 +368,24 @@ function storyMarkup(article) {
     </article>`;
 }
 
-function storyListMarkup(articles) {
-  return articles.map(storyMarkup).join("");
+function updateStoryCard(card, article) {
+  const pinned = state.pinned.has(article.id);
+  const button = card.querySelector("[data-pin-id]");
+  button.classList.toggle("is-pinned", pinned);
+  button.setAttribute("aria-pressed", String(pinned));
+  button.setAttribute("aria-label", `${pinned ? "Unpin" : "Pin"} ${article.title}`);
+  button.textContent = pinned ? "★" : "☆";
+  card.querySelector("time").textContent = relativeTime(article.published_at);
+}
+
+function renderNewStoriesBanner() {
+  const knownIds = new Set(state.articles.map((article) => article.id));
+  const count = (state.pendingPayload?.articles || []).filter((article) => (
+    articleIsPublishable(article) && !knownIds.has(article.id)
+    && matchesBaseFilters(article) && matchesCategory(article)
+  )).length;
+  elements.newStories.hidden = state.view !== "latest" || count === 0;
+  elements.newStories.textContent = `${count} new ${count === 1 ? "story" : "stories"} · Show latest`;
 }
 
 function updateLaneCounts() {
@@ -348,10 +414,15 @@ function setFilterDrawerExpanded(expanded) {
   elements.filterDrawerHandle.setAttribute("aria-expanded", String(expanded));
 }
 
-function render() {
+function render(options = {}) {
   if (!state.payload) return;
+  const position = Object.hasOwn(options, "position") ? options.position : initialPosition || feedList.capturePosition();
+  initialPosition = null;
+  const focused = document.activeElement;
+  const focusAttribute = ["data-pin-id", "data-category", "data-source-option", "data-toggle-source"]
+    .find((attribute) => focused?.hasAttribute(attribute));
+  const focusValue = focusAttribute ? focused.getAttribute(focusAttribute) : null;
   const articles = visibleArticles();
-  const enabledArticles = state.articles.filter((article) => articleHasEnabledSource(article) && articleWithinTimeWindow(article));
   const pinned = state.articles.filter((article) => articleHasEnabledSource(article) && state.pinned.has(article.id)).length;
   syncControlValues();
   renderCategories();
@@ -362,10 +433,18 @@ function render() {
   elements.pinnedTotal.textContent = pinned;
   elements.feedKicker.textContent = state.view === "pinned" ? "Pinned signal" : "Latest signal";
   elements.feedTitle.textContent = state.view === "pinned" ? "Keep these close" : "What is worth a look";
-  elements.storyList.innerHTML = storyListMarkup(articles);
   elements.storyList.classList.toggle("is-compact", state.density === "compact");
   elements.storyList.hidden = articles.length === 0;
   elements.empty.hidden = articles.length > 0;
+  renderNewStoriesBanner();
+  feedList.render(articles, {
+    context: JSON.stringify([state.view, state.lane, state.category, state.source, state.search, state.timeWindow, [...state.disabledSources].sort()]),
+    position,
+  });
+  if (focusAttribute && !focused.isConnected) {
+    const replacement = document.querySelector(`[${focusAttribute}="${CSS.escape(focusValue)}"]`) || elements.storyList;
+    replacement.focus({ preventScroll: true });
+  }
   const allSourcesDisabled = Boolean(state.payload.sources?.length)
     && state.payload.sources.every((source) => state.disabledSources.has(source.id));
   elements.empty.querySelector("h2").textContent = allSourcesDisabled ? "All mobile sources are disabled" : "No matching signal";
@@ -390,16 +469,18 @@ function render() {
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-pressed", String(active));
   });
+  saveReadingSession();
 }
 
 function updateConnection(online, cached = false, checking = false) {
   state.feedCached = cached;
   elements.connectionDot.classList.toggle("is-offline", !online || cached);
-  if (!state.payload) return;
-  const generated = state.payload.generated_at ? relativeTime(state.payload.generated_at) : "at an unknown time";
-  const newest = state.articles.reduce((latest, article) => Math.max(latest, new Date(article.published_at).getTime()), 0);
+  const payload = state.pendingPayload || state.payload;
+  if (!payload) return;
+  const generated = payload.generated_at ? relativeTime(payload.generated_at) : "at an unknown time";
+  const newest = payload.articles.filter((article) => articleIsPublishable(article)).reduce((latest, article) => Math.max(latest, new Date(article.published_at).getTime()), 0);
   const newestLabel = newest ? ` · newest story ${relativeTime(newest)}` : "";
-  const retained = Number(state.payload.carried_forward_count || 0);
+  const retained = Number(payload.carried_forward_count || 0);
   const retainedLabel = retained ? ` · ${retained} retained` : "";
   const prefix = checking ? "Stored copy · checking for updates" : cached ? "Offline copy" : "Feed published";
   elements.updateStatus.textContent = `${prefix} ${generated}${newestLabel}${retainedLabel}`;
@@ -426,7 +507,7 @@ function readCachedFeed() {
   }
 }
 
-function applyFeed(payload, { store = false } = {}) {
+function applyFeed(payload, { store = false, position } = {}) {
   if (!feedPayloadIsCompatible(payload)) throw new Error("The feed payload is not render-safe.");
   const previousPayload = state.payload;
   const previousArticles = state.articles;
@@ -436,8 +517,9 @@ function applyFeed(payload, { store = false } = {}) {
     state.articles = payload.articles.filter((article) => articleIsPublishable(article));
     persistPinned();
     persistDisabledSources();
-    if (state.disabledSources.has(state.source)) state.source = "All";
-    render();
+    if (state.disabledSources.has(state.source)
+      || (state.source !== "All" && !payload.sources?.some((source) => source.id === state.source))) state.source = "All";
+    render(position === undefined ? {} : { position });
   } catch (error) {
     state.payload = previousPayload;
     state.articles = previousArticles;
@@ -448,25 +530,42 @@ function applyFeed(payload, { store = false } = {}) {
     }
     throw error;
   }
-  // Persist only after applying and rendering the candidate successfully.
-  if (store) {
-    try {
-      localStorage.setItem(storageKeys.feed, JSON.stringify(payload));
-    } catch (error) {
-      console.warn("CG Signal could not update its offline feed copy.", error);
-    }
+  if (store) storeFeed(payload);
+}
+
+function storeFeed(payload) {
+  try {
+    localStorage.setItem(storageKeys.feed, JSON.stringify(payload));
+  } catch (error) {
+    console.warn("CG Signal could not update its offline feed copy.", error);
+  }
+}
+
+function receiveFeed(payload) {
+  const newestPayload = state.pendingPayload || state.payload;
+  if (newestPayload && new Date(payload.generated_at) < new Date(newestPayload.generated_at)) return;
+  const knownIds = new Set(state.articles.map((article) => article.id));
+  const hasNewStories = payload.articles.some((article) => articleIsPublishable(article) && !knownIds.has(article.id));
+  if (state.payload && state.articles.length && hasNewStories) {
+    state.pendingPayload = payload;
+    storeFeed(payload);
+    renderNewStoriesBanner();
+  } else {
+    state.pendingPayload = null;
+    applyFeed(payload, { store: true });
   }
 }
 
 function renderFeedNotice({ offline = false } = {}) {
-  if (!state.payload) return;
-  const delayed = Date.now() - new Date(state.payload.generated_at).getTime() > FEED_STALE_AFTER_MS;
+  const payload = state.pendingPayload || state.payload;
+  if (!payload) return;
+  const delayed = Date.now() - new Date(payload.generated_at).getTime() > FEED_STALE_AFTER_MS;
   const messages = [];
   if (offline) messages.push("Live refresh unavailable · showing cached stories");
   if (delayed) messages.push("Feed refresh is delayed. The scheduled publisher has not produced a recent feed; checking again cannot force a publisher update.");
-  const names = state.payload.unavailable_sources || [];
-  if (names.length) messages.push(`${names.length} sources unavailable · showing cached stories`);
-  if (state.payload.thumbnails_incomplete) messages.push("Some previews are unavailable; current articles are still shown.");
+  const names = payload.unavailable_sources || [];
+  if (names.length) messages.push(`${names.length} ${names.length === 1 ? "source" : "sources"} unavailable · showing cached stories`);
+  if (payload.thumbnails_incomplete) messages.push("Some previews are unavailable; current articles are still shown.");
   const detail = names.length
     ? `<details><summary>Show unavailable sources</summary><span>${names.map(escapeHtml).join(", ")}</span></details>`
     : "";
@@ -477,11 +576,11 @@ function renderFeedNotice({ offline = false } = {}) {
 function loadFeed() {
   if (feedLoadPromise) return feedLoadPromise;
   elements.refresh.disabled = true;
-  elements.refresh.textContent = "Checking…";
+  elements.refresh.setAttribute("aria-busy", "true");
   feedLoadPromise = fetchFeed().finally(() => {
     feedLoadPromise = null;
     elements.refresh.disabled = false;
-    elements.refresh.textContent = "Check for updates";
+    elements.refresh.setAttribute("aria-busy", "false");
   });
   return feedLoadPromise;
 }
@@ -491,9 +590,11 @@ async function fetchFeed() {
   let cached = readCachedFeed();
   if (!state.payload && cached) {
     try {
+      const position = initialPosition;
       applyFeed(cached);
       updateConnection(navigator.onLine, true, navigator.onLine);
       renderFeedNotice({ offline: !navigator.onLine });
+      feedList.restorePosition(position);
     } catch (error) {
       cached = null;
       try { localStorage.removeItem(storageKeys.feed); } catch { /* ignore storage errors */ }
@@ -507,16 +608,20 @@ async function fetchFeed() {
     if (!response.ok) throw new Error(`Feed request failed (${response.status})`);
     const payload = await response.json();
     if (!feedPayloadIsCompatible(payload)) throw new Error("The hosted feed uses incompatible article labels.");
-    applyFeed(payload, { store: true });
+    const position = initialPosition || feedList.capturePosition();
+    receiveFeed(payload);
     const offline = !navigator.onLine || response.headers.get("X-CG-Signal-Offline") === "1";
     updateConnection(!offline, offline);
     renderFeedNotice({ offline });
+    feedList.restorePosition(position);
   } catch (error) {
     const fallback = state.payload || cached;
     if (fallback?.articles?.length) {
+      const position = feedList.capturePosition();
       if (!state.payload) applyFeed(fallback);
       updateConnection(false, true);
       renderFeedNotice({ offline: true });
+      feedList.restorePosition(position);
     } else {
       elements.storyList.setAttribute("aria-busy", "false");
       elements.storyList.hidden = true;
@@ -618,9 +723,11 @@ document.addEventListener("click", (event) => {
 
   const viewButton = event.target.closest("[data-view]");
   if (viewButton) {
+    saveReadingSession();
     state.view = viewButton.dataset.view;
-    render();
-    document.querySelector(".feed-section").scrollIntoView({ behavior: "smooth", block: "start" });
+    const position = readingPositions[state.view] || null;
+    render({ position });
+    if (!position) document.querySelector(".feed-section").scrollIntoView({ behavior: "instant", block: "start" });
     return;
   }
 
@@ -682,20 +789,49 @@ window.addEventListener("appinstalled", () => {
 
 elements.refresh.addEventListener("click", () => loadFeed());
 
+elements.newStories.addEventListener("click", () => {
+  if (!state.pendingPayload) return;
+  const payload = state.pendingPayload;
+  state.pendingPayload = null;
+  // Accepting updates is an explicit request to start at the newest story.
+  feedList.resetRange();
+  applyFeed(payload, { store: true, position: null });
+  elements.storyList.firstElementChild?.scrollIntoView({ behavior: "instant", block: "start" });
+  elements.storyList.focus({ preventScroll: true });
+  saveReadingSession();
+});
+
+let sessionSaveTimer = null;
+window.addEventListener("scroll", () => {
+  window.clearTimeout(sessionSaveTimer);
+  sessionSaveTimer = window.setTimeout(saveReadingSession, 150);
+}, { passive: true });
+window.addEventListener("pagehide", saveReadingSession);
+
+const stickyHeader = document.querySelector(".app-header");
+const updateHeaderHeight = () => document.documentElement.style.setProperty("--app-header-height", `${stickyHeader.getBoundingClientRect().height}px`);
+updateHeaderHeight();
+if ("ResizeObserver" in window) new ResizeObserver(updateHeaderHeight).observe(stickyHeader);
+
 window.addEventListener("online", () => loadFeed());
 window.addEventListener("offline", () => {
+  const position = feedList.capturePosition();
   updateConnection(false, true);
   renderFeedNotice({ offline: true });
+  feedList.restorePosition(position);
 });
 
 document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") saveReadingSession();
   if (document.visibilityState === "visible" && Date.now() - state.lastFetchAt > REFRESH_INTERVAL_MS) loadFeed();
 });
 
 window.setInterval(() => {
   if (document.visibilityState !== "visible" || feedLoadPromise) return;
+  const position = feedList.capturePosition();
   updateConnection(navigator.onLine, state.feedCached);
   renderFeedNotice({ offline: state.feedCached });
+  feedList.restorePosition(position);
   if (navigator.onLine && Date.now() - state.lastFetchAt >= REFRESH_INTERVAL_MS) loadFeed();
 }, 60 * 1000);
 
@@ -756,7 +892,7 @@ elements.filterDrawerHandle.addEventListener("pointercancel", () => {
 });
 
 if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=20261011-v25").catch(() => {}));
+  window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js?v=20261011-v26").catch(() => {}));
 }
 
 loadFeed();

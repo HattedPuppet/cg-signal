@@ -41,3 +41,14 @@ manual check, and warns once the published snapshot is over 90 minutes old.
 Neither a phone refresh nor the manual button forces an RSS publisher update.
 The service worker marks offline feed responses explicitly; existing pins and
 source preferences survive shell/cache updates.
+
+The shell uses compact cards by default while honoring an existing comfortable
+layout preference. `site/feed-list.mjs` owns keyed cards, 40-story rendering
+batches, and viewport anchors; the app owns filtering and staged feed updates.
+Scroll near the end to load another batch, or use the accessible Show more
+button. New arrivals are cached immediately but enter the visible list only
+when the reader accepts the new-stories button. That button reflects the active
+filters; publication status still describes the latest downloaded snapshot.
+Tab-scoped session storage retains the view, filters, search, and reading
+anchor across reloads. Pins and source preferences remain in local storage;
+this release does not add syncing or a durable article library.

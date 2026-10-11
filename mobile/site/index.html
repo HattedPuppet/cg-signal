@@ -8,9 +8,9 @@
     <link rel="icon" href="./favicon.ico" sizes="any" />
     <link rel="apple-touch-icon" href="./icon-180.png" />
     <link rel="manifest" href="./manifest.json" />
-    <link rel="stylesheet" href="./styles.css?v=20261011-v25" />
+    <link rel="stylesheet" href="./styles.css?v=20261011-v26" />
     <title>CG Signal Mobile</title>
-    <script src="./app.js?v=20261011-v25" type="module"></script>
+    <script src="./app.js?v=20261011-v26" type="module"></script>
   </head>
   <body>
     <a class="skip-link" href="#story-list">Skip to stories</a>
@@ -93,11 +93,16 @@
           </div>
         </header>
 
-        <div id="story-list" class="story-list" aria-live="polite" aria-busy="true">
+        <div class="new-stories-row" aria-live="polite">
+          <button id="new-stories" class="new-stories-button" type="button" hidden>Show latest stories</button>
+        </div>
+        <div id="story-list" class="story-list is-compact" tabindex="-1" aria-busy="true">
           <article class="story-card skeleton"><div></div><span></span><span></span><span></span></article>
           <article class="story-card skeleton"><div></div><span></span><span></span><span></span></article>
           <article class="story-card skeleton"><div></div><span></span><span></span><span></span></article>
         </div>
+
+        <button id="more-stories" class="more-stories-button" type="button" hidden>Show more stories</button>
 
         <div id="empty-state" class="empty-state" hidden>
           <span aria-hidden="true">◇</span>
