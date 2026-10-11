@@ -89,6 +89,18 @@ export class FeedList {
     const remaining = articles.length - visible.length;
     this.moreButton.hidden = remaining <= 0;
     this.moreButton.textContent = `Show ${Math.min(40, remaining)} more stories · ${visible.length} of ${articles.length}`;
+    const anchor = this.cards.get(position?.id)?.node;
+    if (anchor && this.limit < articles.length) {
+      const requestedScroll = scrollY + anchor.getBoundingClientRect().top - position.top;
+      const maximumScroll = document.documentElement.scrollHeight - innerHeight;
+      if (requestedScroll > maximumScroll + 1) {
+        // The anchor must have enough content below it to reach its saved
+        // offset. Expand before restoring/saving, retaining the original target
+        // rather than the position the browser clamps to in a shorter list.
+        this.limit = Math.min(articles.length, this.limit + 40);
+        return this.render(articles, { context, position });
+      }
+    }
     this.restorePosition(position);
   }
 

@@ -445,6 +445,42 @@ test("mobile preserves filters and reading anchors through view changes and relo
   }
 });
 
+for (const automaticLoading of [false, true]) {
+  test(`mobile restores unfiltered deep and batch-boundary anchors with automatic loading ${automaticLoading}`, async ({ browser }) => {
+    const context = await browser.newContext({ ...PIXEL_7, serviceWorkers: "block" });
+    const page = await context.newPage();
+    try {
+      const guards = await installBrowserGuards(page);
+      const fixture = await (await page.request.get(`${fixtureUrls.mobile_url}feed.json`)).json();
+      const payload = expandedMobilePayload(fixture);
+      if (!automaticLoading) await page.addInitScript(() => { delete window.IntersectionObserver; });
+      await page.route("**/feed.json", (route) => route.fulfill({ json: payload }));
+      await page.goto(fixtureUrls.mobile_url, { waitUntil: "domcontentloaded" });
+      await expect(page.locator("#story-list .story-card")).toHaveCount(40);
+      if (automaticLoading) await page.locator("#more-stories").scrollIntoViewIfNeeded();
+      else await page.locator("#more-stories").click();
+      await expect(page.locator("#story-list .story-card")).toHaveCount(80);
+
+      for (const index of [39, 40, 55]) {
+        const id = `mobile-story-${String(index).padStart(3, "0")}`;
+        await page.locator(`[data-article-id="${id}"]`).evaluate((card) => card.scrollIntoView({ block: "start", behavior: "instant" }));
+        const top = await cardTop(page, id);
+        const savedAnchor = () => page.evaluate(() => JSON.parse(sessionStorage.getItem("cg-signal-mobile:reading-session"))?.positions?.latest?.id);
+        await expect.poll(savedAnchor).toBe(id);
+        await page.reload({ waitUntil: "domcontentloaded" });
+        await expect(page.locator("#story-list")).toHaveAttribute("aria-busy", "false");
+        await expect(page.locator("#refresh-feed")).toBeEnabled();
+        await expect.poll(async () => Math.abs(await cardTop(page, id) - top)).toBeLessThan(3);
+        await expect.poll(savedAnchor).toBe(id);
+        expect(await page.locator("#story-list .story-card").count()).toBeLessThan(payload.articles.length);
+      }
+      await expectCleanBrowser(guards);
+    } finally {
+      await context.close();
+    }
+  });
+}
+
 test("mobile cleans legacy cached events and checks for fresh articles without losing preferences", async ({ browser }) => {
   const context = await browser.newContext({ ...PIXEL_7, serviceWorkers: "block" });
   const page = await context.newPage();
