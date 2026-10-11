@@ -132,6 +132,41 @@ class FeedIngestionTests(ServiceTestCase):
         self.assertEqual(persisted["last_success_at"], cache["last_success_at"])
         self.assertEqual([article["id"] for article in persisted["articles"]], ["article-1"])
 
+    def test_failed_contaminated_reload_keeps_later_recovery_unconditional(self):
+        cache = self.cache_entry()
+        cache["articles"].append({**cached_article(), "id": "future", "published_at": "2099-08-23T00:00:00Z"})
+        with mock.patch.object(self.service.http, "get", side_effect=SafeHttpError("unavailable")):
+            failed = self.service.fetch_source(source_fixture(), cache)
+        self.service.update_feed_source_cache({source_fixture()["id"]: cache}, [failed])
+        persisted = self.service.read_feed_source_cache()[source_fixture()["id"]]
+        self.assertEqual(persisted["etag"], "")
+        self.assertEqual(persisted["last_modified"], "")
+        self.assertEqual([article["id"] for article in persisted["articles"]], ["article-1"])
+
+        # Even an unsolicited 304 cannot certify this underfilled snapshot.
+        headers = Message()
+        headers["ETag"] = cache["etag"]
+        response = SafeHttpResponse(304, headers, b"", source_fixture()["feed"])
+        with mock.patch.object(self.service.http, "get", return_value=response) as get:
+            still_failed = self.service.fetch_source(source_fixture(), persisted)
+        self.assertNotIn("If-None-Match", get.call_args.kwargs["headers"])
+        self.assertNotIn("If-Modified-Since", get.call_args.kwargs["headers"])
+        self.assertFalse(still_failed["ok"])
+        self.assertFalse(still_failed["not_modified"])
+        self.service.update_feed_source_cache({source_fixture()["id"]: persisted}, [still_failed])
+        persisted = self.service.read_feed_source_cache()[source_fixture()["id"]]
+
+        xml = b"""<rss><channel>
+            <item><title>Recovered first</title><link>https://example.com/first</link><pubDate>2026-08-03T00:00:00Z</pubDate></item>
+            <item><title>Recovered second</title><link>https://example.com/second</link><pubDate>2026-08-02T00:00:00Z</pubDate></item>
+        </channel></rss>"""
+        with mock.patch.object(self.service.http, "get", return_value=self.feed_response(xml)) as get:
+            recovered = self.service.fetch_source(source_fixture(), persisted)
+        self.assertNotIn("If-None-Match", get.call_args.kwargs["headers"])
+        self.assertNotIn("If-Modified-Since", get.call_args.kwargs["headers"])
+        self.assertTrue(recovered["ok"])
+        self.assertEqual([article["title"] for article in recovered["articles"]], ["Recovered first", "Recovered second"])
+
     def test_invalid_preferred_date_falls_through_to_valid_candidate(self):
         xml = b"""<rss><channel><item>
             <title>Fallback date</title><link>https://example.com/fallback</link>

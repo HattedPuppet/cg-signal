@@ -583,7 +583,9 @@ class FeedService:
                 timeout=22,
                 max_bytes=6_000_000,
             )
-            if response.status == 304 and cached_articles:
+            if response.status == 304 and cached_articles and (
+                "If-None-Match" in headers or "If-Modified-Since" in headers
+            ):
                 return {
                     "source": source, "articles": cached_articles, "ok": True, "message": "",
                     "duration_ms": round((time.monotonic() - started) * 1000),
@@ -677,7 +679,11 @@ class FeedService:
         return {
             "source": source, "articles": cached_articles, "ok": False, "message": str(error),
             "duration_ms": round((time.monotonic() - started) * 1000),
-            "etag": cached.get("etag", ""), "last_modified": cached.get("last_modified", ""),
+            # A failed full reload must remain unconditional on the next run.
+            # Cleaned articles do not represent the old validator's complete
+            # snapshot: news may have been displaced by the rejected entries.
+            "etag": cached.get("etag", "") if cache_is_clean else "",
+            "last_modified": cached.get("last_modified", "") if cache_is_clean else "",
             "not_modified": False, "used_stale_cache": bool(cached_articles),
             "diagnostics": diagnostics,
             "last_success_at": cached.get("last_success_at", ""),
@@ -726,8 +732,8 @@ class FeedService:
             elif previous.get("feed") == source["feed"]:
                 updated[source_id] = {
                     **previous,
-                    "etag": result.get("etag") or previous.get("etag", ""),
-                    "last_modified": result.get("last_modified") or previous.get("last_modified", ""),
+                    "etag": result.get("etag", previous.get("etag", "")),
+                    "last_modified": result.get("last_modified", previous.get("last_modified", "")),
                     "articles": result["articles"],
                     "checked_at": checked_at,
                     "last_success_at": result.get("last_success_at", previous.get("last_success_at", "")),
