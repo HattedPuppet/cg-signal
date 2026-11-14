@@ -15,6 +15,8 @@ from datetime import date
 from hashlib import sha256
 from pathlib import Path
 import re
+import sqlite3
+import sys
 from tempfile import NamedTemporaryFile
 from urllib.parse import urlsplit
 
@@ -24,7 +26,7 @@ SOURCE_LINE = re.compile(r"^- 一次資料[:：][ \t]*(https?://\S+)[ \t]*$", re
 NOTE_DATE = re.compile(r"^<!-- cg-signal-date: (\d{4}-\d{2}-\d{2}) -->\n")
 
 
-def read_batch(path: Path, day: str) -> dict[str, str]:
+def read_batch(path: Path, day: str) -> dict[str, tuple[str, str]]:
     date.fromisoformat(day)
     heading, *sections = re.split(r"^## (?=\S)", path.read_text(encoding="utf-8-sig"), flags=re.MULTILINE)
     if heading.strip() != f"# CG Signal 技術メモ {day}" or not sections:
@@ -38,7 +40,7 @@ def read_batch(path: Path, day: str) -> dict[str, str]:
         source = urlsplit(sources[0])._replace(fragment="").geturl()
         if source in notes:
             raise ValueError(f"Duplicate primary source in {path.name}: {source}")
-        notes[source] = f"<!-- cg-signal-date: {day} -->\n# {section.strip()}\n"
+        notes[source] = day, f"<!-- cg-signal-date: {day} -->\n# {section.strip()}\n"
     return notes
 
 
@@ -53,32 +55,46 @@ def write_note(target: Path, content: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def import_notes(inbox: Path, destination: Path) -> int:
+def import_notes(inbox: Path, destination: Path) -> tuple[int, list[str]]:
     if not inbox.is_dir():
         raise ValueError(f"Inbox directory does not exist: {inbox}")
 
     imported = {}
+    warnings = []
     for batch in sorted(inbox.glob("cg-signal-notes-*.md")):
         match = BATCH_NAME.fullmatch(batch.name)
         if match and batch.is_file():
-            imported.update(read_batch(batch, match[1]))
+            try:
+                imported.update(read_batch(batch, match[1]))
+            except (OSError, ValueError) as error:
+                warnings.append(f"Skipping {batch.name}: {error}")
 
-    changes = 0
+    if not imported:
+        return 0, warnings
+
     destination.mkdir(parents=True, exist_ok=True)
-    for source, content in imported.items():
-        digest = sha256(source.encode("utf-8")).hexdigest()
-        target = destination / f"{digest}.md"
-        if target.exists():
-            existing = target.read_text(encoding="utf-8")
-            existing_day = NOTE_DATE.match(existing)
-            new_day = NOTE_DATE.match(content)
-            if not existing_day:
-                raise ValueError(f"Existing file was not created by this importer: {target}")
-            if existing == content or (new_day and existing_day[1] > new_day[1]):
-                continue
-        write_note(target, content)
-        changes += 1
-    return changes
+    # SQLite provides a cross-process lock on both Windows and Unix. The
+    # database stores no notes. It protects the whole read/compare/write step.
+    lock = sqlite3.connect(destination / ".cg-signal-import-lock.sqlite3", timeout=30)
+    try:
+        lock.execute("BEGIN IMMEDIATE")
+        changes = 0
+        for source, (day, content) in imported.items():
+            digest = sha256(source.encode("utf-8")).hexdigest()
+            target = destination / f"{digest}.md"
+            if target.exists():
+                existing = target.read_text(encoding="utf-8")
+                existing_day = NOTE_DATE.match(existing)
+                if not existing_day:
+                    warnings.append(f"Skipping existing file without an import date: {target.name}")
+                    continue
+                if existing == content or existing_day[1] > day:
+                    continue
+            write_note(target, content)
+            changes += 1
+    finally:
+        lock.close()
+    return changes, warnings
 
 
 def main() -> None:
@@ -87,10 +103,14 @@ def main() -> None:
     parser.add_argument("--out", type=Path, required=True, help="Local Markdown folder for Pi or Codex")
     args = parser.parse_args()
     try:
-        changes = import_notes(args.inbox, args.out)
-    except (OSError, ValueError) as error:
+        changes, warnings = import_notes(args.inbox, args.out)
+    except (OSError, ValueError, sqlite3.Error) as error:
         parser.exit(1, f"Import failed: {error}\n")
     print(f"{changes} note(s) written to {args.out}")
+    for warning in warnings:
+        print(warning, file=sys.stderr)
+    if warnings:
+        parser.exit(1)
 
 
 if __name__ == "__main__":
