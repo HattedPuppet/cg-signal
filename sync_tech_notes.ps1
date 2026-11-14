@@ -31,13 +31,14 @@ if ($RegisterTask) {
         throw "Task '$taskName' already exists. Remove it in Task Scheduler before reinstalling."
     }
 
-    $windowsPowerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $shellName = if ($PSVersionTable.PSEdition -eq 'Core') { 'pwsh.exe' } else { 'powershell.exe' }
+    $shell = Join-Path $PSHOME $shellName
     $arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -File "{0}" -Inbox "{1}" -Archive "{2}" -ImporterPath "{3}" -Python "{4}"' -f `
         $PSCommandPath, $Inbox, $Archive, $ImporterPath, $Python
     if ($PullGit) {
         $arguments += ' -PullGit'
     }
-    $action = New-ScheduledTaskAction -Execute $windowsPowerShell -Argument $arguments
+    $action = New-ScheduledTaskAction -Execute $shell -Argument $arguments
     $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $logon = New-ScheduledTaskTrigger -AtLogOn -User $user
     $repeat = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(15) `
