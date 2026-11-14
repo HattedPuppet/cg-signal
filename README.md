@@ -148,6 +148,34 @@ merge used by the Pages workflow.
 The generated, disposable site is written to `mobile/dist/` and is ignored by
 Git.
 
+## Importing private technical notes on Windows
+
+Put daily `cg-signal-notes-YYYY-MM-DD.md` files in a private inbox. For Git
+sync, use a dedicated private repository and clone it outside this checkout.
+Create the inbox files at the root of the private repository's default branch.
+Use your existing Git credentials to clone it, then run these commands from
+the cg-signal checkout in PowerShell:
+
+```powershell
+$inbox = Join-Path $HOME 'CG-Tech-Notes-Inbox'
+$archive = Join-Path $HOME 'CG-Tech-Notes'
+git clone https://github.com/YOUR-ACCOUNT/YOUR-PRIVATE-REPO.git $inbox
+.\sync_tech_notes.ps1 -Inbox $inbox -Archive $archive -PullGit
+.\sync_tech_notes.ps1 -Inbox $inbox -Archive $archive -PullGit -RegisterTask
+```
+
+For a folder already synced by a desktop client, set `$inbox` to that local
+folder and omit `-PullGit`. Keep `$archive` outside the inbox and outside any
+public checkout. The importer uses the date in each batch filename and keeps
+one Markdown file per primary source URL in `$archive`. Open that folder in
+Pi or tell Codex to search its Markdown files.
+
+The Windows task runs at sign-in and every 15 minutes while signed in. Use
+**CG Signal Technical Notes** in Task Scheduler to run it on demand, check
+the last result, or remove it. Git pulls are fast-forward only. If Git cannot
+authenticate in the background, check the clone's credentials in a regular
+PowerShell session before retrying the task.
+
 ## How it behaves
 
 - Feeds check quietly every 15 minutes while the dashboard is open and visible.
