@@ -93,6 +93,24 @@ content only; the Windows PC does not need to be on.
 Open [CG Signal Mobile](https://hattedpuppet.github.io/cg-signal/) on Android,
 then use the browser menu to install it or add it to the home screen.
 
+### Daily briefing feed
+
+The 08:00 JST morning task reads [briefing.json](https://hattedpuppet.github.io/cg-signal/briefing.json).
+Each mobile build selects all published story clusters from the 72 hours ending
+at the feed's `generated_at`, including both boundaries. The newest stories
+come first. Each includes the publisher, publication time, article URL, a short
+RSS excerpt and links to related reporting. The task checks original sources
+and event announcements independently.
+
+Schema 1 reports `window_start`, the full published `feed_article_count`, the
+recent `article_count` and any `unavailable_sources`. Zero recent stories is a
+valid result. When Pages is inaccessible, the latest successful `main` run of
+`Refresh mobile signal` also offers `cg-signal-briefing`, a ZIP containing
+just `briefing.json`. Compare the parsed array length to `article_count` and
+check the feed timestamp against the actual run time before reporting coverage.
+
+### Reading on mobile
+
 The mobile edition opens to **Latest Signal**, a strict newest-first chronology
 with **This month**, **Last 3 months**, and **All available** publication
 windows. **Pinned** stories stay device-local. It also includes one-tap

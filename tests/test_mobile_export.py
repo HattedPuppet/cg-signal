@@ -156,6 +156,60 @@ class MobileExportTests(unittest.TestCase):
             self.assertFalse((output / "user-state.json").exists())
             self.assertFalse((output / "cg-signal.db").exists())
 
+    def test_briefing_matches_the_final_public_feed_and_its_72_hour_window(self):
+        current = self.fixture()
+        story = current["articles"][0]
+        related = {
+            "source": "Other", "title": "Related coverage", "url": "https://other.example/news",
+            "published_at": "2026-07-12T09:00:00Z",
+        }
+        story.update({
+            "summary": "技" * 300, "published_at": current["generated_at"],
+            "related": [{**related, "private_note": "never publish this"}],
+        })
+        previous = self.fixture()
+        previous["articles"] = [
+            {**story, "id": label, "url": f"https://example.com/{label}", "published_at": published, "related": []}
+            for label, published in (
+                ("outside", "2026-07-13T09:59:59Z"),
+                ("boundary", "2026-07-13T19:00:00+09:00"),
+                ("ahead", "2026-07-16T10:01:00Z"),
+            )
+        ]
+        merged = build_mobile.merge_feed_history(
+            current, previous, now=datetime(2026, 7, 16, 10, tzinfo=timezone.utc),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            output = build_mobile.build_site(Path(temporary) / "site", merged)
+            full_feed = json.loads((output / "feed.json").read_text(encoding="utf-8"))
+            briefing = json.loads((output / "briefing.json").read_text(encoding="utf-8"))
+        self.assertEqual(briefing["schema_version"], 1)
+        self.assertEqual(briefing["generated_at"], full_feed["generated_at"])
+        self.assertEqual(briefing["window_start"], "2026-07-13T10:00:00+00:00")
+        self.assertEqual(briefing["feed_article_count"], len(full_feed["articles"]))
+        self.assertEqual(briefing["feed_article_count"], 4)
+        self.assertEqual(briefing["article_count"], 2)
+        self.assertEqual([item["id"] for item in briefing["articles"]], ["article-1", "boundary"])
+        item = briefing["articles"][0]
+        self.assertEqual(item["url"], story["url"])
+        self.assertEqual(item["source"], story["source"])
+        self.assertEqual(item["excerpt"], "技" * build_mobile.BRIEFING_EXCERPT_LENGTH)
+        self.assertEqual(item["related"], [related])
+        self.assertEqual(briefing["unavailable_sources"], ["Example"])
+        self.assertNotIn("image", item)
+        self.assertNotIn("private", str(briefing))
+
+    def test_briefing_distinguishes_a_quiet_window_from_an_unknown_snapshot_time(self):
+        payload = self.fixture()
+        payload["articles"][0]["published_at"] = "2026-07-01T10:00:00Z"
+        briefing = build_mobile.briefing_snapshot(build_mobile.sanitize_feed(payload))
+        self.assertEqual(briefing["feed_article_count"], 1)
+        self.assertEqual(briefing["article_count"], 0)
+        self.assertEqual(briefing["articles"], [])
+        for invalid in (None, "", "unknown"):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, "generated_at"):
+                build_mobile.sanitize_feed({**payload, "generated_at": invalid})
+
     def test_mobile_bundle_copies_only_verified_referenced_thumbnails(self):
         with tempfile.TemporaryDirectory() as temporary:
             cache = Path(temporary) / "http"

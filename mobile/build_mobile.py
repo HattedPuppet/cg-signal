@@ -26,6 +26,8 @@ from cg_signal.thumbnails import (  # noqa: E402
 SITE_DIR = Path(__file__).resolve().parent / "site"
 DEFAULT_OUTPUT = Path(__file__).resolve().parent / "dist"
 MOBILE_HISTORY_DAYS = 100
+BRIEFING_WINDOW = timedelta(hours=72)
+BRIEFING_EXCERPT_LENGTH = 200
 MAX_MOBILE_ARTICLES = 1500
 MAX_MOBILE_SOURCES = 300
 MAX_MOBILE_UNAVAILABLE_SOURCES = 300
@@ -226,6 +228,9 @@ def sanitize_article(value: Any) -> dict[str, Any]:
 def sanitize_feed(payload: Any, *, now: datetime | None = None) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("Feed payload must be an object.")
+    generated_at = bounded_string(payload.get("generated_at"), required=True, maximum=128)
+    if parsed_datetime(generated_at) is None:
+        raise ValueError("The feed needs a valid generated_at timestamp to establish its age.")
     articles = []
     reference_time = now or datetime.now(timezone.utc)
     for article in payload.get("articles", []) if isinstance(payload.get("articles", []), list) else []:
@@ -286,8 +291,7 @@ def sanitize_feed(payload: Any, *, now: datetime | None = None) -> dict[str, Any
         "classification_revision": classification_revision,
         # Existing hosted consumers still read this alias during the rollout.
         "classification_version": classification_revision,
-        "generated_at": bounded_string(payload.get("generated_at"), required=True, maximum=128)
-        or datetime.now(timezone.utc).isoformat(),
+        "generated_at": generated_at,
         "newest_article_at": max(articles, key=lambda article: parsed_datetime(article["published_at"]))["published_at"],
         "thumbnails_incomplete": payload.get("thumbnails_incomplete") is True,
         "unique_count": len(articles),
@@ -305,6 +309,33 @@ def parsed_datetime(value: Any) -> datetime | None:
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
     except (TypeError, ValueError):
         return None
+
+
+def briefing_snapshot(public_feed: dict[str, Any]) -> dict[str, Any]:
+    """Project the final public feed into the morning task's publication window."""
+    generated = parsed_datetime(public_feed["generated_at"])
+    if generated is None:
+        raise ValueError("The briefing needs a valid feed timestamp.")
+    window_start = generated - BRIEFING_WINDOW
+    recent = []
+    for article in public_feed["articles"]:
+        published = parsed_datetime(article["published_at"])
+        if published is not None and window_start <= published <= generated:
+            recent.append((published, {
+                **allow_fields(article, ("id", "title", "url", "source", "published_at")),
+                "excerpt": article["summary"][:BRIEFING_EXCERPT_LENGTH],
+                "related": [allow_fields(item, RELATED_FIELDS) for item in article["related"]],
+            }))
+    recent.sort(key=lambda item: item[0], reverse=True)
+    return {
+        "schema_version": 1,
+        "generated_at": public_feed["generated_at"],
+        "window_start": window_start.isoformat(),
+        "feed_article_count": len(public_feed["articles"]),
+        "article_count": len(recent),
+        "unavailable_sources": public_feed["unavailable_sources"],
+        "articles": [article for _, article in recent],
+    }
 
 
 def article_urls(article: dict[str, Any]) -> set[str]:
@@ -527,6 +558,10 @@ def build_site(
         json.dumps(final_payload, ensure_ascii=False, separators=(",", ":")),
         encoding="utf-8",
     )
+    (output / "briefing.json").write_text(
+        json.dumps(briefing_snapshot(final_payload), ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
     return output
 
 
@@ -568,7 +603,11 @@ def main() -> None:
         thumbnail_root=thumbnail_root,
         thumbnail_anchor=thumbnail_anchor,
     )
-    print(f"Built {len(sanitize_feed(payload)['articles'])} mobile articles in {destination}")
+    briefing = json.loads((destination / "briefing.json").read_text(encoding="utf-8"))
+    print(
+        f"Built {briefing['feed_article_count']} mobile articles in {destination}. "
+        f"Briefing: {briefing['article_count']} recent articles as of {briefing['generated_at']}."
+    )
 
 
 if __name__ == "__main__":
