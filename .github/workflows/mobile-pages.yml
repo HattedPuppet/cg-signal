@@ -99,6 +99,14 @@ jobs:
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: mobile/dist
+      - name: Upload the morning briefing for scheduled readers
+        continue-on-error: true
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: cg-signal-briefing
+          path: mobile/dist/briefing.json
+          if-no-files-found: error
+          retention-days: 3
 
   deploy:
     if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.build.result == 'success' }}
